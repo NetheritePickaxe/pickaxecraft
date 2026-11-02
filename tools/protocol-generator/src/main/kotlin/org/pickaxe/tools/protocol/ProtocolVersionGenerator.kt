@@ -10,7 +10,7 @@ import kotlinx.serialization.json.Json
  * 输入只包含四个文件：
  * - `version.json`：上游 minecraft-data 的版本元数据，保持原样不改动；
  * - `source.json`：本仓库补充的来源元数据（仓库、分支、提交、许可证）；
- * - `protocol.json`：上游协议数据，本生成器只读取它来计算校验和；
+ * - `protocol.json`：上游协议数据，生成器读取它计算 SHA-256 并与 `source.json` 的锁定值比对；
  * - 其余文件不参与生成。
  *
  * 输出不含时间戳、不含绝对路径，保证同一输入得到逐字节相同的输出。
@@ -29,6 +29,17 @@ public object ProtocolVersionGenerator {
         val version = json.decodeFromString<MinecraftVersionFile>(versionFile.readTextUtf8())
         val source = json.decodeFromString<SchemaSourceFile>(sourceFile.readTextUtf8())
         val protocolSha256 = sha256Of(protocolFile)
+
+        // 校验和只有与锁定值比较才有意义：只计算不比对时，protocol.json 被改动、
+        // 或被行尾转换破坏，构建依然会成功，生成的常量也只是“变了但没人发现”。
+        require(protocolSha256 == source.protocolSha256) {
+            buildString {
+                appendLine("protocol.json 校验和与 source.json 声明不一致，schema 已偏离锁定来源：")
+                appendLine("  实际: $protocolSha256")
+                appendLine("  声明: ${source.protocolSha256}")
+                append("若确实要切换版本，请更新 source.json 与 SOURCE.md 并说明来源。")
+            }
+        }
 
         return buildString {
             appendLine("// 由 tools:protocol-generator 生成，请勿手工编辑。")
@@ -66,6 +77,12 @@ private data class MinecraftVersionFile(
 @Serializable
 private data class SchemaSourceFile(
     val commit: String,
+    /**
+     * 锁定的 `protocol.json` 校验和。
+     *
+     * 没有这个字段时，生成器只能“算出”哈希却无从判断对错，等于没有校验。
+     */
+    val protocolSha256: String,
 )
 
 private fun Path.readTextUtf8(): String = toFile().readText(Charsets.UTF_8)

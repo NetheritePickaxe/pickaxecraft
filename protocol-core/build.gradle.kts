@@ -24,6 +24,11 @@ val generateProtocolVersion = tasks.register<JavaExec>("generateProtocolVersion"
     classpath = protocolGenerator
     mainClass.set("org.pickaxe.tools.protocol.MainKt")
     args(schemaDir.asFile.absolutePath, generatedDir.get().asFile.absolutePath)
+
+    // 分叉出的 JVM 不继承 Daemon 的编码设置：Windows 控制台默认 GBK，
+    // 不显式指定时校验失败的中文原因会变成乱码。
+    defaultCharacterEncoding = "UTF-8"
+    jvmArgs("-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8")
 }
 
 kotlin {

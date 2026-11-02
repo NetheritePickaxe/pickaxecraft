@@ -341,6 +341,9 @@ M0 交付后做了一次端到端复查，发现四处实现缺陷与一处 CI �
 | “防重复启动”检查自身会 NPE | `MinecraftServer.isStarted()` 在 `init` 之前访问为 null 的 `serverProcess`，新建进程首次启动即抛 NPE | 改用模块内状态位 `harnessStarted`，不再依赖 `isStarted()` 判断前置状态 |
 | 停止日志可能丢失 | 原实现由主线程在 `stopped.await()` 之后打印 `event=server.stopped`，JVM 关闭时主线程可能已被终止 | 结束日志移入 shutdown hook，`stopping` / `stopped` 成对输出 |
 | 测试没有触达生成器 | 旧用例只断言 `isStarted()`，`Generator` 从未执行，方块键写错也不会被发现 | 用例改为：临时端口启动 → 强制加载出生区块 → 断言石头 → 停止 → 断言端口拒绝连接 |
+| schema 校验和只计算、不比对 | 生成器把 SHA-256 写进常量，但没有任何“锁定值”可比，`protocol.json` 被改动后构建照常通过 | `source.json` 增加 `protocolSha256` 锁定值，生成器比对不一致即失败；新增 3 个用例覆盖篡改与声明错误 |
+| 字节码检查会假通过 | 输入目录配错（或改名）时 `classes` 为空，任务只打一条 info 就成功 | 空目录默认判为失败并提示检查路径；确实无代码的模块需显式 `allowEmpty` |
+| 生成器失败信息乱码且被堆栈淹没 | JavaExec 分叉的 JVM 不继承 UTF-8，中文原因显示为 `����` | 任务补 `defaultCharacterEncoding` 与 `stdout/stderr.encoding`；校验失败只打印原因，不打印堆栈 |
 | CI 引用不存在的 action | `gradle/actions/setup-gradle@v4` 的 tag 返回 404，当前主版本为 v6，job 会在该步直接失败 | 改为 `@v6`，并补 `timeout-minutes` 与最小 `permissions` |
 
 ### 11.7 仍未覆盖

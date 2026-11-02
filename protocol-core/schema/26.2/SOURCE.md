@@ -33,8 +33,10 @@
 | `version.json` | 104 | `e4a731efdc228a6dafd61eb842e8eb76f9d6b766979254d743e161b86d7c1d0c` |
 | `protocol.json` | 338768 | `e19d839857e4fc9faaa829e68736eaab181f21167db1b0449d3abb284b47305d` |
 
-`protocol.json` 的 SHA-256 会由 `tools:protocol-generator` 在构建时重新计算，并写入
-生成的 `ProtocolVersion.SCHEMA_SHA256`。两者不一致说明数据被改动过，需要重新核对来源。
+`protocol.json` 的 SHA-256 由 `tools:protocol-generator` 在构建时重新计算，既写入生成的
+`ProtocolVersion.SCHEMA_SHA256`，也与 `source.json` 中的 `protocolSha256` 比对。
+两者不一致（数据被改动、被行尾转换破坏、或来源换了）会直接让 `generateProtocolVersion`
+失败，而不是静默生成一份与原版不同的常量。
 
 ## 为什么保留副本
 

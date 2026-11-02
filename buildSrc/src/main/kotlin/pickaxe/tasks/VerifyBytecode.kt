@@ -7,6 +7,7 @@ import org.gradle.api.provider.Property
 import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
@@ -34,6 +35,16 @@ public abstract class VerifyBytecode : DefaultTask() {
     @get:Input
     public abstract val targetName: Property<String>
 
+    /**
+     * 是否允许没有任何 class 文件的模块。
+     *
+     * 默认为 false：输入目录一旦配错（改名、写错路径），检查会因为“没有文件”而静默通过，
+     * 形成假阳性。只有确实不含代码的模块才显式放开。
+     */
+    @get:Input
+    @get:Optional
+    public abstract val allowEmpty: Property<Boolean>
+
     @TaskAction
     public fun verify() {
         val expected = expectedMajorVersion.get()
@@ -43,8 +54,15 @@ public abstract class VerifyBytecode : DefaultTask() {
             .flatMap { root -> root.walkTopDown().filter { file -> file.isFile && file.extension == "class" }.toList() }
 
         if (classes.isEmpty()) {
-            logger.info("verifyBytecode[{}]: 没有 class 文件，跳过", targetName.get())
-            return
+            if (allowEmpty.getOrElse(false)) {
+                logger.info("verifyBytecode[{}]: 没有 class 文件，按配置跳过", targetName.get())
+                return
+            }
+            throw GradleException(
+                "${targetName.get()} 没有任何 class 文件，无法校验字节码版本。" +
+                    "\n检查 classDirectories 是否指向了正确的编译输出目录；" +
+                    "若模块确实不含代码，请显式设置 allowEmpty.set(true)。",
+            )
         }
 
         val violations = classes.mapNotNull { file ->
