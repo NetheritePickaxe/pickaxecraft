@@ -26,5 +26,6 @@ plugins {
 include(":app")
 include(":protocol-core")
 include(":tools:protocol-generator")
+include(":testing:minestom")
 
 rootProject.name = "pickaxecraft"

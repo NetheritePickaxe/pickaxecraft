@@ -16,6 +16,7 @@ netty = "4.2.19.Final"
 junit = "5.14.4"
 junitPlatform = "1.14.4"
 minestom = "2026.10.07-26.2"
+slf4j = "2.0.20"
 
 [libraries]
 kotlinGradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
@@ -33,6 +34,7 @@ junitJupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "juni
 junitPlatformLauncher = { module = "org.junit.platform:junit-platform-launcher", version.ref = "junitPlatform" }
 
 minestom = { module = "net.minestom:minestom", version.ref = "minestom" }
+slf4jSimple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 
 [plugins]
 kotlinJvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
