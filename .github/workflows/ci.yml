@@ -12,22 +12,32 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up JDK 25
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '25'
 
-      # Android 目标需要 SDK；Desktop 与工具链测试本身不需要。
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # 不使用 android-actions/setup-android：它的默认包列表含已下架的 tools 包，
+      # 会让该步以 "Failed to find package 'tools'" 失败；runner 镜像本身已带 SDK。
+      - name: Install Android SDK packages
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$sdkmanager" ]; then
+            sdkmanager="$(command -v sdkmanager)"
+          fi
+          "$sdkmanager" --version
+          yes | "$sdkmanager" --licenses > /dev/null
+          "$sdkmanager" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Install Android platform and build tools
-        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+      # 断言实际生效的 JVM 是 25，避免 daemon 悄悄回落到镜像自带的 21。
+      - name: Show toolchain
+        run: ./gradlew --version --console=plain
 
-      # gradle/actions 当前主版本为 v6；v4 这条引用在仓库里并不存在，会让 job 在第一步就失败。
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
