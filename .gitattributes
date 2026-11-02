@@ -1,0 +1,2 @@
+# 协议 schema 需要按字节校验（生成器会计算 SHA-256），禁止行尾转换。
+protocol-core/schema/** -text
