@@ -9,6 +9,7 @@ import java.net.Socket
 import java.nio.file.Files
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
@@ -72,6 +73,8 @@ class ShutdownHookTest {
                 exited,
                 "收到 SIGTERM 后 ${SHUTDOWN_TIMEOUT_SECONDS}s 内未退出，可能卡在 shutdown hook 里；输出:\n$log",
             )
+            // 128 + SIGTERM(15)：证明确实由信号终止，而不是自己退出或崩溃。
+            assertEquals(143, exitCode, "进程应由 SIGTERM 终止；输出:\n$log")
             assertTrue(
                 "event=server.stopping" in log,
                 "缺少停止开始日志，说明 hook 未执行（exitCode=$exitCode）；输出:\n$log",
