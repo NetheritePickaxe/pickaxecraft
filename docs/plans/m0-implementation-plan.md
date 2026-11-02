@@ -330,6 +330,7 @@ M0 完成时，一个新克隆的仓库应满足：
 | Minestom | `:testing:minestom:run` 打印 `event=server.started … protocol=776`，`127.0.0.1:25565` 可建连；停止后端口释放 |
 | 状态查询 | 裸 socket 以 `nextState=1` 握手，服务端返回 `{"version":{"name":"26.2","protocol":776}, …}`，证明分帧与锁定协议号一致 |
 | CLI | `--version` 输出 26.2 / 776 / 2026.10.07-26.2；未知参数退出码 2 |
+| 关闭信号 | `ShutdownHookTest` 在独立 JVM 启动联调服务，向子进程发 SIGTERM，断言输出 `event=server.stopping` / `event=server.stopped` 且退出后端口拒绝连接；Linux CI 实际执行 |
 
 ### 11.6 复查发现并修正的缺陷
 
@@ -348,12 +349,14 @@ M0 交付后做了一次端到端复查，发现四处实现缺陷与一处 CI �
 | CI 的 SDK 步骤必然失败 | `android-actions/setup-android@v3` 默认安装 `tools` 包，该包已从 SDK 仓库下架，首跑报 `Failed to find package 'tools'` | 去掉该 action，直接用 runner 预装 SDK 的 `sdkmanager` 安装 `platforms;android-36` 与 `build-tools;36.0.0` |
 | 许可证步骤被 SIGPIPE 判为失败 | `yes \| sdkmanager --licenses` 中 `yes` 在 sdkmanager 退出后收到 SIGPIPE(141)，`pipefail` 下整条管道非零 | 该管道显式 `\|\| true`，并注明原因 |
 | `gradlew` 在索引里没有可执行位 | 索引模式为 `100644`，Linux/macOS 克隆后 `./gradlew` 退出码 126，CI 的 Show toolchain 步直接失败 | `git update-index --chmod=+x gradlew`，索引改为 `100755` |
+| 关闭链路存在“宣告就绪早于 hook 注册”的窗口 | `event=server.started` 原先打印在 `addShutdownHook` 之前；调用方收到该行立即发信号时，信号可能落在注册完成前，表现为 hook 完全没执行（子进程正常退出、日志里没有任何停止行） | 先注册 hook 再打印 `event=server.started`，使该行成为“信号可以安全送达”的契约 |
+| 关闭测试读管道存在收尾竞态 | 子进程退出后立即读管道，最后几行可能仍在读取线程里，断言会随机看不到 `stopping` | 子进程输出改为 `redirectOutput` 落临时文件，退出后直接读文件 |
 
 ### 11.7 仍未覆盖
 
 - 完整登录到出生：裸 socket 已能走到 `finish_configuration` 并收到注册表数据，但 play 阶段还需要 `keep_alive`、实体同步等客户端行为，属于 M1 真实客户端的验证范围，M0 不做断言。
 - Netty 的真实解析与环回读写：按决策 3 留到 M1 第一个任务。
-- 关闭信号：`stopHarness()` 与端口释放已由测试覆盖；Windows 下 Ctrl+C 是否触发 shutdown hook 仍需一次人工确认（运行 `:testing:minestom:run` 后按 Ctrl+C，观察 `event=server.stopping` / `stopped`）。
+- 关闭信号：`ShutdownHookTest` 已在 Linux CI 上真实发送 SIGTERM 并通过。Windows 没有 SIGTERM（`Process.destroy` 等价于强制终止），本地手工验证仍需 Ctrl+C 后观察 `event=server.stopping` / `stopped`。
 - CI 实跑：已在首次推送后跑通，结果见 11.8；本机（Windows）与 Linux runner 两条路径都验证过。
 
 ### 11.8 CI 首次真实运行
@@ -366,6 +369,7 @@ M0 交付后做了一次端到端复查，发现四处实现缺陷与一处 CI �
 | 工具链 | `Launcher JVM: 25.0.5 (Eclipse Adoptium)`；Daemon 由 `gradle-daemon-jvm.properties` 解析为 Java 25 |
 | 门控任务 | `verifyDesktopBytecode` / `verifyAndroidBytecode` / `verifyBytecode` / `verifyModuleBoundaries` 全部实际执行 |
 | 测试任务 | `protocol-core:desktopTest` 与 `protocol-core:testAndroidHostTest` 均执行；`testing:minestom:test`、`tools:protocol-generator:test` 同样执行 |
+| 关闭链路 | `testing:minestom:ShutdownHookTest` 在 Linux 上不被跳过，真实 SIGTERM 用例通过（Windows 本地会 skip） |
 | 汇总 | `BUILD SUCCESSFUL in 3m 30s`，`67 actionable tasks: 67 executed` |
 
 这条结果同时补上了原先只能靠推断的两个点：AGP 9.4.1 在 Linux + JDK 25 下的构建路径可用；双端测试在无 Windows 的宿主上同样跑通。

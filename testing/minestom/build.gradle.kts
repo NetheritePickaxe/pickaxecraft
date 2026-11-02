@@ -20,3 +20,11 @@ application {
 tasks.named<VerifyForbiddenDependencies>("verifyModuleBoundaries") {
     forbiddenPackages.set(emptyList())
 }
+
+// 这个模块的测试会拉起真实服务端，服务端日志就是断言依据；
+// 默认 Gradle 只把标准输出收进报告，CI 上等于看不见，因此显式放开。
+tasks.named<Test>("test") {
+    testLogging {
+        showStandardStreams = true
+    }
+}

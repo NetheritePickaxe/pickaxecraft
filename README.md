@@ -49,6 +49,8 @@ CI 在 Ubuntu 上以同样的命令执行（`.github/workflows/ci.yml`）：JDK 
 
 启动后输出 `event=server.started … protocol=776`，玩家连接时输出 `event=player.configuring`，出生后输出 `event=player.spawned`；Ctrl+C 停止时输出 `event=server.stopping` / `event=server.stopped`。该服务只绑定回环地址，不会暴露到局域网。
 
+关闭链路由 `ShutdownHookTest` 在独立 JVM 中真实发送 SIGTERM 验证；Windows 没有 SIGTERM，该用例会自动跳过，由 Linux CI 覆盖，本地则用 Ctrl+C 观察同样两行日志。服务端支持 `--port` 指定端口，便于测试避开 25565。
+
 ## 版本锁定
 
 - 依赖版本唯一来源：`gradle/libs.versions.toml`
