@@ -7,6 +7,7 @@
 - [架构与技术决策](architecture.md)：项目定位、技术栈、协议边界、并发模型和平台约束。
 - [项目结构](project-structure.md)：Gradle 模块、源码目录、依赖方向和公共 API 归属。
 - [实施路线](roadmap.md)：分阶段交付内容、验收标准和范围门控。
+- [M0 实施计划](plans/m0-implementation-plan.md)：第一阶段的版本锁定、任务拆分、验证命令与风险，状态为已确认待实施。
 
 ## 核心结论
 
