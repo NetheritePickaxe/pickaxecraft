@@ -1,3 +1,5 @@
+import pickaxe.tasks.VerifyForbiddenDependencies
+
 plugins {
     id("pickaxe.jvm.cli")
 }
@@ -12,4 +14,9 @@ dependencies {
 
 application {
     mainClass = "org.pickaxe.testing.minestom.MainKt"
+}
+
+// 本模块就是 Minestom 宿主：minestom 以及它携带的 netty 都是合法依赖。
+tasks.named<VerifyForbiddenDependencies>("verifyModuleBoundaries") {
+    forbiddenPackages.set(emptyList())
 }

@@ -1,6 +1,8 @@
-// 纯 JVM 库约定：Java 25 字节码、显式 API、JUnit 5。
+// 纯 JVM 库约定：Java 25 字节码、显式 API、JUnit 5、字节码与依赖边界校验。
 
 import org.gradle.api.artifacts.VersionCatalogsExtension
+import pickaxe.tasks.VerifyBytecode
+import pickaxe.tasks.VerifyForbiddenDependencies
 
 plugins {
     id("org.jetbrains.kotlin.jvm")
@@ -24,4 +26,26 @@ tasks.withType<Test>().configureEach {
     testLogging {
         events("failed", "skipped")
     }
+}
+
+val verifyBytecode = tasks.register<VerifyBytecode>("verifyBytecode") {
+    description = "校验产物为 Java 25 字节码"
+    group = "verification"
+    targetName.set("main")
+    expectedMajorVersion.set(69)
+    // 以编译任务的输出作为输入，任务依赖由 Gradle 自动建立。
+    classDirectories.from(tasks.named("compileKotlin"))
+    classDirectories.from(tasks.named("compileJava"))
+}
+
+val verifyModuleBoundaries = tasks.register<VerifyForbiddenDependencies>("verifyModuleBoundaries") {
+    description = "校验编译类路径不含禁止依赖"
+    group = "verification"
+    scope.set(project.path)
+    forbiddenPackages.set(listOf("io/netty/", "net/minestom/"))
+    classpath.from(configurations.named("compileClasspath"))
+}
+
+tasks.named("check") {
+    dependsOn(verifyBytecode, verifyModuleBoundaries)
 }
