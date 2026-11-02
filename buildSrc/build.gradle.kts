@@ -1,7 +1,5 @@
 plugins {
-    // The Kotlin DSL plugin provides a convenient way to develop convention plugins.
-    // Convention plugins are located in `src/main/kotlin`, with the file extension `.gradle.kts`,
-    // and are applied in the project's `build.gradle.kts` files as required.
+    // kotlin-dsl 提供预编译约定插件的开发能力。
     `kotlin-dsl`
 }
 
@@ -10,6 +8,7 @@ kotlin {
 }
 
 dependencies {
-    // Add a dependency on the Kotlin Gradle plugin, so that convention plugins can apply it.
+    // 约定插件需要在预编译脚本里同时应用 KGP 与 AGP。
     implementation(libs.kotlinGradlePlugin)
+    implementation(libs.androidGradlePlugin)
 }

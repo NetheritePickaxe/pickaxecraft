@@ -12,7 +12,9 @@ kotlinxSerializationJSON = "1.12.0"
 netty = "4.2.19.Final"
 
 # 测试与联调
+# JUnit Platform 与 Jupiter 版本线不同：launcher 走 1.x，引擎走 5.x。
 junit = "5.14.4"
+junitPlatform = "1.14.4"
 minestom = "2026.10.07-26.2"
 
 [libraries]
@@ -28,7 +30,7 @@ nettyBom = { module = "io.netty:netty-bom", version.ref = "netty" }
 kotlinTest = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 kotlinTestJunit5 = { module = "org.jetbrains.kotlin:kotlin-test-junit5", version.ref = "kotlin" }
 junitJupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
-junitPlatformLauncher = { module = "org.junit.platform:junit-platform-launcher", version.ref = "junit" }
+junitPlatformLauncher = { module = "org.junit.platform:junit-platform-launcher", version.ref = "junitPlatform" }
 
 minestom = { module = "net.minestom:minestom", version.ref = "minestom" }
 

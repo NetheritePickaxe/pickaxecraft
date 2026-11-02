@@ -1,8 +1,5 @@
 plugins {
-    // 共享构建逻辑位于 buildSrc/src/main/kotlin。
-    id("buildsrc.convention.kotlin-jvm")
-
-    application
+    id("pickaxe.jvm.cli")
 }
 
 application {

@@ -24,5 +24,6 @@ plugins {
 // 模块按“首个真实调用方”落位，不为未来概念建空模块。
 // 见 docs/plans/m0-implementation-plan.md 决策 2；其余模块在各自任务中与本行一并创建。
 include(":app")
+include(":protocol-core")
 
 rootProject.name = "pickaxecraft"
