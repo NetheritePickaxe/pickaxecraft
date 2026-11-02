@@ -345,11 +345,28 @@ M0 交付后做了一次端到端复查，发现四处实现缺陷与一处 CI �
 | 字节码检查会假通过 | 输入目录配错（或改名）时 `classes` 为空，任务只打一条 info 就成功 | 空目录默认判为失败并提示检查路径；确实无代码的模块需显式 `allowEmpty` |
 | 生成器失败信息乱码且被堆栈淹没 | JavaExec 分叉的 JVM 不继承 UTF-8，中文原因显示为 `����` | 任务补 `defaultCharacterEncoding` 与 `stdout/stderr.encoding`；校验失败只打印原因，不打印堆栈 |
 | CI 引用不存在的 action | `gradle/actions/setup-gradle@v4` 的 tag 返回 404，当前主版本为 v6，job 会在该步直接失败 | 改为 `@v6`，并补 `timeout-minutes` 与最小 `permissions` |
+| CI 的 SDK 步骤必然失败 | `android-actions/setup-android@v3` 默认安装 `tools` 包，该包已从 SDK 仓库下架，首跑报 `Failed to find package 'tools'` | 去掉该 action，直接用 runner 预装 SDK 的 `sdkmanager` 安装 `platforms;android-36` 与 `build-tools;36.0.0` |
+| 许可证步骤被 SIGPIPE 判为失败 | `yes \| sdkmanager --licenses` 中 `yes` 在 sdkmanager 退出后收到 SIGPIPE(141)，`pipefail` 下整条管道非零 | 该管道显式 `\|\| true`，并注明原因 |
+| `gradlew` 在索引里没有可执行位 | 索引模式为 `100644`，Linux/macOS 克隆后 `./gradlew` 退出码 126，CI 的 Show toolchain 步直接失败 | `git update-index --chmod=+x gradlew`，索引改为 `100755` |
 
 ### 11.7 仍未覆盖
 
 - 完整登录到出生：裸 socket 已能走到 `finish_configuration` 并收到注册表数据，但 play 阶段还需要 `keep_alive`、实体同步等客户端行为，属于 M1 真实客户端的验证范围，M0 不做断言。
 - Netty 的真实解析与环回读写：按决策 3 留到 M1 第一个任务。
 - 关闭信号：`stopHarness()` 与端口释放已由测试覆盖；Windows 下 Ctrl+C 是否触发 shutdown hook 仍需一次人工确认（运行 `:testing:minestom:run` 后按 Ctrl+C，观察 `event=server.stopping` / `stopped`）。
-- CI 实跑：仓库尚无远端，workflow 只做了静态校验（YAML 结构、action 引用有效性、Temurin 25 与 SDK 36 可用性）；首次推送后需确认首跑结果。
+- CI 实跑：已在首次推送后跑通，结果见 11.8；本机（Windows）与 Linux runner 两条路径都验证过。
+
+### 11.8 CI 首次真实运行
+
+仓库远端为 `github.com/NetheritePickaxe/pickaxecraft`，`main` 推送后 workflow 自动触发。前三次分别失败于 SDK 安装、许可证管道、`gradlew` 权限位（见 11.6 末三行），第四次通过：
+
+| 项 | 结果 |
+| --- | --- |
+| 运行 | run `41542105889`，构建 4m11s，结论 success |
+| 工具链 | `Launcher JVM: 25.0.5 (Eclipse Adoptium)`；Daemon 由 `gradle-daemon-jvm.properties` 解析为 Java 25 |
+| 门控任务 | `verifyDesktopBytecode` / `verifyAndroidBytecode` / `verifyBytecode` / `verifyModuleBoundaries` 全部实际执行 |
+| 测试任务 | `protocol-core:desktopTest` 与 `protocol-core:testAndroidHostTest` 均执行；`testing:minestom:test`、`tools:protocol-generator:test` 同样执行 |
+| 汇总 | `BUILD SUCCESSFUL in 3m 30s`，`67 actionable tasks: 67 executed` |
+
+这条结果同时补上了原先只能靠推断的两个点：AGP 9.4.1 在 Linux + JDK 25 下的构建路径可用；双端测试在无 Windows 的宿主上同样跑通。
 

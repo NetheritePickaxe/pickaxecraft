@@ -1,5 +1,7 @@
 # PickaxeCraft
 
+[![CI](https://github.com/NetheritePickaxe/pickaxecraft/actions/workflows/ci.yml/badge.svg)](https://github.com/NetheritePickaxe/pickaxecraft/actions/workflows/ci.yml)
+
 PickaxeCraft 的目标是成为一个可连接 Minestom 的 Headless Minecraft Java 版客户端框架/库。协议与会话核心由 Desktop JVM 和 Android 共用，初版不包含渲染与 GUI。
 
 > 当前为 M0 基线：工程结构、版本锁定、协议 Schema、自动化质量门控与 CLI 骨架已完成，尚未实现协议编解码，因此还不能连接服务器。
@@ -29,6 +31,8 @@ PickaxeCraft 的目标是成为一个可连接 Minestom 的 Headless Minecraft J
 ```
 
 `build` 里包含测试与两类质量门控：字节码版本（Desktop 69 / Android 65）与公共模块依赖边界（不得出现 Netty、Minestom）。
+
+CI 在 Ubuntu 上以同样的命令执行（`.github/workflows/ci.yml`）：JDK 25、Android SDK 36，并断言双端测试（`desktopTest` / `testAndroidHostTest`）与全部门控任务实际运行。
 
 ## 使用
 
