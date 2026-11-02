@@ -1,6 +1,6 @@
 # M0 实施计划：工程基线与版本锁定
 
-状态：已确认（协议版本 26.2、精简四模块），待实施  
+状态：已实施（2026-11-02），实施记录与偏差见第 11 节  
 日期：2026-11-02  
 范围：[roadmap.md](../roadmap.md) 第 2 节 M0  
 依据：已用临时工程验证构建组合（见第 4 节），未在正式仓库改动任何构建逻辑
@@ -285,3 +285,53 @@ M0 完成时，一个新克隆的仓库应满足：
 2. 能指出唯一的版本事实来源（`libs.versions.toml` + `schema/26.2/SOURCE.md`），且两处一致。
 3. 能拿出 AAR、Desktop JAR 与字节码 65/69 的自动证据。
 4. CI 对上述内容做同样的检查，而不是只编译主源码。
+
+## 11. 实施记录
+
+按 P0 → P7 顺序落地，每个任务一次提交。实际结果与计划的偏差如下。
+
+### 11.1 构建 API 的变化（计划写错的地方）
+
+- `androidLibrary {}` 在 AGP 9.4.1 已被弃用，编译期直接告警要求改用 `android {}`。约定插件与模块脚本均已改用新名。
+- `junit-platform-launcher` 与 Jupiter 不是同一条版本线：前者是 1.14.4，后者是 5.14.4。计划里写成同版本会在解析阶段失败。
+- JUnit Jupiter 当前发布版已是 6.1.3，本次仍锁 5.14.4：M0 不引入未验证的大版本。
+- `net.minestom.server.MinecraftConstants` 是包级私有接口，Kotlin 无法直接引用；Minestom 侧协议号通过继承自该接口的 `MinecraftServer.PROTOCOL_VERSION` 读取。
+
+### 11.2 任务顺序的调整
+
+- P2 只交付生成器模块本身，用 fixture 目录测确定性；把"接到 `protocol-core`"整体挪到 P3。原因：生成任务的输入就是 schema，没有 schema 时无法执行计划里那条 `:protocol-core:generateProtocolVersion` 判据。
+- 每一步都保持 `./gradlew build` 可过，因此模块是逐个 `include` 的，而不是在 P0 一次性注册四个再等它们出现。
+
+### 11.3 新增的、计划里没有的东西
+
+- `schema/26.2/source.json`：提交号与许可证的机器可读来源，生成器读它产出 `SCHEMA_COMMIT`。
+- `SCHEMA_SHA256` 由生成器在构建期计算，不手填，避免与文件内容漂移。
+- `.gitattributes` 对 `protocol-core/schema/**` 关闭行尾转换。本机 `core.autocrlf=true`，不关闭会让克隆后的 `protocol.json` 字节变化、校验和失效。
+- 根 `build.gradle.kts` 集中声明 `group` 与 `version`。
+- `:app:generateBuildInfo` 生成 `BuildInfo.CLIENT_VERSION` 与 `MINESTOM_VERSION`，让 `--version` 不必手抄版本，也不必让 `app` 依赖 Minestom。
+- `gradle.properties` 与 CLI 约定强制 UTF-8；否则 Windows 下中文日志与帮助文本乱码。
+- `verifyModuleBoundaries` 采用扫描编译类路径 jar 条目（`io/netty/`、`net/minestom/`）的实现，`testing:minestom` 显式清空禁止项。
+
+### 11.4 上游许可证的实际情况
+
+`minecraft-data` 在锁定提交下没有独立 LICENSE 文件，GitHub license API 返回空；MIT 仅由 README 的 License 章节与 npm 包元数据声明。`schema/LICENSE-minecraft-data` 记录了原文摘录与这一事实，未伪造许可证文件。
+
+### 11.5 验证证据
+
+| 项 | 结果 |
+| --- | --- |
+| `./gradlew build` | 通过；配置缓存可存储并复用 |
+| 字节码 | Desktop `ProtocolVersion.class` 主版本 69，Android 65；`verifyDesktopBytecode` / `verifyAndroidBytecode` 断言 |
+| 生成确定性 | 删除输出后重跑，SHA-256 相同（`852bab31…`）；第二次执行 `UP-TO-DATE`；改动 `version.json` 后任务重新执行 |
+| 双端测试 | `desktopTest` 与 `testAndroidHostTest` 各 1 个用例通过 |
+| Schema 入库 | `git show :protocol-core/schema/26.2/protocol.json \| sha256sum` = `e19d8398…305d`，与上游一致 |
+| 边界门控 | 临时给 `protocol-core` 加 `netty-buffer` → `verifyModuleBoundaries` 失败并列出两个 jar；移除后恢复 |
+| 字节码门控 | 临时把期望值改为 65 → `verifyDesktopBytecode` 失败并指出 `ProtocolVersion.class 为 69` |
+| Minestom | `:testing:minestom:run` 打印 `event=server.started … protocol=776`，`127.0.0.1:25565` 可建连；停止后端口释放 |
+| CLI | `--version` 输出 26.2 / 776 / 2026.10.07-26.2；未知参数退出码 2 |
+
+### 11.6 仍未覆盖
+
+- Netty 的真实解析与环回读写：按决策 3 留到 M1 第一个任务。
+- 关闭路径：`stopHarness()` 由临时端口生命周期测试覆盖（启动 → 停止 → `isStarted()` 为 false）；但 Windows 下 Ctrl+C/SIGTERM 是否触发 shutdown hook 未做自动化验证，需在 Linux CI 或手动确认。
+- CI workflow 已写入 `.github/workflows/ci.yml`，仓库尚无远端，未实际跑过；首次推送后需确认 Android SDK 36 与 Temurin 25 的可用性。

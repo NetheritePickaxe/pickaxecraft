@@ -15,18 +15,18 @@
 
 ### 交付内容
 
-- 按[项目结构](project-structure.md)建立生产模块和测试工具模块。
+- 按[项目结构](project-structure.md)建立模块，但只建当阶段有真实内容的：`protocol-core`、`tools:protocol-generator`、`testing:minestom`、`app`；`client-core`、`transport-desktop` 随 M1 首个实现创建，`transport-android` 随 M3 创建。
 - 将公共模块配置为 Desktop JVM + Android KMP，Desktop 输出 Java 25，Android 输出 Java 21。
 - 固定 Kotlin、AGP（含其 D8/R8 工具链）、Netty、协程和 Minestom 版本。
-- 锁定首个 Minecraft 协议版本及 Schema 来源，记录到版本元数据。
+- 锁定首个 Minecraft 协议版本及 Schema 来源，记录到版本元数据，并在仓库内保留 Schema 副本。
 - 建立 CI：Desktop 编译测试与 Android AAR 编译。
 - 将 `app` 收敛为 CLI 示例；清理无真实用途的初始化样例。
 
 ### 验收标准
 
 - `./gradlew build` 通过。
-- Desktop JAR 与 Android AAR 均能生成，字节码目标分别为 25 和 21。
-- 公共模块不引用 Netty、Android Context、虚拟线程或 JVM-only HTTP API。
+- Desktop JAR 与 Android AAR 均能生成，字节码目标分别为 25 和 21，并由构建任务自动断言。
+- 公共模块不引用 Netty、Android Context、虚拟线程或 JVM-only HTTP API，边界由构建任务自动检查。
 - 新克隆工程可依据锁定的版本信息重复解析同一套协议与 Minestom 依赖。
 
 ## 3. M1：协议基础与 Status 链路

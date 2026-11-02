@@ -7,7 +7,7 @@
 - [架构与技术决策](architecture.md)：项目定位、技术栈、协议边界、并发模型和平台约束。
 - [项目结构](project-structure.md)：Gradle 模块、源码目录、依赖方向和公共 API 归属。
 - [实施路线](roadmap.md)：分阶段交付内容、验收标准和范围门控。
-- [M0 实施计划](plans/m0-implementation-plan.md)：第一阶段的版本锁定、任务拆分、验证命令与风险，状态为已确认待实施。
+- [M0 实施计划](plans/m0-implementation-plan.md)：第一阶段的版本锁定、任务拆分、验证命令与风险；已实施，偏差与验证证据见第 11 节。
 
 ## 核心结论
 
@@ -20,7 +20,7 @@ PickaxeCraft 初版是一个 **Headless Minecraft Java 版客户端框架/库**�
 - PacketEvents、MCProtocolLib 和 Minosoft 只作为架构或协议参考、测试参照，不进入公共核心。
 - 先完成 Minestom 离线模式登录和 Android 连通性验证，再扩展世界模型、在线认证和多版本能力。
 
-当前仍处于规划与工程骨架阶段，本文档描述目标结构，不表示所有模块已经实现。
+M0 已完成工程基线：`protocol-core`、`tools:protocol-generator`、`testing:minestom`、`app` 四个模块可构建，版本与协议 Schema 已锁定，字节码与依赖边界由构建任务自动校验。协议编解码与会话尚未实现，因此当前还不能连接服务器。
 
 ## 参考文档
 

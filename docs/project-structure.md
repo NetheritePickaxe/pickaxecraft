@@ -1,6 +1,6 @@
 # 项目结构
 
-状态：目标结构已确定，尚未开始模块迁移  
+状态：M0 已落地，模块随首个真实调用方逐个创建  
 日期：2026-11-02
 
 ## 1. 结构原则
@@ -9,7 +9,7 @@
 - 客户端公共 API 与协议核心保持多平台；具体 I/O 位于适配模块。
 - 应用入口只承担组合根、配置和命令，不承载协议或世界逻辑。
 - 测试服务和代码生成器不参与运行时发布。
-- 当前 `app`、`utils` 是 Gradle 初始化样例，不属于长期领域边界。M0 中将 `app` 改为 Desktop CLI；`utils` 若没有真实调用方则随骨架迁移移除，不保留平行工具库。
+- 当前已存在 `:protocol-core`、`:tools:protocol-generator`、`:testing:minestom`、`:app` 四个模块；`utils` 初始化样例已随 M0 删除。`client-core` 随 M1 首个真实实现创建，`transport-desktop` 随 M1 的 TCP 读写创建，`transport-android` 随 M3 创建。
 
 ## 2. 目标目录树
 
@@ -82,17 +82,46 @@ pickaxecraft/
 
 ## 3. Gradle 模块与发布属性
 
-| Gradle 路径 | 类型 | 字节码目标 | 是否发布 |
-| --- | --- | --- | --- |
-| `:protocol-core` | Kotlin Multiplatform | Desktop 25 / Android 21 | 是 |
-| `:client-core` | Kotlin Multiplatform | Desktop 25 / Android 21 | 是 |
-| `:transport-desktop` | Kotlin JVM | Java 25 | 是 |
-| `:transport-android` | Android Library | Java 21 | 是 |
-| `:app` | Kotlin JVM 应用 | Java 25 | 否 |
-| `:tools:protocol-generator` | Kotlin JVM 工具 | Java 25 | 否 |
-| `:testing:minestom` | Kotlin JVM 测试工具 | Java 25 | 否 |
+| Gradle 路径 | 类型 | 字节码目标 | 是否发布 | 状态 |
+| --- | --- | --- | --- | --- |
+| `:protocol-core` | Kotlin Multiplatform | Desktop 25 / Android 21 | 是 | 已创建 |
+| `:client-core` | Kotlin Multiplatform | Desktop 25 / Android 21 | 是 | M1 创建 |
+| `:transport-desktop` | Kotlin JVM | Java 25 | 是 | M1 创建 |
+| `:transport-android` | Android-KMP Library | Java 21 | 是 | M3 创建 |
+| `:app` | Kotlin JVM 应用 | Java 25 | 否 | 已创建 |
+| `:tools:protocol-generator` | Kotlin JVM 工具 | Java 25 | 否 | 已创建 |
+| `:testing:minestom` | Kotlin JVM 测试工具 | Java 25 | 否 | 已创建 |
 
-KMP 的 Desktop target 可命名为 `desktop`，从而形成 `desktopMain`/`desktopTest`。Android target 只生成 Android 兼容产物；不能将 Desktop 的 Java 25 JAR 当作 Android 输入。
+### 3.1 Android 目标的接入方式（AGP 9 硬约束）
+
+AGP 9 起，`org.jetbrains.kotlin.multiplatform` 不能与 `com.android.library` 出现在同一个 Gradle 子项目，必须改用 Android-KMP Library 插件：
+
+```kotlin
+plugins {
+    id("org.jetbrains.kotlin.multiplatform")
+    id("com.android.kotlin.multiplatform.library")
+}
+
+kotlin {
+    jvm("desktop") { compilerOptions { jvmTarget.set(JvmTarget.JVM_25) } }
+    android {                       // AGP 9.4 起由 androidLibrary 改名而来
+        namespace = "org.pickaxe.protocol"
+        compileSdk = 36
+        minSdk = 24
+        compilerOptions { jvmTarget.set(JvmTarget.JVM_21) }
+        withHostTestBuilder {}.configure {}
+    }
+}
+```
+
+由此产生四条结构约束：
+
+1. 源集目录只有 `src/commonMain`、`src/commonTest`、`src/desktopMain`、`src/androidMain`、`src/androidHostTest`、`src/androidDeviceTest`；不存在 `src/main`。
+2. 该插件是单变体架构，不支持 buildTypes 与 productFlavors。库模块不受影响；未来的 Android 宿主应用必须单独建模块。
+3. Android 字节码目标由 `android.compilerOptions.jvmTarget` 决定，不使用 `android { compileOptions }`。
+4. `build/outputs/aar/<module>.aar` 是 Android 产物，`build/libs/<module>-desktop.jar` 是 Desktop 产物；字节码分别为主版本 65 与 69，由 `verifyDesktopBytecode` / `verifyAndroidBytecode` 自动断言。
+
+Android target 只生成 Android 兼容产物；不能将 Desktop 的 Java 25 JAR 当作 Android 输入。
 
 ## 4. 依赖方向
 
@@ -106,8 +135,10 @@ transport-desktop ► client-core
 transport-android ► client-core
 
 tools:protocol-generator ──► protocol-core/schema（构建期输入）
-testing:minestom ──────────► client-core + transport-desktop + Minestom
+testing:minestom ──────────► protocol-core + Minestom
 ```
+
+`testing:minestom` 当前只依赖 `protocol-core`（用于启动时交叉校验协议号）；M2 联调开始后会再依赖 `client-core` 与 `transport-desktop`。
 
 具体规则：
 
@@ -156,11 +187,21 @@ client.close()
 | `rendering` / `gui` | 与 Headless 初版无关 | 明确图形客户端需求出现后 |
 | `android-app` | 先验证 Android Library 本身 | M3 增加最小连接宿主时 |
 
-## 7. 构建约定演进
+## 7. 构建约定
 
-M0 在保留现有 JDK 25 Daemon 配置的基础上增加两类约定：
+三个预编译约定插件位于 `buildSrc/src/main/kotlin`：
 
-- KMP 共享模块：Desktop JVM 25 + Android Java 21，统一协程、测试和显式 API 规则。
-- Desktop JVM 模块：沿用 Java 25；Android Library 单独使用 Java 21，不套用 Desktop-only 约定。
+| 插件 | 作用 | 使用者 |
+| --- | --- | --- |
+| `pickaxe.kmp.library` | KMP：Desktop 25 + Android 21、`explicitApi()`、协程、JUnit 5、字节码与边界校验 | `:protocol-core` |
+| `pickaxe.jvm.library` | Kotlin/JVM 25、`explicitApi()`、JUnit 5、字节码与边界校验 | `:tools:protocol-generator`、经 CLI 传递到其余模块 |
+| `pickaxe.jvm.cli` | 在上者基础上应用 `application`，并强制 UTF-8 输出 | `:app`、`:testing:minestom` |
 
-所有目标版本、AGP、Kotlin、Minestom 和协议号的版本来源必须唯一，避免不同模块各自声明导致不可复现的联调结果。
+约定插件不写死模块信息：`namespace`、`mainClass`、禁止依赖项都由模块自己声明。`buildSrc` 预编译脚本没有 `libs` 类型安全访问器，版本统一通过 `VersionCatalogsExtension` 读取 `gradle/libs.versions.toml`。
+
+`check` 里包含两类自动门控：
+
+- `verifyBytecode` / `verifyDesktopBytecode` / `verifyAndroidBytecode`：断言 class 文件主版本为 69 / 65。
+- `verifyModuleBoundaries`：扫描编译类路径，公共模块不得出现 `io/netty/` 与 `net/minestom/`；`testing:minestom` 作为 Minestom 宿主显式放开。
+
+所有目标版本、AGP、Kotlin、Minestom 和协议号的版本来源必须唯一：依赖版本在 `gradle/libs.versions.toml`，协议元数据在 `protocol-core/schema/26.2/`。避免不同模块各自声明导致不可复现的联调结果。
