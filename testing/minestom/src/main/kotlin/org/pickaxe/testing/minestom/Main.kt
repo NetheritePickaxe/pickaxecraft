@@ -16,11 +16,6 @@ private const val USAGE: String = "用法: minestom [--port <1..65535>]，默认
 public fun main(args: Array<String>) {
     val port = parsePort(args)
     startHarness(port)
-    println(
-        "event=server.started host=$DEFAULT_HOST port=$port " +
-            "minecraft=${ProtocolVersion.MINECRAFT_VERSION} protocol=${ProtocolVersion.PROTOCOL_VERSION} " +
-            "schemaCommit=${ProtocolVersion.SCHEMA_COMMIT}",
-    )
 
     // 结束日志放在 hook 内：JVM 开始关闭后主线程可能先被终止，
     // 若把“已停止”写在 await 之后，日志会随机缺失。
@@ -32,6 +27,14 @@ public fun main(args: Array<String>) {
             println("event=server.stopped")
             stopped.countDown()
         },
+    )
+
+    // 必须等 hook 注册完再宣告就绪：调用方（测试或脚本）收到这一行就可能立即发信号，
+    // 若先打印后注册，信号有概率落在两者之间，表现为“hook 完全没执行”。
+    println(
+        "event=server.started host=$DEFAULT_HOST port=$port " +
+            "minecraft=${ProtocolVersion.MINECRAFT_VERSION} protocol=${ProtocolVersion.PROTOCOL_VERSION} " +
+            "schemaCommit=${ProtocolVersion.SCHEMA_COMMIT}",
     )
 
     stopped.await()

@@ -85,6 +85,10 @@ class ShutdownHookTest {
             assertFailsWith<IOException>("进程退出后端口应已释放") {
                 Socket().use { it.connect(InetSocketAddress(DEFAULT_HOST, port), 1_000) }
             }
+
+            // 通过时也把证据打到 CI 日志：这条用例的价值就在“hook 真的执行了”，
+            // 只看到一个绿点无法区分它和“被跳过”。
+            println("[ShutdownHookTest] exitCode=$exitCode，子进程输出:\n$log")
         } finally {
             if (process.isAlive) process.destroyForcibly()
             logFile.delete()
