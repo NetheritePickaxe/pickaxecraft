@@ -10,8 +10,6 @@ import java.util.concurrent.CountDownLatch
  * 不依赖进程被强制杀死，保证端口与线程正常释放。
  */
 public fun main() {
-    val stopped = CountDownLatch(1)
-
     startHarness()
     println(
         "event=server.started host=$DEFAULT_HOST port=$DEFAULT_PORT " +
@@ -19,14 +17,17 @@ public fun main() {
             "schemaCommit=${ProtocolVersion.SCHEMA_COMMIT}",
     )
 
+    // 结束日志放在 hook 内：JVM 开始关闭后主线程可能先被终止，
+    // 若把“已停止”写在 await 之后，日志会随机缺失。
+    val stopped = CountDownLatch(1)
     Runtime.getRuntime().addShutdownHook(
         Thread {
             println("event=server.stopping")
             stopHarness()
+            println("event=server.stopped")
             stopped.countDown()
         },
     )
 
     stopped.await()
-    println("event=server.stopped")
 }

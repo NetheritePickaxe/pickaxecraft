@@ -7,6 +7,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -24,8 +27,9 @@ jobs:
       - name: Install Android platform and build tools
         run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
 
+      # gradle/actions 当前主版本为 v6；v4 这条引用在仓库里并不存在，会让 job 在第一步就失败。
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       # build 内含测试、字节码版本校验与公共模块依赖边界校验。
       - name: Build

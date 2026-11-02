@@ -328,10 +328,25 @@ M0 完成时，一个新克隆的仓库应满足：
 | 边界门控 | 临时给 `protocol-core` 加 `netty-buffer` → `verifyModuleBoundaries` 失败并列出两个 jar；移除后恢复 |
 | 字节码门控 | 临时把期望值改为 65 → `verifyDesktopBytecode` 失败并指出 `ProtocolVersion.class 为 69` |
 | Minestom | `:testing:minestom:run` 打印 `event=server.started … protocol=776`，`127.0.0.1:25565` 可建连；停止后端口释放 |
+| 状态查询 | 裸 socket 以 `nextState=1` 握手，服务端返回 `{"version":{"name":"26.2","protocol":776}, …}`，证明分帧与锁定协议号一致 |
 | CLI | `--version` 输出 26.2 / 776 / 2026.10.07-26.2；未知参数退出码 2 |
 
-### 11.6 仍未覆盖
+### 11.6 复查发现并修正的缺陷
 
+M0 交付后做了一次端到端复查，发现四处实现缺陷与一处 CI 配置错误，均已修正：
+
+| 缺陷 | 证据 | 修正 |
+| --- | --- | --- |
+| 联调服务从未设置出生实例 | `ConnectionManager` 常量池含 “You need to specify a spawning instance in the AsyncPlayerConfigurationEvent”；裸 socket 登录进入 configuration 后除注册表下发外无任何后续包，服务端也不报错 | 注册 `AsyncPlayerConfigurationEvent` 并设置 `spawningInstance`；实测事件触发，日志输出 `event=player.configuring name=TestBot` |
+| “防重复启动”检查自身会 NPE | `MinecraftServer.isStarted()` 在 `init` 之前访问为 null 的 `serverProcess`，新建进程首次启动即抛 NPE | 改用模块内状态位 `harnessStarted`，不再依赖 `isStarted()` 判断前置状态 |
+| 停止日志可能丢失 | 原实现由主线程在 `stopped.await()` 之后打印 `event=server.stopped`，JVM 关闭时主线程可能已被终止 | 结束日志移入 shutdown hook，`stopping` / `stopped` 成对输出 |
+| 测试没有触达生成器 | 旧用例只断言 `isStarted()`，`Generator` 从未执行，方块键写错也不会被发现 | 用例改为：临时端口启动 → 强制加载出生区块 → 断言石头 → 停止 → 断言端口拒绝连接 |
+| CI 引用不存在的 action | `gradle/actions/setup-gradle@v4` 的 tag 返回 404，当前主版本为 v6，job 会在该步直接失败 | 改为 `@v6`，并补 `timeout-minutes` 与最小 `permissions` |
+
+### 11.7 仍未覆盖
+
+- 完整登录到出生：裸 socket 已能走到 `finish_configuration` 并收到注册表数据，但 play 阶段还需要 `keep_alive`、实体同步等客户端行为，属于 M1 真实客户端的验证范围，M0 不做断言。
 - Netty 的真实解析与环回读写：按决策 3 留到 M1 第一个任务。
-- 关闭路径：`stopHarness()` 由临时端口生命周期测试覆盖（启动 → 停止 → `isStarted()` 为 false）；但 Windows 下 Ctrl+C/SIGTERM 是否触发 shutdown hook 未做自动化验证，需在 Linux CI 或手动确认。
-- CI workflow 已写入 `.github/workflows/ci.yml`，仓库尚无远端，未实际跑过；首次推送后需确认 Android SDK 36 与 Temurin 25 的可用性。
+- 关闭信号：`stopHarness()` 与端口释放已由测试覆盖；Windows 下 Ctrl+C 是否触发 shutdown hook 仍需一次人工确认（运行 `:testing:minestom:run` 后按 Ctrl+C，观察 `event=server.stopping` / `stopped`）。
+- CI 实跑：仓库尚无远端，workflow 只做了静态校验（YAML 结构、action 引用有效性、Temurin 25 与 SDK 36 可用性）；首次推送后需确认首跑结果。
+

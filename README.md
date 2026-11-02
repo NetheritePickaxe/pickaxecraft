@@ -43,6 +43,8 @@ PickaxeCraft 的目标是成为一个可连接 Minestom 的 Headless Minecraft J
 ./gradlew :testing:minestom:run          # 监听 127.0.0.1:25565，离线认证
 ```
 
+启动后输出 `event=server.started … protocol=776`，玩家连接时输出 `event=player.configuring`，出生后输出 `event=player.spawned`；Ctrl+C 停止时输出 `event=server.stopping` / `event=server.stopped`。该服务只绑定回环地址，不会暴露到局域网。
+
 ## 版本锁定
 
 - 依赖版本唯一来源：`gradle/libs.versions.toml`

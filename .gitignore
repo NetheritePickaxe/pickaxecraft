@@ -11,10 +11,9 @@ captures/
 .cxx/
 
 ### IntelliJ IDEA ###
-.idea/modules.xml
-.idea/jarRepositories.xml
-.idea/compiler.xml
-.idea/libraries/
+# 整个 IDE 目录都不入库：这些文件描述的是本机路径与个人设置，
+# 每个人的内容都不同，提交后只会产生无意义冲突。
+.idea/
 *.iws
 *.iml
 *.ipr
