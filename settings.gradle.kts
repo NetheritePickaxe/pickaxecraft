@@ -25,5 +25,6 @@ plugins {
 // 见 docs/plans/m0-implementation-plan.md 决策 2；其余模块在各自任务中与本行一并创建。
 include(":app")
 include(":protocol-core")
+include(":tools:protocol-generator")
 
 rootProject.name = "pickaxecraft"
