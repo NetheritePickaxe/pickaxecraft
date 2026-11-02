@@ -53,6 +53,8 @@ tasks.withType<Test>().configureEach {
     useJUnitPlatform()
     testLogging {
         events("failed", "skipped")
+        // 默认只打印类名与行号，CI 上无法据此判断断言内容，必须带上异常消息。
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.SHORT
     }
 }
 
