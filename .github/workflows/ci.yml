@@ -31,7 +31,9 @@ jobs:
             sdkmanager="$(command -v sdkmanager)"
           fi
           "$sdkmanager" --version
-          yes | "$sdkmanager" --licenses > /dev/null
+          # sdkmanager 读完即退出，yes 会收到 SIGPIPE(141)；pipefail 下这会被判为失败，
+          # 因此这里显式忽略该管道的退出码。
+          yes | "$sdkmanager" --licenses > /dev/null || true
           "$sdkmanager" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
       # 断言实际生效的 JVM 是 25，避免 daemon 悄悄回落到镜像自带的 21。
