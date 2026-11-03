@@ -119,6 +119,24 @@ Minestom 在玩家设置为空时会在出生流程里读取失败。
 **本项目的做法**：全部在 `McplConnection` 内就地完成，`client-core` 与调用方不参与。
 观察点仍是 `super.callPacketReceived` 之后，因此应答总是在库完成状态处理之后发出。
 
+### 2.10 区块内容不由协议库解析
+
+`ClientboundLevelChunkWithLightPacket` 只提供 `chunkData: byte[]`，section 与调色板都在字节里。
+库里有 `MinecraftTypes.readChunkSection`，但客户端解包路径不调用它——不能指望库给出方块内容。
+
+解码时必须遵守两条来自上游实现的事实，两者都容易记错：
+
+1. **调色板的长整型数组没有长度前缀**。长度由“元素数 / 每个 long 能放几个”算出。
+   证据：`MinecraftTypes.readFixedSizeLongArray` 直接读定长 long；Minestom 的
+   `Palette` 序列化器写 `RAW_LONGS`，也不写长度。按旧格式（varint 长度 + long 数组）实现时，
+   联调会在第一列区块上出现“尾部多出 2 字节”。
+2. **section 数量不在包里**，等于当前维度 `height / 16`；维度高度来自
+   `minecraft:dimension_type` 注册表（`min_y`、`height`），`ClientboundLoginPacket` 只给下标。
+   因此解码顺序是“注册表 → Login → 区块”，顺序被打乱时应当失败而不是猜默认高度。
+
+另外：服务端重发同一坐标的区块表示整列替换；`ClientboundForgetLevelChunkPacket` 表示丢弃。
+两者都必须落到世界状态里，否则缓存只增不减。
+
 
 ## 3. 由本项目实现、不得记在上游账上的部分
 
@@ -132,12 +150,15 @@ Minestom 在玩家设置为空时会在出生流程里读取失败。
 | 会话 Actor、背压、溢出 | `client-core` | 有界缓冲 + 单消费者事件流；溢出终止会话而不是静默丢弃 |
 | 阶段词汇 | `client-core` | `SessionState` 与 `ProtocolPhase` 独立映射，便于将来更换后端 |
 | 出生应答 | `McplConnection` | 客户端设置、传送确认、区块批次确认、`player_loaded`；调用方看不到这些包 |
+| 区块解码 | `ChunkDecoder` | 调色板三种形态、位宽与截断校验；向上只给不可变的 `ChunkColumn` |
+| 维度高度 | `DimensionRegistry` | 从 `dimension_type` 注册表读 `min_y` / `height`；顺序即 Login 的维度 id |
 | 世界快照 | `client-core` | `Session.world` 汇总维度、实体 id、位置与区块数；不向上暴露包对象 |
+| 区块缓存 | `client-core` | 按坐标保存不可变区块列，关闭时清空；查询 API 区分“未加载”与“越界” |
 
 ## 4. 明确不依赖的行为
 
 - 上游 API 的稳定性：库方不承诺，升级必须重跑联调用例。
-- 具体包类型清单：目前只识别注册表、Login、位置同步、区块与区块批次这五类；
+- 具体包类型清单：目前只识别注册表、Login、位置同步、区块、区块批次与区块卸载这六类；
   其余包一律不解释，也不假设其字段。
 - 库内部的线程数量、线程名、事件循环实现：只依赖“同一连接的回调在单一网络线程上”。
 - `Session.getChannel()` 之外的底层干预能力：M1 不需要；若将来需要，先评审 fork 策略。
@@ -155,6 +176,8 @@ Minestom 在玩家设置为空时会在出生流程里读取失败。
 | 事件溢出终止而非丢弃 | `ClientSessionTest.事件缓冲写满时终止会话而不是静默丢弃` |
 | 出生：自动应答传送到位并收到区块 | `ClientSessionTest.登录后完成出生并进入世界`（客户端事件） |
 | 出生：服务端确认 `PlayerSpawnEvent` 与 `PlayerLoadedEvent` | 同上（harness 的 `awaitMilestone`） |
+| 区块调色板三种形态与截断数据 | `ChunkDecoderTest`（手工构造字节，7 例） |
+| 区块内容与服务端一致 | `ClientSessionTest.出生后读到的方块状态与服务端一致`（双侧 `stateId` 对账） |
 
 联调用例全部经由 `client-core` 公共 API，不再直接装配协议库；这些用例同时是
 “协议实现没有穿透到上层”的证明。
@@ -165,4 +188,6 @@ Minestom 在玩家设置为空时会在出生流程里读取失败。
 2. 重跑 `./gradlew clean build`，特别是 `testing:minestom` 的 `ClientSessionTest`。
 3. 核对本文第 2 节每一条是否仍成立（线程模型、KeepAlive、状态切换点、断开语义）。
 4. 若上游改了默认执行器或 `EventLoopGroup` 归属，确认适配层的覆盖仍然生效。
-5. 更新本文与 `docs/architecture.md` 中受影响的描述。
+5. 若上游开始自带区块解码，或调色板线格式变化（例如重新带回 long 数组长度前缀），
+   先跑 `ChunkDecoderTest` 与 `ClientSessionTest.出生后读到的方块状态与服务端一致`。
+6. 更新本文与 `docs/architecture.md` 中受影响的描述。

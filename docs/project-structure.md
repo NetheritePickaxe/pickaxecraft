@@ -1,6 +1,6 @@
 # 项目结构
 
-状态：M0–M2 已完成（连接链路与出生）；Headless 为第一阶段，独立 libGDX 客户端为长期下游
+状态：M0–M2 已完成（连接链路与出生），M4a 已完成（区块内容与只读世界）；Headless 为第一阶段，独立 libGDX 客户端为长期下游
 日期：2026-11-04
 
 ## 1. 结构原则
@@ -27,15 +27,19 @@ pickaxecraft/
 │       │       ├── ServerStatus.kt
 │       │       ├── ProtocolEvent.kt        # 事件、阶段、断开原因、失败分层
 │       │       ├── ProtocolConnection.kt   # 对上层暴露的唯一入口
-│       │       └── internal/               # McplConnection、ComponentText
+│       │       ├── world/
+│       │       │   └── ChunkColumn.kt      # 不可变区块列与 section（按坐标读方块/群系）
+│       │       └── internal/               # McplConnection、ComponentText、
+│       │                                   # ChunkDecoder、DimensionRegistry
 │       └── test/kotlin/
 │           └── org/pickaxe/protocol/
-│               └── ProtocolVersionTest.kt
+│               ├── ProtocolVersionTest.kt
+│               └── internal/ChunkDecoderTest.kt
 │
 ├── client-core/                    # Java 21 字节码：公共客户端 API、会话、事件
 │   └── src/main/kotlin/org/pickaxe/client/
 │       ├── MinecraftClient.kt      # 入口：status / connect / close
-│       ├── Session.kt              # 会话 Actor、有界缓冲、关闭语义
+│       ├── Session.kt              # 会话 Actor、有界缓冲、区块缓存、关闭语义
 │       ├── SessionState.kt
 │       ├── ClientEvent.kt
 │       ├── ClientException.kt
@@ -111,14 +115,17 @@ testing:minestom ──► client-core + protocol-core（版本对账）+ Minest
 - `MinecraftClient`：`status` / `connect` / `close`，一个实例至多一个活动会话。
 - `ClientOptions`：连接、登录、状态查询超时与事件缓冲容量。
 - `Session`：`state`（StateFlow）、`events`（单消费者 Flow）、`world` / `registries`
-  （会话级只读快照）与幂等 `close`。
+  （会话级只读快照）、区块查询（`chunk` / `blockStateAt` / `biomeAt` / `loadedChunks`）
+  与幂等 `close`。
 - `ClientEvent` / `ClientException`：有序事件（含 `JoinedWorld` / `PositionUpdated` /
   `ChunksReceived`）与可分类的失败。
-- `WorldSnapshot` / `Position`：出生过程的只读状态，不含方块内容。
+- `WorldSnapshot` / `Position`：出生过程的只读状态。方块内容走 `Session` 的区块查询，
+  不塞进每次更新都要复制的快照。
 
 `protocol-core` 只提供适配层事实（`ServerAddress`、`ServerStatus`、`ProtocolEvent`、
-`ProtocolConnection`），作为 `client-core` 的 `api` 依赖；它的内部实现（协议库类型、
-Netty 会话）不是公共 API，调用方不应也无法看到数据包对象。
+`ProtocolConnection`，以及 `ChunkColumn` / `ChunkSection` 这类中立数据），作为 `client-core`
+的 `api` 依赖；它的内部实现（协议库类型、Netty 会话）不是公共 API，调用方不应也无法看到
+数据包对象。
 
 公共 API 是跨仓库契约：不得暴露 libGDX、OpenGL、Android、RoboVM、Netty 或 MCProtocolLib 类型。网络线程到 libGDX 主循环的调度由下游客户端负责；本库只保证事件和只读状态的线程语义清楚。
 

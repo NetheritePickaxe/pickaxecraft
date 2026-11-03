@@ -27,6 +27,7 @@ import org.geysermc.mcprotocollib.protocol.packet.configuration.clientbound.Clie
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundLoginPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundPlayerPositionPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundChunkBatchFinishedPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundForgetLevelChunkPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundLevelChunkWithLightPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundPlayerLoadedPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.level.ServerboundAcceptTeleportationPacket
@@ -38,6 +39,7 @@ import org.pickaxe.protocol.ProtocolListener
 import org.pickaxe.protocol.ProtocolPhase
 import org.pickaxe.protocol.ServerAddress
 import org.pickaxe.protocol.ServerStatus
+import org.pickaxe.protocol.world.ChunkColumn
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.util.concurrent.Executor
@@ -58,6 +60,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * 协议要求本端回应的东西（客户端设置、传送确认、区块批次确认、player_loaded）
  * 都由本类就地处理：这些是“连接可用”的前提，不该让每个调用方各写一遍。
+ *
+ * 区块内容也在这里解码：协议库为了避免绑定客户端世界模型，只把 `chunkData` 原样交出，
+ * section 结构与调色板由 [ChunkDecoder] 补齐。上层拿到的是不可变的区块列，
+ * 看不到 `ByteBuf`，也不需要知道维度高度是怎么来的。
  *
  * 所有回调都发生在该连接自己的网络线程上（`pickaxe-mcpl` 线程组）。
  */
@@ -101,6 +107,12 @@ internal class McplConnection(
     private var pitch: Float = 0f
     private var chunkTotal: Int = 0
     private var playerLoadedSent: Boolean = false
+
+    /** 配置阶段收到的维度类型表；下标即 Login 包里的维度 id。 */
+    private var dimensions: List<DimensionShape> = emptyList()
+
+    /** 当前所在维度，决定区块的 section 数量与最低 Y。 */
+    private var currentDimension: DimensionShape? = null
 
     val isShutDown: Boolean get() = shutdownStarted.get()
 
@@ -182,23 +194,41 @@ internal class McplConnection(
         // 先完成协议要求本端回的应答，再向上报告；顺序反过来时，消费者越慢
         // 越容易把服务端的等待拖成超时。
         when (packet) {
-            is ClientboundRegistryDataPacket ->
+            is ClientboundRegistryDataPacket -> {
+                // 注册表条目顺序即维度 id，必须在 Login 之前读出来：区块解码依赖维度高度。
+                if (packet.registry.asString() == DimensionRegistry.REGISTRY_ID) {
+                    dimensions = DimensionRegistry.parse(packet.entries)
+                }
                 emit(ProtocolEvent.RegistryData(packet.registry.asString(), packet.entries.size))
+            }
 
-            is ClientboundLoginPacket -> emit(
-                ProtocolEvent.JoinedWorld(
-                    entityId = packet.entityId,
-                    dimension = packet.commonPlayerSpawnInfo.worldName.asString(),
-                    gameMode = packet.commonPlayerSpawnInfo.gameMode.name,
-                    viewDistance = packet.viewDistance,
-                    simulationDistance = packet.simulationDistance,
-                    maxPlayers = packet.maxPlayers,
-                ),
-            )
+            is ClientboundLoginPacket -> {
+                currentDimension = dimensions.getOrNull(packet.commonPlayerSpawnInfo.dimension)
+                    ?: throw IllegalStateException(
+                        "Login 指向维度 id ${packet.commonPlayerSpawnInfo.dimension}，" +
+                            "但 dimension_type 注册表只有 ${dimensions.size} 项",
+                    )
+                emit(
+                    ProtocolEvent.JoinedWorld(
+                        entityId = packet.entityId,
+                        dimension = packet.commonPlayerSpawnInfo.worldName.asString(),
+                        gameMode = packet.commonPlayerSpawnInfo.gameMode.name,
+                        viewDistance = packet.viewDistance,
+                        simulationDistance = packet.simulationDistance,
+                        maxPlayers = packet.maxPlayers,
+                    ),
+                )
+            }
 
             is ClientboundPlayerPositionPacket -> acceptTeleport(packet)
 
-            is ClientboundLevelChunkWithLightPacket -> chunkTotal++
+            is ClientboundLevelChunkWithLightPacket -> {
+                chunkTotal++
+                emit(ProtocolEvent.ChunkLoaded(decodeChunk(packet)))
+            }
+
+            is ClientboundForgetLevelChunkPacket ->
+                emit(ProtocolEvent.ChunkUnloaded(packet.x, packet.z))
 
             is ClientboundChunkBatchFinishedPacket -> acknowledgeChunkBatch(packet)
 
@@ -242,6 +272,27 @@ internal class McplConnection(
         if (!playerLoadedSent) {
             playerLoadedSent = true
             send(ServerboundPlayerLoadedPacket.INSTANCE)
+        }
+    }
+
+    /**
+     * 区块解码。
+     *
+     * 解码在网络线程上完成：一列 24 个 section 的工作量在微秒级，远低于读超时；
+     * 这里同样不能做任何可能阻塞的操作，否则会连带拖住库对 KeepAlive 的自动应答。
+     *
+     * 失败必须带坐标与维度，否则“世界缺了一块”在现场无法定位。
+     */
+    private fun decodeChunk(packet: ClientboundLevelChunkWithLightPacket): ChunkColumn {
+        val dimension = currentDimension
+            ?: throw IllegalStateException("收到区块 (${packet.x}, ${packet.z}) 时还没有确定当前维度")
+        return try {
+            ChunkDecoder.decode(packet.x, packet.z, dimension.minY, dimension.sectionCount, packet.chunkData)
+        } catch (e: IllegalArgumentException) {
+            throw IllegalStateException(
+                "解码维度 ${dimension.id} 的区块 (${packet.x}, ${packet.z}) 失败：${e.message}",
+                e,
+            )
         }
     }
 

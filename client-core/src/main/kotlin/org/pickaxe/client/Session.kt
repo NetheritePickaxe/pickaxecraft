@@ -20,6 +20,8 @@ import org.pickaxe.protocol.ProtocolFailureKind
 import org.pickaxe.protocol.ProtocolListener
 import org.pickaxe.protocol.ProtocolPhase
 import org.pickaxe.protocol.ServerAddress
+import org.pickaxe.protocol.world.ChunkColumn
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
@@ -29,6 +31,9 @@ import java.util.concurrent.atomic.AtomicReference
  * 线程模型：协议回调发生在网络线程，只做一次有界入队；状态迁移、事件分发与
  * 调用方可见的一切都在会话自己的 Actor 协程里按到达顺序执行。因此
  * [state] 与 [events] 天然有序，且调用方永远不会在网络线程上被回调。
+ *
+ * 区块是这条规则的唯一例外：它是高频率、大体积的世界数据，走独立的有界缓存
+ * （见 [chunk]），写入的是不可变对象，因此读取不需要等待 Actor，也不会挤掉控制事件。
  *
  * 生命周期：[close] 幂等；关闭后 [state] 变为 [SessionState.CLOSED]，
  * [events] 结束，网络线程随之回收。会话也可以因服务端断开或协议错误自行终止，
@@ -66,6 +71,15 @@ public class Session internal constructor(
     private val inbox = Channel<ProtocolEvent>(capacity = options.eventBufferCapacity)
     private val outbox = Channel<ClientEvent>(capacity = options.eventBufferCapacity)
 
+    /**
+     * 会话私有的区块缓存，键是打包后的区块坐标。
+     *
+     * 这里绕开了 [inbox]：区块是世界数据，出生时会连续到达数百列且单项体积很大，
+     * 放进与信用量绑定的队列会挤掉控制事件，消费者慢时还会直接终止会话。缓存的值是
+     * 不可变的 [ChunkColumn]，因此网络线程写入、调用方任意线程读取都不需要额外加锁。
+     */
+    private val chunks = ConcurrentHashMap<Long, ChunkColumn>()
+
     /** 有序事件流，单消费者；会话终止后正常结束。 */
     public val events: Flow<ClientEvent> = outbox.consumeAsFlow()
 
@@ -100,6 +114,8 @@ public class Session internal constructor(
         } finally {
             inbox.close()
             actor?.cancel()
+            // 区块属于本次会话；不清理会让已关闭的会话继续持有整个出生点视野。
+            chunks.clear()
             mutableState.value = SessionState.CLOSED
             outbox.close()
         }
@@ -113,8 +129,46 @@ public class Session internal constructor(
         }
     }
 
-    /** 协议回调：网络线程上只允许入队，溢出即终止会话。 */
+    /** 当前已缓存的区块列数量。 */
+    public val loadedChunks: Int get() = chunks.size
+
+    /** 按区块坐标取一列区块；未加载、已卸载或会话已关闭时返回 null。 */
+    public fun chunk(chunkX: Int, chunkZ: Int): ChunkColumn? = chunks[chunkKey(chunkX, chunkZ)]
+
+    /**
+     * 按世界坐标读取方块状态 id；所在区块未加载时返回 null。
+     *
+     * id 是协议的全局方块状态 id。要得到 `minecraft:stone` 这样的名字需要版本数据表，
+     * 那属于下游客户端的资产，不进入本库。
+     *
+     * @throws IllegalArgumentException 区块已加载，但 Y 超出该维度高度。
+     */
+    public fun blockStateAt(x: Int, y: Int, z: Int): Int? =
+        chunk(x shr 4, z shr 4)?.blockStateAt(x, y, z)
+
+    /**
+     * 按世界坐标读取生物群系 id（`minecraft:worldgen/biome` 注册表下标）；
+     * 所在区块未加载时返回 null。
+     */
+    public fun biomeAt(x: Int, y: Int, z: Int): Int? =
+        chunk(x shr 4, z shr 4)?.biomeAt(x, y, z)
+
+    /** 协议回调：网络线程上只允许缓存写入或一次入队，溢出即终止会话。 */
     private fun onProtocolEvent(event: ProtocolEvent) {
+        when (event) {
+            is ProtocolEvent.ChunkLoaded -> {
+                if (!closing.get()) chunks[chunkKey(event.column.x, event.column.z)] = event.column
+                return
+            }
+
+            is ProtocolEvent.ChunkUnloaded -> {
+                if (!closing.get()) chunks.remove(chunkKey(event.x, event.z))
+                return
+            }
+
+            else -> Unit
+        }
+
         if (inbox.trySend(event).isFailure) {
             if (closing.get()) return
             abortBecauseOfOverflow()
@@ -134,6 +188,7 @@ public class Session internal constructor(
         terminalError.compareAndSet(null, ClientException.EventOverflow(options.eventBufferCapacity))
         inbox.close()
         actor?.cancel()
+        chunks.clear()
         mutableState.value = SessionState.CLOSED
         outbox.close()
         // 网络线程上不能做阻塞关闭；交回调度器。
@@ -187,6 +242,10 @@ public class Session internal constructor(
             true
         }
 
+        // 区块与卸载在 onProtocolEvent 里已写入缓存，不经过 Actor；列出来是为了让
+        // 这里的穷尽分支跟上协议事件的增长——新增事件没有处理策略时应当编译失败。
+        is ProtocolEvent.ChunkLoaded, is ProtocolEvent.ChunkUnloaded -> true
+
         // 登录会话不会收到状态查询结果。
         is ProtocolEvent.StatusReceived -> true
 
@@ -225,6 +284,7 @@ public class Session internal constructor(
 
     private suspend fun finish() {
         if (!finished.compareAndSet(false, true)) return
+        chunks.clear()
         mutableState.value = SessionState.CLOSED
         try {
             // 服务端或协议先断开时也要回收连接资源；本方法幂等。
@@ -245,6 +305,9 @@ public class Session internal constructor(
 }
 
 private fun WorldSnapshot?.orEmpty(): WorldSnapshot = this ?: WorldSnapshot()
+
+/** 区块坐标打包成一个 long 作为缓存键，避免每次查询都分配对象。 */
+private fun chunkKey(x: Int, z: Int): Long = (x.toLong() shl 32) or (z.toLong() and 0xFFFF_FFFFL)
 
 internal fun ProtocolPhase.toSessionState(): SessionState = when (this) {
     ProtocolPhase.LOGIN -> SessionState.LOGIN

@@ -1,5 +1,7 @@
 package org.pickaxe.protocol
 
+import org.pickaxe.protocol.world.ChunkColumn
+
 /**
  * 客户端视角的协议阶段。
  *
@@ -70,6 +72,21 @@ public sealed interface ProtocolEvent {
     public data class ChunksReceived(
         public val chunks: Int,
         public val total: Int,
+    ) : ProtocolEvent
+
+    /**
+     * 一列区块已解码。
+     *
+     * 这是**世界数据**而不是控制事件：出生时会连续到达数百列，单项体积也远大于其他事件。
+     * 监听者应当按坐标写入缓存并立即返回，不要把它塞进任何与信用量绑定的队列，
+     * 否则慢消费者会拖住整个连接。重发同一坐标表示服务端要求整列替换。
+     */
+    public data class ChunkLoaded(public val column: ChunkColumn) : ProtocolEvent
+
+    /** 服务端要求丢弃某列区块（玩家离开视野）。 */
+    public data class ChunkUnloaded(
+        public val x: Int,
+        public val z: Int,
     ) : ProtocolEvent
 
     /** 会话终止，且这是本次连接唯一一次终止通知。 */

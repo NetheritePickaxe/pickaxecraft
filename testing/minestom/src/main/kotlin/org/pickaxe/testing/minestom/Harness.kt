@@ -2,6 +2,7 @@ package org.pickaxe.testing.minestom
 
 import net.minestom.server.Auth
 import net.minestom.server.MinecraftServer
+import net.minestom.server.coordinate.Pos
 import net.minestom.server.entity.Player
 import net.minestom.server.event.player.AsyncPlayerConfigurationEvent
 import net.minestom.server.event.player.PlayerLoadedEvent
@@ -108,6 +109,9 @@ public fun startHarness(port: Int = DEFAULT_PORT): InstanceContainer {
     MinecraftServer.getGlobalEventHandler().addListener(AsyncPlayerConfigurationEvent::class.java) { event ->
         println("event=player.configuring name=${event.player.username}")
         event.spawningInstance = instance
+        // 玩家默认重生点是 Pos.ZERO，会站在石头平面内部（y=0）；显式放到平台顶上，
+        // 这样“脚下方块是石头、上方是空气”才是一个可核对的事实。
+        event.player.setRespawnPoint(Pos(0.5, GROUND_HEIGHT.toDouble(), 0.5))
     }
     MinecraftServer.getGlobalEventHandler().addListener(PlayerSpawnEvent::class.java) { event ->
         println("event=player.spawned name=${event.player.username}")

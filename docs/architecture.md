@@ -94,7 +94,7 @@ Java 21 字节码不代表完整 JDK 21 API 在 Android 上可用：`protocol-co
          会话状态机、事件、注册表、世界模型
                          |
                    protocol-core
-      协议适配：连接、状态、事件转换、版本对账
+      协议适配：连接、状态、事件转换、区块解码、版本对账
                          |
                MCProtocolLib + Netty
       分帧、压缩、加密、数据包编解码与传输
@@ -122,6 +122,7 @@ Java 21 字节码不代表完整 JDK 21 API 在 Android 上可用：`protocol-co
 ```text
 Netty 网络线程（每连接一个，线程名前缀 pickaxe-mcpl）
   └─ McplConnection：协议库回调 → 语义事件 → trySend 到有界 Channel
+  └─ 区块列（已解码、不可变）→ Session 的区块缓存：按坐标覆盖，不经过 Channel
 会话 Actor（client-core，单个协程）
   └─ 状态迁移、事件分发、终止处理；按到达顺序执行
 调用方
@@ -134,6 +135,8 @@ Netty 网络线程（每连接一个，线程名前缀 pickaxe-mcpl）
   协议库默认会再引入一个静态共享的包处理线程池，那会让同一会话的回调出现在两个线程上。
 - 网络线程到 Actor 之间是**有界** Channel；写满即终止该会话并报告 `ClientException.EventOverflow`。
   M1 选择“终止并报告”，而不是静默丢弃或无限缓冲；按事件类别细分留到有真实需求时再做。
+- 世界数据（区块）是这条规则的唯一例外：它高频、体积大、天然按坐标覆盖，走会话私有的
+  `ConcurrentHashMap`；缓存的是不可变对象，因此不需要跨线程同步，也不会挤掉控制事件。
 - 事件流是单消费者；终止事件（`Closed`/`Failed`）恰好一次，之后流结束。
 - 失败在适配层归层（`CONNECT`/`NETWORK`/`PROTOCOL`），上层按层选择处理策略，
   不需要识别协议库或 Netty 的异常类。
@@ -159,7 +162,22 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 游戏模式、位置、累计区块数）。`SessionState.PLAY` 只表示协议状态，出生进度由 `world` 表达，
 不为“已出生”另造状态——服务端并不会通知“出生完成”，本库也不猜测。
 
-适配层不解析区块内容：`ChunksReceived` 只数数量。方块调色板、光照与实体属于 M4 的世界模型。
+### 5.3 M4a 已落地的具体形态：区块内容
+
+协议库只把区块的 `chunkData` 作为字节数组交出，section 结构与调色板由 `protocol-core` 的
+`ChunkDecoder` 补齐；客户端拿到的 `ChunkColumn` 不可变且保持压缩形态（调色板 + long 数组）。
+
+- **section 数量来自维度，不来自数据**：等于 `height / 16`，维度信息取自配置阶段的
+  `minecraft:dimension_type`，下标与 Login 包中的维度 id 对齐。因此顺序固定为
+  “注册表 → Login → 区块”；缺少维度时直接失败，不猜默认高度。
+- **读取 API**：`Session.chunk(x, z)`、`blockStateAt(x, y, z)`、`biomeAt(x, y, z)`。
+  未加载返回 `null`，已加载但 Y 越界抛错——“没有数据”和“数据不合法”是两件事。
+- **方块 id 是协议的全局状态 id**。翻译成 `minecraft:stone` 需要版本数据表，那属于下游客户端的
+  资产，不进入核心库。
+- **未解码**：光照、高度图、方块实体（NBT）与群系增量更新。重生/维度切换尚未处理，
+  此时解码会因 section 数量不符而失败——这是 fail-fast，但在支持重生前必须补上。
+
+实现记录与格式细节见 [M4a 实施记录](plans/m4a-chunk-model.md)。
 
 ## 6. libGDX 与平台约束
 
@@ -199,7 +217,8 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 ## 7. 测试与质量门控
 
 - 版本常量与协议库 codec 常量对账，注册表 NBT 可加载。
-- `ClientSessionTest` 通过公共 API 真实连接 Minestom：Status 查询返回 776，离线登录进入 play 并收到注册表数据；另覆盖会话隔离、服务端断开、连接失败、关闭后线程回收与事件溢出。依赖组合或版本错配时，编译仍会通过，只有这些用例会失败。
+- `ClientSessionTest` 通过公共 API 真实连接 Minestom：Status 查询返回 776，离线登录进入 play 并收到注册表数据；另覆盖会话隔离、服务端断开、连接失败、关闭后线程回收与事件溢出；出生后读到的方块状态与服务端 `stateId` 对账。依赖组合或版本错配时，编译仍会通过，只有这些用例会失败。
+- `ChunkDecoderTest` 用手工构造的字节覆盖调色板三种形态、跨 long 边界与畸形数据：真服务端只会生成它自己使用的形态，边界只能这样造。
 - Minestom 测试覆盖真实状态迁移，不用自有 Mock 替代全部联调。
 - 构建门控：字节码主版本、模块依赖边界（Netty / MCProtocolLib / Minestom 不得出现在业务模块）。
 - 跨仓库门控：独立 libGDX 消费工程验证发布产物和线程桥接；Android/iOS 分别在真实运行时验证，不能用 JVM 单测替代。

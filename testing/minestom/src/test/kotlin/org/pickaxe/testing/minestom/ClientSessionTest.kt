@@ -10,6 +10,8 @@ import kotlinx.coroutines.withTimeout
 import net.kyori.adventure.text.Component
 import net.minestom.server.MinecraftServer
 import net.minestom.server.event.player.AsyncPlayerConfigurationEvent
+import net.minestom.server.instance.InstanceContainer
+import net.minestom.server.instance.block.Block
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
@@ -28,6 +30,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -44,9 +47,11 @@ class ClientSessionTest {
     private val port: Int = ServerSocket(0).use { it.localPort }
     private val address: ServerAddress = ServerAddress(DEFAULT_HOST, port)
 
+    private lateinit var instance: InstanceContainer
+
     @BeforeAll
     fun startServer() {
-        startHarness(port)
+        instance = startHarness(port)
         // 配置阶段就踢人：这条路径不需要玩家出生，能稳定覆盖“服务端主动断开”。
         MinecraftServer.getGlobalEventHandler().addListener(AsyncPlayerConfigurationEvent::class.java) { event ->
             if (event.player.username == KICKED_USERNAME) {
@@ -140,6 +145,61 @@ class ClientSessionTest {
                 log.close()
                 session.close()
             }
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `出生后读到的方块状态与服务端一致`() = runBlocking {
+        // 服务端侧放一个可辨认的方块，客户端读到的必须是同一个全局状态 id。
+        // 这条断言把“解出来的世界”和“服务端真实世界”绑在一起，而不是只验证结构非空。
+        val markerX = 1
+        val markerY = 41
+        val markerZ = 2
+        instance.setBlock(markerX, markerY, markerZ, Block.GOLD_BLOCK)
+
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, "ChunkBot")
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.chunk(0, 0) != null }
+
+                val column = assertNotNull(session.chunk(0, 0), "出生点所在区块应已解码")
+                assertEquals(0, column.x)
+                assertEquals(0, column.z)
+                assertEquals(OVERWORLD_MIN_Y, column.minY, "主世界最低层应为 $OVERWORLD_MIN_Y")
+                assertEquals(OVERWORLD_SECTIONS, column.sectionCount, "384 格高应拆成 $OVERWORLD_SECTIONS 个 section")
+                assertEquals(OVERWORLD_MIN_Y + OVERWORLD_HEIGHT, column.maxY)
+
+                assertEquals(
+                    instance.getBlock(markerX, markerY, markerZ).stateId(),
+                    session.blockStateAt(markerX, markerY, markerZ),
+                    "客户端读到的方块状态应与服务端一致",
+                )
+                assertEquals(
+                    instance.getBlock(0, 39, 0).stateId(),
+                    session.blockStateAt(0, 39, 0),
+                    "地面方块也应对得上",
+                )
+                assertEquals(
+                    instance.getBlock(markerX, 200, markerZ).stateId(),
+                    session.blockStateAt(markerX, 200, markerZ),
+                    "空中应为空气",
+                )
+                assertNull(session.blockStateAt(4000, 40, 4000), "未加载的区块应返回 null")
+
+                val biome = assertNotNull(session.biomeAt(markerX, markerY, markerZ), "应能读到生物群系")
+                val biomeCount = assertNotNull(session.registries.value["minecraft:worldgen/biome"])
+                assertTrue(biome in 0 until biomeCount, "生物群系 id $biome 应落在注册表 $biomeCount 项之内")
+            } finally {
+                log.close()
+                session.close()
+            }
+
+            assertNull(session.blockStateAt(markerX, markerY, markerZ), "关闭后不应继续持有区块")
         } finally {
             client.close()
         }
@@ -284,5 +344,10 @@ class ClientSessionTest {
         const val THREAD_RELEASE_TIMEOUT_MILLIS: Long = 5_000
         const val POLL_INTERVAL_MILLIS: Long = 10
         const val SESSION_THREAD_PREFIX: String = "pickaxe-mcpl"
+
+        /** Minestom 默认主世界的垂直范围，harness 没有自定义维度类型。 */
+        const val OVERWORLD_MIN_Y: Int = -64
+        const val OVERWORLD_HEIGHT: Int = 384
+        const val OVERWORLD_SECTIONS: Int = OVERWORLD_HEIGHT / 16
     }
 }

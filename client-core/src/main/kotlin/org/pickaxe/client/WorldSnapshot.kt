@@ -21,6 +21,10 @@ public data class WorldSnapshot(
     public val dimension: String? = null,
     public val gameMode: String? = null,
     public val position: Position? = null,
-    /** 本次会话累计接收的区块数；只在批次收尾时更新，不代表已解码的方块内容。 */
+    /**
+     * 本次会话累计接收的区块包数；服务端要求卸载后也不会减少。
+     *
+     * 它是进度指标，不是可查询的方块数据——按坐标读方块走 `Session.blockStateAt`。
+     */
     public val chunksLoaded: Int = 0,
 )

@@ -5,6 +5,7 @@ import org.pickaxe.client.ClientEvent
 import org.pickaxe.client.ClientException
 import org.pickaxe.client.ClientOptions
 import org.pickaxe.client.MinecraftClient
+import org.pickaxe.client.Session
 import org.pickaxe.protocol.ProtocolVersion
 import org.pickaxe.protocol.ServerAddress
 import kotlin.system.exitProcess
@@ -108,7 +109,15 @@ private fun runConnect(args: List<String>): Int {
                 "state=${session.state.value} user=${parsed.username} " +
                     "server=${parsed.address.host}:${parsed.address.port}",
             )
-            session.events.collect { event -> println(describe(event)) }
+            var chunkReported = false
+            session.events.collect { event ->
+                println(describe(event))
+                // 首批区块到齐后打印一次世界摘要：这是“区块真的解出来了”的现场证据。
+                if (!chunkReported && event is ClientEvent.ChunksReceived && session.world.value?.position != null) {
+                    chunkReported = true
+                    println(describeChunk(session))
+                }
+            }
         }
         0
     } catch (e: ClientException) {
@@ -131,6 +140,19 @@ private fun describe(event: ClientEvent): String = when (event) {
     is ClientEvent.ChunksReceived -> "event=chunks batch=${event.chunks} total=${event.total}"
     ClientEvent.Closed -> "event=closed"
     is ClientEvent.Failed -> "event=failed kind=${event.error::class.simpleName} message=${event.error.message}"
+}
+
+/** 出生点所在区块的摘要：维度范围、缓存数量与脚下方块。 */
+private fun describeChunk(session: Session): String {
+    val position = session.world.value?.position ?: return "chunk=unknown reason=位置尚未同步"
+    val x = position.x.toInt()
+    val y = position.y.toInt()
+    val z = position.z.toInt()
+    val column = session.chunk(x shr 4, z shr 4) ?: return "chunk=unloaded at (${x shr 4}, ${z shr 4})"
+
+    val below = if (column.sectionAt(y - 1) == null) "越界" else session.blockStateAt(x, y - 1, z).toString()
+    return "chunk x=${column.x} z=${column.z} minY=${column.minY} sections=${column.sectionCount} " +
+        "cached=${session.loadedChunks} block=($x, $y, $z):${session.blockStateAt(x, y, z)} below=$below"
 }
 
 /** 解析后的命令行参数。 */
