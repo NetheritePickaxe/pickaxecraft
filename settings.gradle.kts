@@ -33,6 +33,7 @@ plugins {
 // 模块按“首个真实调用方”落位，不为未来概念建空模块。
 // 见 docs/decisions/0001-protocol-backend.md。
 include(":app")
+include(":client-core")
 include(":protocol-core")
 include(":testing:minestom")
 

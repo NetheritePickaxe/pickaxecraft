@@ -15,6 +15,8 @@ netty = "4.2.1.Final"
 # 运行时依赖（除协议外，其余在 M1 及之后按需引入）
 kotlinxCoroutines = "1.11.0"
 kotlinxSerializationJSON = "1.12.0"
+# 与协议库传递依赖的 Adventure 主线一致；只用于适配层渲染文本。
+adventure = "5.2.0"
 
 # 测试与联调
 # JUnit Platform 与 Jupiter 版本线不同：launcher 走 1.x，引擎走 5.x。
@@ -38,6 +40,7 @@ nettyHandler = { module = "io.netty:netty-handler", version.ref = "netty" }
 
 kotlinxCoroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
 kotlinxSerialization = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerializationJSON" }
+adventurePlain = { module = "net.kyori:adventure-text-serializer-plain", version.ref = "adventure" }
 
 kotlinTestJunit5 = { module = "org.jetbrains.kotlin:kotlin-test-junit5", version.ref = "kotlin" }
 junitJupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }

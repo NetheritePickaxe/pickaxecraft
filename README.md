@@ -2,9 +2,13 @@
 
 [![CI](https://github.com/NetheritePickaxe/pickaxecraft/actions/workflows/ci.yml/badge.svg)](https://github.com/NetheritePickaxe/pickaxecraft/actions/workflows/ci.yml)
 
-PickaxeCraft 的目标是成为一个可连接 Minestom 的 Headless Minecraft Java 版客户端框架/库。协议后端采用 MCProtocolLib，项目自己在它之上提供会话、事件与世界模型；初版不包含渲染与 GUI。
+PickaxeCraft 是一个可连接 Minestom 的 Minecraft Java 版客户端核心库。Headless 是第一阶段交付形态；长期下游是在独立仓库中使用 libGDX 开发的轻量化图形客户端。协议后端采用 MCProtocolLib，本项目提供会话、事件与只读世界模型，不包含渲染、GUI、libGDX 或 Minestom 运行时依赖。
 
-> 当前为 M0 基线 + 协议后端切换：协议库已接入并通过真实握手验证（Status 查询、离线登录到 play），自有客户端 API 尚未实现。
+Minestom 在本仓库只用于 `testing:minestom` 联调。最终客户端若需要单人游戏，可在外部仓库的 Desktop/Java 25 宿主中可选集成 Minestom，并通过同一客户端协议连接本地服务端；该能力不进入共享核心，也不作为 Android/iOS 的默认承诺。
+
+下游渲染以 libGDX GL20/GLES 2.0 + ANGLE 为基线，验证 ANGLE Vulkan 并保留回退路径，跟踪 MC 原版的 Vulkan 演进；所有图形依赖仍只存在于外部客户端仓库。
+
+> 当前为 M1 收尾：调用方可通过 `client-core` 查询状态、离线登录到 play 并观察有序会话事件；出生、世界同步（M2）与 Android 运行时验证（M3）尚未开始。
 
 ## 规划文档
 
@@ -58,4 +62,4 @@ CI 在 Ubuntu 上以同样的命令执行（`.github/workflows/ci.yml`）。
 - 依赖版本唯一来源：`gradle/libs.versions.toml`
 - 协议版本唯一来源：`protocol-core` 的 `ProtocolVersion` 常量，由 `ProtocolVersionTest` 与 MCProtocolLib 内的 codec 常量对账
 
-核心技术基线：Kotlin/JVM、MCProtocolLib 26.2（协议 776）、桌面 Java 25、`protocol-core` 产物 Java 21 字节码（为将来的 Android 宿主保留可用性）、Gradle Daemon JDK 25。
+核心技术基线：Kotlin/JVM、MCProtocolLib 26.2（协议 776）、构建与 CLI 使用 Java 25、共享发布产物使用 Java 21 字节码、Gradle Daemon JDK 25。目标宿主为 libGDX Desktop、Android 与 iOS（移动平台待验证）；Web/HTML5 不在目标内。

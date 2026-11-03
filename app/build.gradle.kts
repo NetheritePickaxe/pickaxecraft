@@ -3,8 +3,8 @@ plugins {
 }
 
 dependencies {
-    // 协议版本常量来自生成的 ProtocolVersion，不在此处重复声明数字。
-    implementation(project(":protocol-core"))
+    // CLI 是组合根：只依赖客户端公共 API，不接触协议库与 Netty。
+    implementation(project(":client-core"))
 }
 
 application {

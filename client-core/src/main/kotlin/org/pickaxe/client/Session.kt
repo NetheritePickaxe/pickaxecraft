@@ -1,0 +1,216 @@
+package org.pickaxe.client
+
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ClosedSendChannelException
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.consumeAsFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import org.pickaxe.protocol.ProtocolCloseReason
+import org.pickaxe.protocol.ProtocolConnection
+import org.pickaxe.protocol.ProtocolEvent
+import org.pickaxe.protocol.ProtocolFailureKind
+import org.pickaxe.protocol.ProtocolListener
+import org.pickaxe.protocol.ProtocolPhase
+import org.pickaxe.protocol.ServerAddress
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+
+/**
+ * 一次已建立的客户端会话。
+ *
+ * 线程模型：协议回调发生在网络线程，只做一次有界入队；状态迁移、事件分发与
+ * 调用方可见的一切都在会话自己的 Actor 协程里按到达顺序执行。因此
+ * [state] 与 [events] 天然有序，且调用方永远不会在网络线程上被回调。
+ *
+ * 生命周期：[close] 幂等；关闭后 [state] 变为 [SessionState.CLOSED]，
+ * [events] 结束，网络线程随之回收。会话也可以因服务端断开或协议错误自行终止，
+ * 终止事件恰好投递一次。
+ */
+public class Session internal constructor(
+    /** 该会话连接的服务端地址。 */
+    public val address: ServerAddress,
+    /** 离线登录使用的用户名。 */
+    public val username: String,
+    private val options: ClientOptions,
+    private val scope: CoroutineScope,
+) : AutoCloseable {
+
+    private val mutableState = MutableStateFlow(SessionState.CONNECTING)
+
+    /** 当前状态，可随时读取；终态为 [SessionState.CLOSED]。 */
+    public val state: StateFlow<SessionState> = mutableState.asStateFlow()
+
+    private val inbox = Channel<ProtocolEvent>(capacity = options.eventBufferCapacity)
+    private val outbox = Channel<ClientEvent>(capacity = options.eventBufferCapacity)
+
+    /** 有序事件流，单消费者；会话终止后正常结束。 */
+    public val events: Flow<ClientEvent> = outbox.consumeAsFlow()
+
+    private val terminalError = AtomicReference<ClientException?>(null)
+    private val closing = AtomicBoolean(false)
+    private val overflowing = AtomicBoolean(false)
+    private val finished = AtomicBoolean(false)
+
+    @Volatile
+    private var connection: ProtocolConnection? = null
+
+    private var actor: Job? = null
+
+    internal fun start() {
+        val created = ProtocolConnection.login(
+            address = address,
+            username = username,
+            listener = ProtocolListener(::onProtocolEvent),
+            connectTimeoutSeconds = options.connectTimeoutSeconds(),
+            readTimeoutSeconds = options.readTimeoutSeconds(),
+        )
+        connection = created
+        actor = scope.launch { runActor() }
+        created.connect()
+    }
+
+    /** 关闭会话。阻塞到网络资源回收完成，重复调用无副作用。 */
+    override fun close() {
+        if (!closing.compareAndSet(false, true)) return
+        try {
+            connection?.close()
+        } finally {
+            inbox.close()
+            actor?.cancel()
+            mutableState.value = SessionState.CLOSED
+            outbox.close()
+        }
+    }
+
+    /** 等待进入 play；失败或提前关闭时抛出对应异常。 */
+    internal suspend fun awaitPlay() {
+        mutableState.first { it == SessionState.PLAY || it == SessionState.CLOSED }
+        if (mutableState.value != SessionState.PLAY) {
+            throw terminalError.get() ?: ClientException.Closed()
+        }
+    }
+
+    /** 协议回调：网络线程上只允许入队，溢出即终止会话。 */
+    private fun onProtocolEvent(event: ProtocolEvent) {
+        if (inbox.trySend(event).isFailure) {
+            if (closing.get()) return
+            abortBecauseOfOverflow()
+        }
+    }
+
+    /**
+     * 事件溢出终止。
+     *
+     * 此处的终止不能交给 Actor：消费者卡住时 Actor 正挂在 `outbox.send` 上，
+     * 既不会读到 inbox 已关闭，也发不出终止事件。因此由回调线程直接收敛状态并
+     * 取消 Actor，未投递的事件只能丢弃——这正是溢出的定义，且已向调用方报告。
+     */
+    private fun abortBecauseOfOverflow() {
+        if (!overflowing.compareAndSet(false, true)) return
+
+        terminalError.compareAndSet(null, ClientException.EventOverflow(options.eventBufferCapacity))
+        inbox.close()
+        actor?.cancel()
+        mutableState.value = SessionState.CLOSED
+        outbox.close()
+        // 网络线程上不能做阻塞关闭；交回调度器。
+        scope.launch { connection?.close() }
+    }
+
+    private suspend fun runActor() {
+        while (true) {
+            val event = inbox.receiveCatching().getOrNull() ?: break
+            if (!handle(event)) break
+        }
+        finish()
+    }
+
+    /** @return 是否继续处理后续事件。 */
+    private suspend fun handle(event: ProtocolEvent): Boolean = when (event) {
+        ProtocolEvent.Connected -> true
+
+        is ProtocolEvent.PhaseChanged -> {
+            transition(event.phase.toSessionState())
+            true
+        }
+
+        is ProtocolEvent.RegistryData -> {
+            emit(ClientEvent.RegistryReceived(event.registryId, event.entryCount))
+            true
+        }
+
+        // 登录会话不会收到状态查询结果。
+        is ProtocolEvent.StatusReceived -> true
+
+        is ProtocolEvent.Closed -> {
+            recordClose(event.reason)
+            false
+        }
+    }
+
+    private suspend fun transition(next: SessionState) {
+        val current = mutableState.value
+        if (current == next || current == SessionState.CLOSED) return
+        mutableState.value = next
+        emit(ClientEvent.StateChanged(next))
+    }
+
+    private suspend fun emit(event: ClientEvent) {
+        try {
+            outbox.send(event)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: ClosedSendChannelException) {
+            // 会话已终止，终止事件已由 finish() 或 close() 处理。
+        }
+    }
+
+    private fun recordClose(reason: ProtocolCloseReason) {
+        when (reason) {
+            ProtocolCloseReason.Local -> Unit
+            is ProtocolCloseReason.Server ->
+                terminalError.compareAndSet(null, ClientException.ServerDisconnected(reason.message))
+            is ProtocolCloseReason.Failure ->
+                terminalError.compareAndSet(null, reason.toClientException())
+        }
+    }
+
+    private suspend fun finish() {
+        if (!finished.compareAndSet(false, true)) return
+        mutableState.value = SessionState.CLOSED
+        try {
+            // 服务端或协议先断开时也要回收连接资源；本方法幂等。
+            connection?.close()
+        } finally {
+            val error = terminalError.get()
+            try {
+                outbox.send(if (error != null) ClientEvent.Failed(error) else ClientEvent.Closed)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ClosedSendChannelException) {
+                // 已被 close() 抢先终止。
+            } finally {
+                outbox.close()
+            }
+        }
+    }
+}
+
+internal fun ProtocolPhase.toSessionState(): SessionState = when (this) {
+    ProtocolPhase.LOGIN -> SessionState.LOGIN
+    ProtocolPhase.CONFIGURATION -> SessionState.CONFIGURATION
+    ProtocolPhase.PLAY -> SessionState.PLAY
+}
+
+internal fun ProtocolCloseReason.Failure.toClientException(): ClientException = when (kind) {
+    ProtocolFailureKind.CONNECT -> ClientException.ConnectFailed(cause.message ?: "无法建立连接", cause)
+    ProtocolFailureKind.NETWORK -> ClientException.NetworkFailure(cause)
+    ProtocolFailureKind.PROTOCOL -> ClientException.ProtocolFailure(cause)
+}
