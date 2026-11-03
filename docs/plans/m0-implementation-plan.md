@@ -5,6 +5,8 @@
 范围：[roadmap.md](../roadmap.md) 第 2 节 M0  
 依据：已用临时工程验证构建组合（见第 4 节），未在正式仓库改动任何构建逻辑
 
+> 后续变更：2026-11-03 协议后端切换为 MCProtocolLib，本计划中的 Schema、代码生成器、KMP/AGP 与 Android 产物部分已随迁移删除。当前生效的结论以 [决策 0001](../decisions/0001-protocol-backend.md) 与 `docs/architecture.md` 为准；本文仅作 M0 阶段的历史记录保留。
+
 ## 1. 结论
 
 M0 的技术前提已经验证：Kotlin 2.4.21 + AGP 9.4.1 + Gradle 9.6.0 + JDK 25 可以在同一个模块内产出 Desktop Java 25 与 Android Java 21 两套字节码，并生成 AAR。M0 的主要工作因此不是探索可行性，而是**把已验证的配置固化到仓库、把版本锁成单一来源、把验收变成可自动执行的检查**。

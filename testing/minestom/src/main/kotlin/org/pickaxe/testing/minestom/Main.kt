@@ -33,8 +33,7 @@ public fun main(args: Array<String>) {
     // 若先打印后注册，信号有概率落在两者之间，表现为“hook 完全没执行”。
     println(
         "event=server.started host=$DEFAULT_HOST port=$port " +
-            "minecraft=${ProtocolVersion.MINECRAFT_VERSION} protocol=${ProtocolVersion.PROTOCOL_VERSION} " +
-            "schemaCommit=${ProtocolVersion.SCHEMA_COMMIT}",
+            "minecraft=${ProtocolVersion.MINECRAFT_VERSION} protocol=${ProtocolVersion.PROTOCOL_VERSION}",
     )
 
     stopped.await()

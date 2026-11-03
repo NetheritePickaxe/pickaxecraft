@@ -3,7 +3,6 @@
 
 pluginManagement {
     repositories {
-        google()
         mavenCentral()
         gradlePluginPortal()
     }
@@ -11,8 +10,18 @@ pluginManagement {
 
 dependencyResolutionManagement {
     repositories {
-        google()
         mavenCentral()
+        // MCProtocolLib 只发布在 Open Collaboration 仓库，不在 Maven Central。
+        // 它依赖的两组坐标（Cloudburst math、nukkitx fastutil）同样只在这里。
+        // 用 content 限定组，避免这个仓库参与其他依赖的元数据解析。
+        maven("https://repo.opencollab.dev/main/") {
+            name = "opencollab"
+            content {
+                includeGroup("org.geysermc.mcprotocollib")
+                includeGroup("org.cloudburstmc.math")
+                includeGroup("com.nukkitx.fastutil")
+            }
+        }
     }
 }
 
@@ -22,10 +31,9 @@ plugins {
 }
 
 // 模块按“首个真实调用方”落位，不为未来概念建空模块。
-// 见 docs/plans/m0-implementation-plan.md 决策 2；其余模块在各自任务中与本行一并创建。
+// 见 docs/decisions/0001-protocol-backend.md。
 include(":app")
 include(":protocol-core")
-include(":tools:protocol-generator")
 include(":testing:minestom")
 
 rootProject.name = "pickaxecraft"

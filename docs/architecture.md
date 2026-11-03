@@ -1,7 +1,7 @@
 # 架构与技术决策
 
-状态：已确定  
-日期：2026-11-02
+状态：已更新（协议后端改为 MCProtocolLib，见 [决策 0001](decisions/0001-protocol-backend.md)）
+日期：2026-11-03
 
 ## 1. 项目定位
 
@@ -13,7 +13,7 @@ PickaxeCraft 初版提供可嵌入其他程序的 Minecraft Java 版 Headless �
 - 支持同一进程内多个相互隔离的客户端会话。
 - 跑通 Handshake、Status、Login、Configuration、Play 的完整连接链路。
 - 支持 Minestom 离线模式登录、KeepAlive、传送确认、区块批次确认和基础移动。
-- Desktop 与 Android 共用协议、会话和世界模型。
+- 桌面与将来的 Android 宿主复用同一份 JVM 实现；Android 需先通过 Netty 可行性验证。
 - 为后续世界同步、在线认证和协议扩展保留清楚边界。
 
 ### 初版非目标
@@ -28,70 +28,74 @@ PickaxeCraft 初版提供可嵌入其他程序的 Minecraft Java 版 Headless �
 
 | 范围 | 决策 |
 | --- | --- |
-| 语言 | Kotlin，公共代码放在 Kotlin Multiplatform `commonMain` |
+| 语言 | Kotlin/JVM。协议后端是 Java 库，跨平台共用不靠 KMP，而靠「同一份字节码在两端运行」 |
 | 构建 | Gradle Kotlin DSL、Wrapper、Version Catalog、`buildSrc` 约定插件 |
-| 构建运行时 | JDK 25，现有 Gradle 9.6.0 |
+| 构建运行时 | JDK 25，Gradle 9.6.0 |
 | Desktop 目标 | JVM 25 |
-| Android/共享目标 | Java 21 字节码，固定支持该目标的 AGP/D8/R8 版本并持续构建验证 |
-| 协程 | `kotlinx-coroutines`，会话内顺序处理，平台 I/O 使用合适调度器 |
-| 二进制协议 | 自有 Reader/Writer、数据包模型和编解码，不依赖 Java 序列化 |
-| 协议生成 | JVM 25 构建期代码生成器，输入为版本化 Schema |
-| Desktop 网络 | Netty NIO，仅位于 `transport-desktop` |
-| Android 网络 | `java.net.Socket` + `Dispatchers.IO`，仅位于 `transport-android` |
-| 配置与 Schema | JSON 等文本格式可使用 `kotlinx.serialization`；二进制 Minecraft 协议不使用它 |
-| 日志 | 公共核心使用最小日志门面或结构化诊断事件，不绑定 Logback、`java.util.logging` |
-| 测试 | Kotlin Test、Desktop JVM 测试、Android 测试、黄金样本和 Minestom 集成测试 |
+| 共用产物目标 | Java 21 字节码（`protocol-core`），为 Android 保留可消费性 |
+| 协程 | `kotlinx-coroutines`，会话内顺序处理 |
+| 二进制协议 | MCProtocolLib 26.2，不自行实现 Reader/Writer、数据包与状态机 |
+| 协议数据 | 数据包定义、注册表 NBT、标签 NBT 由协议库随包提供，本仓库只维护版本常量并与之对账 |
+| 网络 | MCProtocolLib 内置 Netty（4.2.x），桌面与 Android 共用同一栈 |
+| 配置与自有序列化 | JSON 等文本格式可使用 `kotlinx.serialization`；二进制 Minecraft 协议不使用它 |
+| 日志 | 公共核心使用结构化诊断事件，不绑定具体日志实现；协议库自身走 slf4j |
+| 测试 | Kotlin Test、JUnit 5、真实 Minestom 联调、字节码与依赖边界门控 |
 
-Android 使用 Java 21 字节码不代表完整 JDK 21 API 在设备上可用。公共代码禁止依赖虚拟线程、结构化并发、`java.net.http.HttpClient`、反射扫描、Unsafe、LWJGL 或其他 JVM-only 能力。标准库 API 是否可用由 Android `compileSdk`、`minSdk` 与 desugaring 配置共同决定。
+Java 21 字节码不代表完整 JDK 21 API 在 Android 上可用：`protocol-core` 与后续共用模块禁止依赖虚拟线程、结构化并发、`java.net.http.HttpClient`、反射扫描、Unsafe 等 JVM-only 能力。
 
 ## 3. 协议策略
 
-### 3.1 自研范围
+### 3.1 采用范围
 
-`protocol-core` 负责：
+协议后端采用 MCProtocolLib，覆盖：
 
-- VarInt、VarLong、String、UUID、Identifier、Position、BitSet 等基础类型。
-- NBT、Slot 和注册表相关协议类型；复杂类型优先保证语义正确，不强行套用生成器。
-- Packet Reader/Writer、数据包 ID 映射、方向与连接状态感知。
-- 数据包分帧、压缩和加密的协议状态切换。
-- Handshake、Status、Login、Configuration、Play 所需的数据包子集。
-- 严格的长度、边界、压缩阈值和畸形输入检查。
+- 776 的全部数据包模型、方向与连接状态映射。
+- VarInt/String/UUID/NBT/Slot 等类型编解码。
+- 分帧、压缩阈值切换、AES-CFB8 加密。
+- Handshake、Status、Login、Configuration、Play 的状态机。
+- 注册表与标签数据（jar 内的 `networkCodec.nbt` / `networkTags.nbt`）。
+- KeepAlive 自动应答、transfer、代理与微软认证入口。
 
-### 3.2 代码生成边界
+本项目不实现上述任何一项，也不复制其源码。
 
-Schema 是重复数据包结构的单一事实来源，包含协议版本、连接状态、方向、数据包 ID 和字段布局。生成器负责机械、可推导的 Kotlin 模型与编解码。
+### 3.2 版本锁定与对账
 
-- 生成产物写入构建目录，不手工编辑。
-- 相同 Schema 必须生成确定性结果。
-- 无法清楚表达的复杂布局保留手写编解码，并记录例外原因。
-- 初版只锁定一个协议号及对应 Minestom 版本，不在业务代码中散布版本条件。
+- 锁定 `org.geysermc.mcprotocollib:protocol:26.2`，对应协议 776，与 Minestom `2026.10.07-26.2` 同步。
+- `ProtocolVersion` 常量是外部契约；`ProtocolVersionTest` 直接读取协议库的 codec 常量做交叉校验，写错立即失败。
+- 升级协议库或 Minestom 必须同时改两侧，并重跑 `ClientInteropTest`：编译通过不代表握手可用。
+- 协议库不在 Maven Central，仓库地址与 group 白名单写在 `settings.gradle.kts`。
 
-### 3.3 现有项目的角色
+### 3.3 适配层边界
 
-- PacketEvents、MCProtocolLib：核对字段、行为及测试参照，不作为公共运行时依赖。
-- Minosoft：参考 Core/Headless/UI 分离和版本数据管理，不复制其 GPL 源码，不照搬包内多版本条件。
-- Minecraft Wiki 与真实 Minestom 联调：互相补充；字段定义以锁定版本的协议数据、可靠参考实现和实际测试交叉确认。
+`protocol-core` 是唯一允许接触 MCProtocolLib 与 Netty 的模块：
+
+- 对上层只暴露项目自己的类型；`io.netty.*` 与 `org.geysermc.mcprotocollib.*` 不得出现在 `client-core` 及以上的编译类路径。
+- 协议库依赖一律用 `implementation` 引入，由构建门控确保没有穿透。
+- 事件从协议库的收包回调转成本项目的语义事件；调用方不接触 `Packet`、`ByteBuf` 或 `Channel`。
+
+### 3.4 现有项目的角色
+
+- MCProtocolLib：运行时依赖，见上。
+- PacketEvents：核对字段与行为的参照，不进入依赖。
+- Minosoft：参考 Core/Headless/UI 分离与版本数据管理，不复制其 GPL 源码。
+- Minecraft Wiki 与真实 Minestom 联调：互相补充，行为以实际握手为准。
 
 ## 4. 分层与数据流
 
 ```text
 调用方 / CLI / 未来 Android 宿主
                 |
-          client-core
-    会话状态机、事件、世界模型
+           client-core
+    会话状态机、事件、注册表、世界模型
                 |
-         protocol-core
-  数据包、分帧、压缩/加密协议状态
+          protocol-core
+   协议适配：连接、状态、事件转换、版本对账
                 |
-      Transport SPI（原始字节流）
-          /             \
-transport-desktop   transport-android
-     Netty           Socket + 协程
+        MCProtocolLib + Netty
+   分帧、压缩、加密、数据包编解码与传输
 ```
 
-`client-core` 定义传输端口，具体传输由应用组合根注入。公共 API 不暴露 Netty `ByteBuf`、PacketEvents Wrapper、Android 类型或特定认证实现。
-
-压缩与加密属于协议链路，但底层 DEFLATE、AES/CFB8 等平台原语通过 `protocol-core` 内部 `expect/actual` 提供；传输模块只负责可靠、有序的字节流 I/O，不各自重新实现协议状态机。
+`client-core` 拥有会话生命周期与协议义务的归属（例如是否需要自己回应 KeepAlive）；`protocol-core` 只做协议事实的转换，不做业务判断。公共 API 不暴露 Netty、MCProtocolLib 类型或 Android 类型。
 
 ## 5. 会话与并发
 
@@ -99,37 +103,35 @@ transport-desktop   transport-android
 - 不使用全局可变单例保存玩家、会话、协议状态或世界数据。
 - 网络读取最终进入单一会话 Actor，按到达顺序执行状态迁移和会话行为。
 - 写出通过单一有序入口，避免不同协程交错写包。
-- KeepAlive、传送确认等协议义务由核心主动完成，不能依赖调用者订阅事件。
+- KeepAlive、传送确认等协议义务由核心主动完成，不能依赖调用者订阅事件；协议库已自动应答 KeepAlive 的部分需要在适配层显式声明归属，避免重复应答。
 - 队列必须有界；背压、断开和事件溢出策略必须显式，不允许静默丢失影响会话正确性的消息。
-- 关闭 Session 时依次停止接收新工作、取消协程、关闭传输并释放缓冲区；重复关闭保持安全。
+- 关闭 Session 时依次停止接收新工作、取消协程、关闭传输并释放缓冲区；重复关闭保持安全。协议库的 `EventLoopGroup` 必须随会话关闭。
 - 可恢复错误必须有明确恢复路径；遇到未知包、非法状态迁移或编码失败时，应抛出带上下文的错误，不猜测默认值。
 
-## 6. Android 与 Desktop 约束
+## 6. 桌面与 Android 约束
 
-公共代码只使用 Kotlin 标准库、协程和确认支持双目标的依赖。平台差异放在对应 source set 或适配模块中。
-
-- Desktop 可以使用 Java 25 特性和 Netty，但不得反向渗入公共 API。
-- Android 目标使用 Java 21 字节码，并在引入 Android 模块的早期阶段执行真实构建与连接测试。
+- `protocol-core` 以 Java 21 字节码产出，由 `verifyBytecode`（major 65）自动断言；桌面模块可以用到 Java 25。
+- Netty 是协议库的一部分，无法从 Android 路径剥离。`netty-common` 显式识别 Android 并退到 no-Unsafe 路径，但**尚未在设备上验证**。
+- 已知待验证项：Netty 在 Android 上的 NIO 可用性、`java.lang.Record` 与 `java.util.HexFormat` 的 D8 反糖、`minSdk` 取值。
+- 在 spike 通过前，Android 不写入支持矩阵；不为其提前引入 AGP、KMP 或独立传输实现。
 - Android 宿主负责生命周期、网络安全配置、权限和账户秘密存储；核心不持有 Activity、Context 或 UI 对象。
-- 密码学使用平台经过验证的实现，不自研 RSA/AES/SHA 算法。
-- 初版不引入原生 Epoll/Kqueue、JNI、反射依赖注入或运行时类路径扫描。
+- 密码学使用协议库与平台经过验证的实现，不自研 RSA/AES/SHA 算法。
 
 ## 7. 测试与质量门控
 
-- 基础类型使用已知字节序列做编码/解码黄金测试，并检查超长 VarInt、截断输入和长度上限。
-- 每个已实现数据包至少通过一项有意义的往返或黄金样本验证，避免只测试直接委托。
-- Minestom 测试覆盖真实状态迁移和协议义务，不用自有 Mock 替代全部联调。
-- Android 在协议大规模扩展前完成一次真机或模拟器连接，防止平台问题后移。
-- 并发测试使用确定性协调，不依赖 `sleep` 猜测时序。
-- Desktop 检查缓冲区释放和连接资源回收；Android 检查取消与宿主退出后的资源回收。
-- 每次阶段收尾运行受影响测试及完整 `./gradlew build`，新增 Android 构建后再运行相应 Android 检查。
+- 版本常量与协议库 codec 常量对账，注册表 NBT 可加载。
+- `ClientInteropTest` 用协议库真实连接 Minestom：Status 查询返回 776，离线登录进入 play 并收到注册表数据。依赖组合或版本错配时，编译仍会通过，只有这个用例会失败。
+- Minestom 测试覆盖真实状态迁移，不用自有 Mock 替代全部联调。
+- 构建门控：字节码主版本、模块依赖边界（Netty / MCProtocolLib / Minestom 不得出现在业务模块）。
+- 并发测试使用确定性协调，不依赖 `sleep`；JVM 内单例（Minestom）通过按类分叉规避。
+- 每次阶段收尾运行 `./gradlew build`，新增模块后同步更新门控。
 
 ## 8. 扩展条件
 
 只有出现真实需求时才增加以下复杂度：
 
-- 第二个协议版本：先引入版本目录和独立 Codec 组装，不把 `if (version...)` 扩散到会话逻辑。
+- 第二个协议版本：先引入版本目录与独立适配，不把 `if (version...)` 扩散到会话逻辑。
 - 在线认证：独立认证适配，OAuth 设备流程、令牌存储与加密会话分离。
-- 新传输实现：必须已有第二个明确使用场景和相同 Transport 契约。
+- Android 支持：以 spike 结果为前提，通过后再决定是否需要独立的传输层或降级方案。
 - 渲染或 GUI：只能依赖客户端公共模型，不得进入 `client-core` 或 `protocol-core`。
 - 性能优化：以分配、吞吐、延迟或内存测量为依据，并保留可理解的安全实现作为行为参照。

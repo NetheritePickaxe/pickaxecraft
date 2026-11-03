@@ -1,7 +1,0 @@
-{
-  "upstream": "PrismarineJS/minecraft-data",
-  "branch": "pc_26_2",
-  "commit": "282f19b06c7cc98f055c39787acf93904b9587fa",
-  "protocolSha256": "e19d839857e4fc9faaa829e68736eaab181f21167db1b0449d3abb284b47305d",
-  "license": "MIT"
-}

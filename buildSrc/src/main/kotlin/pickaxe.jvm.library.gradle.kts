@@ -1,4 +1,5 @@
 // 纯 JVM 库约定：Java 25 字节码、显式 API、JUnit 5、字节码与依赖边界校验。
+// 协议后端只能出现在 protocol-core：桌面模块从这里看不到 Netty 与 MCProtocolLib。
 
 import org.gradle.api.artifacts.VersionCatalogsExtension
 import pickaxe.tasks.VerifyBytecode
@@ -44,7 +45,7 @@ val verifyModuleBoundaries = tasks.register<VerifyForbiddenDependencies>("verify
     description = "校验编译类路径不含禁止依赖"
     group = "verification"
     scope.set(project.path)
-    forbiddenPackages.set(listOf("io/netty/", "net/minestom/"))
+    forbiddenPackages.set(listOf("io/netty/", "net/minestom/", "org/geysermc/mcprotocollib/"))
     classpath.from(configurations.named("compileClasspath"))
 }
 

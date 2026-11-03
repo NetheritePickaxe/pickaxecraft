@@ -1,9 +1,9 @@
 dependencyResolutionManagement {
 
-    // 共享构建逻辑需要解析 KGP 与 AGP，两者分别来自 Maven Central 与 Google Maven。
+    // 共享构建逻辑只解析 Kotlin Gradle Plugin（Maven Central）。
+    // 引入 Android 目标时需要重新加回 google()。
     @Suppress("UnstableApiUsage")
     repositories {
-        google()
         mavenCentral()
     }
 

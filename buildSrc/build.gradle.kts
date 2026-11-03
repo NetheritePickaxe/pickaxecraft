@@ -8,7 +8,6 @@ kotlin {
 }
 
 dependencies {
-    // 约定插件需要在预编译脚本里同时应用 KGP 与 AGP。
+    // 约定插件需要把 KGP 放进 buildSrc 的类路径才能 apply 它。
     implementation(libs.kotlinGradlePlugin)
-    implementation(libs.androidGradlePlugin)
 }

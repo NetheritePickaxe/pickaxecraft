@@ -1,5 +1,2 @@
-# 协议 schema 需要按字节校验（生成器会计算 SHA-256），禁止行尾转换。
-protocol-core/schema/** -text
-
-# 生成器测试夹具同样参与校验和比对，不能让 checkout 时被转成 CRLF。
-tools/protocol-generator/src/test/resources/** -text
+# 仓库内不存在需要按字节保真的二进制/生成夹具，行尾统一交给 Git 默认策略。
+# 若将来重新引入按哈希校验的 schema，必须在此为对应路径加 `-text`。

@@ -4,12 +4,17 @@
 [versions]
 # 构建工具链
 kotlin = "2.4.21"
-agp = "9.4.1"
 
-# 运行时依赖（M0 只锁定版本，真实引入发生在 M1 及之后）
+# 协议运行时。MCProtocolLib 按 Minecraft 版本发版，26.2 对应协议 776，
+# 与 Minestom 2026.10.07-26.2 同步；升级任一方都必须同时调整另一侧。
+mcprotocollib = "26.2"
+# Netty 跟随 MCProtocolLib 26.2 编译时的版本。改这个数字必须重跑
+# testing:minestom 的联调用例，不能只看编译是否通过。
+netty = "4.2.1.Final"
+
+# 运行时依赖（除协议外，其余在 M1 及之后按需引入）
 kotlinxCoroutines = "1.11.0"
 kotlinxSerializationJSON = "1.12.0"
-netty = "4.2.19.Final"
 
 # 测试与联调
 # JUnit Platform 与 Jupiter 版本线不同：launcher 走 1.x，引擎走 5.x。
@@ -20,15 +25,20 @@ slf4j = "2.0.20"
 
 [libraries]
 kotlinGradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
-androidGradlePlugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
+
+# 协议后端：同时提供 776 的数据包、注册表数据与 Netty 传输。
+mcprotocollib = { module = "org.geysermc.mcprotocollib:protocol", version.ref = "mcprotocollib" }
+
+# netty-all 是聚合 POM（会拉进 protobuf、zstd、brotli 与本地传输构件），
+# 因此按实际用到的模块逐个声明：MCPL 只触及 bootstrap/buffer/channel/handler/util。
+nettyBuffer = { module = "io.netty:netty-buffer", version.ref = "netty" }
+nettyCommon = { module = "io.netty:netty-common", version.ref = "netty" }
+nettyTransport = { module = "io.netty:netty-transport", version.ref = "netty" }
+nettyHandler = { module = "io.netty:netty-handler", version.ref = "netty" }
 
 kotlinxCoroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
 kotlinxSerialization = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerializationJSON" }
 
-# 用 BOM 锁定 Netty 4.2 整条产品线，避免逐模块写版本。
-nettyBom = { module = "io.netty:netty-bom", version.ref = "netty" }
-
-kotlinTest = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 kotlinTestJunit5 = { module = "org.jetbrains.kotlin:kotlin-test-junit5", version.ref = "kotlin" }
 junitJupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
 junitPlatformLauncher = { module = "org.junit.platform:junit-platform-launcher", version.ref = "junitPlatform" }
@@ -36,8 +46,10 @@ junitPlatformLauncher = { module = "org.junit.platform:junit-platform-launcher",
 minestom = { module = "net.minestom:minestom", version.ref = "minestom" }
 slf4jSimple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 
+[bundles]
+# 客户端实际需要的 Netty 模块集合；配合对 netty-all 的 exclude 一起使用。
+nettyClient = ["nettyBuffer", "nettyCommon", "nettyTransport", "nettyHandler"]
+
 [plugins]
 kotlinJvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
-kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
-androidKmpLibrary = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
