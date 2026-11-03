@@ -1,9 +1,11 @@
 package org.pickaxe.testing.minestom
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import net.kyori.adventure.text.Component
 import net.minestom.server.MinecraftServer
@@ -21,10 +23,11 @@ import org.pickaxe.client.SessionState
 import org.pickaxe.protocol.ProtocolVersion
 import org.pickaxe.protocol.ServerAddress
 import java.net.ServerSocket
+import java.time.Duration
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -96,6 +99,47 @@ class ClientSessionTest {
             }
 
             assertEquals(SessionState.CLOSED, session.state.value)
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `登录后完成出生并进入世界`() = runBlocking {
+        val username = "SpawnBot"
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, username)
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.JoinedWorld }
+                val joined = log.snapshot().filterIsInstance<ClientEvent.JoinedWorld>().first()
+                assertEquals("minecraft:overworld", joined.dimension, "应进入服务端的默认维度")
+                assertTrue(joined.entityId > 0, "服务端应分配实体 id")
+
+                log.await { it is ClientEvent.PositionUpdated }
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+
+                // 自动回送的传送确认与区块批次确认，必须在服务端侧看到结果：
+                // SPAWNED 来自 PlayerSpawnEvent，LOADED 来自客户端上行 player_loaded。
+                assertTrue(
+                    withContext(Dispatchers.IO) { awaitMilestone(username, PlayerMilestone.SPAWNED, MILESTONE_TIMEOUT) },
+                    "服务端应完成出生：$username 未触发 PlayerSpawnEvent",
+                )
+                assertTrue(
+                    withContext(Dispatchers.IO) { awaitMilestone(username, PlayerMilestone.LOADED, MILESTONE_TIMEOUT) },
+                    "服务端应收到 player_loaded：$username 未触发 PlayerLoadedEvent",
+                )
+
+                val world = assertNotNull(session.world.value, "进入世界后应有会话级世界状态")
+                assertEquals(joined.entityId, world.entityId, "世界状态与事件应一致")
+                assertEquals("minecraft:overworld", world.dimension)
+                assertNotNull(world.position, "出生后应已同步位置")
+                assertTrue(world.chunksLoaded > 0, "出生后应收到区块，实际 ${world.chunksLoaded}")
+            } finally {
+                log.close()
+                session.close()
+            }
         } finally {
             client.close()
         }
@@ -236,6 +280,7 @@ class ClientSessionTest {
         const val KICKED_USERNAME: String = "Kicked"
         const val KICK_MESSAGE: String = "测试踢出"
         const val EVENT_TIMEOUT_MILLIS: Long = 10_000
+        val MILESTONE_TIMEOUT: Duration = Duration.ofSeconds(10)
         const val THREAD_RELEASE_TIMEOUT_MILLIS: Long = 5_000
         const val POLL_INTERVAL_MILLIS: Long = 10
         const val SESSION_THREAD_PREFIX: String = "pickaxe-mcpl"

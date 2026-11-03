@@ -34,6 +34,44 @@ public sealed interface ProtocolEvent {
     /** 状态查询完成，携带服务端信息与实测往返耗时。 */
     public data class StatusReceived(public val status: ServerStatus) : ProtocolEvent
 
+    /**
+     * 进入世界。服务端在 configuration 结束后用 Login 包下发身份与维度信息，
+     * 这是 play 阶段真正开始的标志；此时还没有位置与区块。
+     */
+    public data class JoinedWorld(
+        public val entityId: Int,
+        public val dimension: String,
+        public val gameMode: String,
+        public val viewDistance: Int,
+        public val simulationDistance: Int,
+        public val maxPlayers: Int,
+    ) : ProtocolEvent
+
+    /**
+     * 位置同步已完成确认。
+     *
+     * 服务端下发 Synchronize Player Position 后，适配层立即回确认包；这里报告的是
+     * 应用相对量之后的绝对坐标。服务端可能随时再次下发（移动修正、传送）。
+     */
+    public data class PositionUpdated(
+        public val x: Double,
+        public val y: Double,
+        public val z: Double,
+        public val yaw: Float,
+        public val pitch: Float,
+    ) : ProtocolEvent
+
+    /**
+     * 一个区块批次已接收并确认。[chunks] 是本批数量，[total] 是本次会话累计。
+     *
+     * 批次确认必须及时回送，否则服务端会停止继续发送区块；确认本身由适配层完成，
+     * 上层只观察结果。
+     */
+    public data class ChunksReceived(
+        public val chunks: Int,
+        public val total: Int,
+    ) : ProtocolEvent
+
     /** 会话终止，且这是本次连接唯一一次终止通知。 */
     public data class Closed(public val reason: ProtocolCloseReason) : ProtocolEvent
 }

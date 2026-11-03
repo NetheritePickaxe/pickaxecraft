@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.pickaxe.protocol.ProtocolCloseReason
 import org.pickaxe.protocol.ProtocolConnection
@@ -46,6 +47,21 @@ public class Session internal constructor(
 
     /** 当前状态，可随时读取；终态为 [SessionState.CLOSED]。 */
     public val state: StateFlow<SessionState> = mutableState.asStateFlow()
+
+    private val mutableRegistries = MutableStateFlow<Map<String, Int>>(emptyMap())
+
+    /** 会话级注册表快照：注册表 id 到条目数，随配置阶段累加。 */
+    public val registries: StateFlow<Map<String, Int>> = mutableRegistries.asStateFlow()
+
+    private val mutableWorld = MutableStateFlow<WorldSnapshot?>(null)
+
+    /**
+     * 会话级世界状态，进入 play 之前为 null。
+     *
+     * 出生过程由协议层自动推进；调用方读这里就能知道“到哪一步了”，
+     * 不需要自己拼装包信息。
+     */
+    public val world: StateFlow<WorldSnapshot?> = mutableWorld.asStateFlow()
 
     private val inbox = Channel<ProtocolEvent>(capacity = options.eventBufferCapacity)
     private val outbox = Channel<ClientEvent>(capacity = options.eventBufferCapacity)
@@ -142,7 +158,32 @@ public class Session internal constructor(
         }
 
         is ProtocolEvent.RegistryData -> {
+            mutableRegistries.update { it + (event.registryId to event.entryCount) }
             emit(ClientEvent.RegistryReceived(event.registryId, event.entryCount))
+            true
+        }
+
+        is ProtocolEvent.JoinedWorld -> {
+            mutableWorld.value = WorldSnapshot(
+                entityId = event.entityId,
+                dimension = event.dimension,
+                gameMode = event.gameMode,
+            )
+            emit(ClientEvent.JoinedWorld(event.entityId, event.dimension, event.gameMode))
+            true
+        }
+
+        is ProtocolEvent.PositionUpdated -> {
+            val position = Position(event.x, event.y, event.z, event.yaw, event.pitch)
+            // 位置可能先于 Login 到达（协议没有强制顺序）；此时快照只有位置，其余字段留空。
+            mutableWorld.update { it.orEmpty().copy(position = position) }
+            emit(ClientEvent.PositionUpdated(position))
+            true
+        }
+
+        is ProtocolEvent.ChunksReceived -> {
+            mutableWorld.update { it.orEmpty().copy(chunksLoaded = event.total) }
+            emit(ClientEvent.ChunksReceived(event.chunks, event.total))
             true
         }
 
@@ -202,6 +243,8 @@ public class Session internal constructor(
         }
     }
 }
+
+private fun WorldSnapshot?.orEmpty(): WorldSnapshot = this ?: WorldSnapshot()
 
 internal fun ProtocolPhase.toSessionState(): SessionState = when (this) {
     ProtocolPhase.LOGIN -> SessionState.LOGIN

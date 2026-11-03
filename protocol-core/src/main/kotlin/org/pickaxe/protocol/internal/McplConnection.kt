@@ -14,10 +14,23 @@ import org.geysermc.mcprotocollib.network.session.ClientNetworkSession
 import org.geysermc.mcprotocollib.protocol.MinecraftConstants
 import org.geysermc.mcprotocollib.protocol.MinecraftProtocol
 import org.geysermc.mcprotocollib.protocol.data.ProtocolState
+import org.geysermc.mcprotocollib.protocol.data.game.entity.player.HandPreference
+import org.geysermc.mcprotocollib.protocol.data.game.entity.player.PositionElement
+import org.geysermc.mcprotocollib.protocol.data.game.setting.ChatVisibility
+import org.geysermc.mcprotocollib.protocol.data.game.setting.ParticleStatus
+import org.geysermc.mcprotocollib.protocol.data.game.setting.SkinPart
 import org.geysermc.mcprotocollib.protocol.data.status.ServerStatusInfo
 import org.geysermc.mcprotocollib.protocol.data.status.handler.ServerInfoHandler
 import org.geysermc.mcprotocollib.protocol.data.status.handler.ServerPingTimeHandler
+import org.geysermc.mcprotocollib.protocol.packet.common.serverbound.ServerboundClientInformationPacket
 import org.geysermc.mcprotocollib.protocol.packet.configuration.clientbound.ClientboundRegistryDataPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundLoginPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundPlayerPositionPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundChunkBatchFinishedPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundLevelChunkWithLightPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundPlayerLoadedPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.level.ServerboundAcceptTeleportationPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.level.ServerboundChunkBatchReceivedPacket
 import org.pickaxe.protocol.ProtocolCloseReason
 import org.pickaxe.protocol.ProtocolEvent
 import org.pickaxe.protocol.ProtocolFailureKind
@@ -42,6 +55,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  *    完成状态切换与 KeepAlive 应答，再回到本对象转换语义事件，因此读到的阶段
  *    是处理后的结果，也不会重复应答 KeepAlive。
  * 3. 关闭语义收敛：无论谁先断开，向上只报告一次 [ProtocolEvent.Closed]。
+ *
+ * 协议要求本端回应的东西（客户端设置、传送确认、区块批次确认、player_loaded）
+ * 都由本类就地处理：这些是“连接可用”的前提，不该让每个调用方各写一遍。
  *
  * 所有回调都发生在该连接自己的网络线程上（`pickaxe-mcpl` 线程组）。
  */
@@ -76,6 +92,15 @@ internal class McplConnection(
 
     @Volatile
     private var statusInfo: ServerStatusInfo? = null
+
+    // 以下状态只在连接自己的网络线程上读写，无需同步。
+    private var positionX: Double = 0.0
+    private var positionY: Double = 0.0
+    private var positionZ: Double = 0.0
+    private var yaw: Float = 0f
+    private var pitch: Float = 0f
+    private var chunkTotal: Int = 0
+    private var playerLoadedSent: Boolean = false
 
     val isShutDown: Boolean get() = shutdownStarted.get()
 
@@ -154,12 +179,70 @@ internal class McplConnection(
     override fun callPacketReceived(packet: Packet) {
         super.callPacketReceived(packet)
 
-        if (packet is ClientboundRegistryDataPacket) {
-            emit(ProtocolEvent.RegistryData(packet.registry.asString(), packet.entries.size))
+        // 先完成协议要求本端回的应答，再向上报告；顺序反过来时，消费者越慢
+        // 越容易把服务端的等待拖成超时。
+        when (packet) {
+            is ClientboundRegistryDataPacket ->
+                emit(ProtocolEvent.RegistryData(packet.registry.asString(), packet.entries.size))
+
+            is ClientboundLoginPacket -> emit(
+                ProtocolEvent.JoinedWorld(
+                    entityId = packet.entityId,
+                    dimension = packet.commonPlayerSpawnInfo.worldName.asString(),
+                    gameMode = packet.commonPlayerSpawnInfo.gameMode.name,
+                    viewDistance = packet.viewDistance,
+                    simulationDistance = packet.simulationDistance,
+                    maxPlayers = packet.maxPlayers,
+                ),
+            )
+
+            is ClientboundPlayerPositionPacket -> acceptTeleport(packet)
+
+            is ClientboundLevelChunkWithLightPacket -> chunkTotal++
+
+            is ClientboundChunkBatchFinishedPacket -> acknowledgeChunkBatch(packet)
+
+            else -> Unit
         }
 
         // 阶段只在包被协议库处理完之后读取，见类注释第 2 点。
         reportPhase()
+    }
+
+    /**
+     * 传送确认。
+     *
+     * 服务端在出生、传送与移动修正时都会下发该包，并在收到确认前把玩家视为
+     * 未就位；不回确认会表现为“人已经进世界但不走”。坐标可能是相对量，
+     * 必须叠加在上一次已知坐标上，否则位置会逐次漂移。
+     */
+    private fun acceptTeleport(packet: ClientboundPlayerPositionPacket) {
+        val relative = packet.relatives
+        positionX = if (PositionElement.X in relative) positionX + packet.position.x else packet.position.x
+        positionY = if (PositionElement.Y in relative) positionY + packet.position.y else packet.position.y
+        positionZ = if (PositionElement.Z in relative) positionZ + packet.position.z else packet.position.z
+        yaw = if (PositionElement.Y_ROT in relative) yaw + packet.yRot else packet.yRot
+        pitch = if (PositionElement.X_ROT in relative) pitch + packet.xRot else packet.xRot
+
+        send(ServerboundAcceptTeleportationPacket(packet.id))
+        emit(ProtocolEvent.PositionUpdated(positionX, positionY, positionZ, yaw, pitch))
+    }
+
+    /**
+     * 区块批次确认。
+     *
+     * 服务端按批次发送区块并等待本端回送“还能收多少”；不回确认时发送会在若干批
+     * 之后停住，表现是视野里只有出生点附近一小片。首批收完即视为初始加载完成，
+     * 补发 player_loaded —— 无头客户端不需要等渲染，但服务端会用它判断玩家已就绪。
+     */
+    private fun acknowledgeChunkBatch(packet: ClientboundChunkBatchFinishedPacket) {
+        send(ServerboundChunkBatchReceivedPacket(DESIRED_CHUNKS_PER_TICK))
+        emit(ProtocolEvent.ChunksReceived(packet.batchSize, chunkTotal))
+
+        if (!playerLoadedSent) {
+            playerLoadedSent = true
+            send(ServerboundPlayerLoadedPacket.INSTANCE)
+        }
     }
 
     private fun reportPhase() {
@@ -171,7 +254,28 @@ internal class McplConnection(
         }
         if (lastPhase == phase) return
         lastPhase = phase
+
+        // 服务端在配置阶段就按客户端设置确定视野距离与语言；不发这一包时
+        // Minestom 侧玩家设置为空，出生流程会在读取视野距离时失败。
+        if (phase == ProtocolPhase.CONFIGURATION) sendClientInformation()
+
         emit(ProtocolEvent.PhaseChanged(phase))
+    }
+
+    private fun sendClientInformation() {
+        send(
+            ServerboundClientInformationPacket(
+                "en_us",
+                CLIENT_VIEW_DISTANCE,
+                ChatVisibility.FULL,
+                true,
+                SkinPart.VALUES.toList(),
+                HandPreference.RIGHT_HAND,
+                false,
+                true,
+                ParticleStatus.ALL,
+            ),
+        )
     }
 
     private fun reportClosed(event: DisconnectedEvent) {
@@ -233,5 +337,15 @@ internal class McplConnection(
     private companion object {
         const val THREAD_NAME_PREFIX: String = "pickaxe-mcpl"
         const val SHUTDOWN_TIMEOUT_MILLIS: Long = 500
+
+        /**
+         * 申请下载区块时每 tick 期望的区块数。
+         *
+         * 只影响服务端的发送节奏；无头客户端不做渲染，取一个偏保守的值即可。
+         */
+        const val DESIRED_CHUNKS_PER_TICK: Float = 8.0f
+
+        /** 客户端声明的视野距离（区块半径）。出生点的初始加载量随它线性增长。 */
+        const val CLIENT_VIEW_DISTANCE: Int = 8
     }
 }

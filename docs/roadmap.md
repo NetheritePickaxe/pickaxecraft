@@ -1,7 +1,7 @@
 # 实施路线
 
-状态：M1 已收尾（Android 仅完成构建链探针，运行时仍待 M3）；下一步为 M2 出生与世界同步
-日期：2026-11-03
+状态：M2 已完成（出生链路打通）；下一步为 M3 移动平台门控（Android 仅完成构建链探针）
+日期：2026-11-04
 
 ## 1. 执行原则
 
@@ -14,7 +14,7 @@
 - 协议版本随协议库锁定，升级时同时调整协议库与 Minestom，并重跑真实握手。
 - 当前阶段未通过验收时，不通过提前建设后续模块绕过问题。
 
-## 2. 当前进度基线（2026-11-03，M1 收尾）
+## 2. 当前进度基线（2026-11-04，M2 完成）
 
 - 模块为 `protocol-core`、`client-core`、`app`、`testing:minestom`。
 - 调用方只依赖 `client-core` 即可完成状态查询与离线登录进入 play：`MinecraftClient` 提供
@@ -22,12 +22,16 @@
 - `protocol-core` 是协议库的唯一适配层，Netty 与 MCProtocolLib 不在 `client-core` 及以上模块的编译类路径
   （由 `verifyModuleBoundaries` 断言）。
 - 联调用例全部经由公共 API：`ClientSessionTest` 覆盖状态查询、登录到 play、注册表接收、
-  会话隔离、服务端断开、连接失败、关闭后线程回收、事件溢出。
+  出生进入世界、会话隔离、服务端断开、连接失败、关闭后线程回收、事件溢出。
 - 协议库的行为契约（回调顺序、KeepAlive 归属、状态切换点、断开语义）记录在
   [协议适配契约](protocol-contract.md)。
 - Android 只完成构建链探针（[Android 反糖探针](android-dex-probe.md)）：D8 可产出 dex、
   `minSdk` 下限 26、`org.cloudburstmc.math:api` 必须剔除。运行时仍未验证。
-- 联调日志仍只有 `player.configuring`，`player.spawned` 尚未出现；出生、传送/区块确认与世界模型属于 M2。
+- 出生链路已打通：客户端收到 `ClientboundLoginPacket`、位置同步与区块批次，服务端日志出现
+  `event=player.spawned` 与 `event=player.loaded`。传送确认、区块批次确认、`player_loaded`
+  全部由适配层自动完成。
+- 世界模型（方块内容、实体、背包）尚未建立：`ChunksReceived` 只报告累计区块数，不解码方块，
+  这属于 M4。
 
 ## 3. M0：工程基线与协议后端（已完成）
 
@@ -74,7 +78,9 @@
 
 M1 只要求进入 GAME，不要求玩家出生、传送/区块确认或世界模型；这些仍是 M2 的独立门控。
 
-## 5. M2：Minestom 离线登录 MVP
+## 5. M2：Minestom 离线登录 MVP（已完成）
+
+实施记录（含根因与偏差）见 [M2 实施记录](plans/m2-implementation-plan.md)。
 
 ### 交付内容
 
@@ -89,6 +95,15 @@ M1 只要求进入 GAME，不要求玩家出生、传送/区块确认或世界�
 - 核心自动完成传送确认与区块批次确认，调用方无需手工补救。
 - 服务端主动断开、网络取消、客户端关闭三种路径均能释放资源。
 - 该链路在 CI 中可重复执行，不依赖人工观察。
+
+### 实际结论
+
+- 四条验收标准全部满足：`ClientSessionTest.登录后完成出生并进入世界` 同时断言客户端侧事件
+  （JoinedWorld / PositionUpdated / ChunksReceived）与服务端侧里程碑（PlayerSpawnEvent / PlayerLoadedEvent）。
+- 此前“停在 `player.configuring`”不是协议问题，而是 harness 用错了启动入口：
+  `process().start()` 只打开监听端口，不启动线程调度器与 tick 线程，玩家永远留在
+  `playWaitingPlayers` 队列里。改用 `MinecraftServer.start()` 后出生立即完成。
+- 剩下一项不属于本阶段：区块内容解码与世界模型（M4）。
 
 ## 6. M3：移动平台可行性门控（spike）
 

@@ -1,7 +1,7 @@
 # 项目结构
 
-状态：M0 已完成，M1 已落地（`client-core` 与连接链路）；Headless 为第一阶段，独立 libGDX 客户端为长期下游
-日期：2026-11-03
+状态：M0–M2 已完成（连接链路与出生）；Headless 为第一阶段，独立 libGDX 客户端为长期下游
+日期：2026-11-04
 
 ## 1. 结构原则
 
@@ -39,7 +39,8 @@ pickaxecraft/
 │       ├── SessionState.kt
 │       ├── ClientEvent.kt
 │       ├── ClientException.kt
-│       └── ClientOptions.kt
+│       ├── ClientOptions.kt
+│       └── WorldSnapshot.kt        # 维度、实体 id、位置与区块数
 │
 ├── app/                            # JVM 25：Desktop CLI 与服务端联调入口
 │   └── src/
@@ -49,8 +50,8 @@ pickaxecraft/
 ├── testing/
 │   └── minestom/                   # JVM 25：可重复启动的 Minestom 联调服务 + 握手用例
 │       └── src/
-│           ├── main/kotlin/
-│           └── test/kotlin/
+│           ├── main/kotlin/        # Harness：启动、停止、服务端里程碑
+│           └── test/kotlin/        # ClientSessionTest、HarnessLifecycleTest、ShutdownHookTest
 │
 ├── buildSrc/                       # 只放构建约定，不放业务代码
 ├── docs/                           # 架构、结构、路线与决策记录
@@ -109,8 +110,11 @@ testing:minestom ──► client-core + protocol-core（版本对账）+ Minest
 
 - `MinecraftClient`：`status` / `connect` / `close`，一个实例至多一个活动会话。
 - `ClientOptions`：连接、登录、状态查询超时与事件缓冲容量。
-- `Session`：`state`（StateFlow）、`events`（单消费者 Flow）与幂等 `close`。
-- `ClientEvent` / `ClientException`：有序事件与可分类的失败。
+- `Session`：`state`（StateFlow）、`events`（单消费者 Flow）、`world` / `registries`
+  （会话级只读快照）与幂等 `close`。
+- `ClientEvent` / `ClientException`：有序事件（含 `JoinedWorld` / `PositionUpdated` /
+  `ChunksReceived`）与可分类的失败。
+- `WorldSnapshot` / `Position`：出生过程的只读状态，不含方块内容。
 
 `protocol-core` 只提供适配层事实（`ServerAddress`、`ServerStatus`、`ProtocolEvent`、
 `ProtocolConnection`），作为 `client-core` 的 `api` 依赖；它的内部实现（协议库类型、

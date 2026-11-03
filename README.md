@@ -8,7 +8,7 @@ Minestom 在本仓库只用于 `testing:minestom` 联调。最终客户端若需
 
 下游渲染以 libGDX GL20/GLES 2.0 + ANGLE 为基线，验证 ANGLE Vulkan 并保留回退路径，跟踪 MC 原版的 Vulkan 演进；所有图形依赖仍只存在于外部客户端仓库。
 
-> 当前为 M1 收尾：调用方可通过 `client-core` 查询状态、离线登录到 play 并观察有序会话事件；出生、世界同步（M2）与 Android 运行时验证（M3）尚未开始。
+> 当前为 M2 完成：调用方只依赖 `client-core` 即可查询状态、离线登录、完成出生并观察有序会话事件；方块内容与世界模型（M4）、Android 运行时验证（M3）尚未开始。
 
 ## 规划文档
 
@@ -53,7 +53,7 @@ CI 在 Ubuntu 上以同样的命令执行（`.github/workflows/ci.yml`）。
 ./gradlew :testing:minestom:run          # 监听 127.0.0.1:25565，离线认证
 ```
 
-启动后输出 `event=server.started … protocol=776`，玩家连接时输出 `event=player.configuring`，出生后输出 `event=player.spawned`；Ctrl+C 停止时输出 `event=server.stopping` / `event=server.stopped`。该服务只绑定回环地址，不会暴露到局域网。服务端支持 `--port` 指定端口。
+启动后输出 `event=server.started … protocol=776`，玩家连接时依次输出 `event=player.configuring` / `event=player.spawned` / `event=player.loaded`；Ctrl+C 停止时输出 `event=server.stopping` / `event=server.stopped`。该服务只绑定回环地址，不会暴露到局域网。服务端支持 `--port` 指定端口。
 
 关闭链路由 `ShutdownHookTest` 在独立 JVM 中真实发送 SIGTERM 验证；Windows 没有 SIGTERM，该用例会自动跳过，由 Linux CI 覆盖。
 

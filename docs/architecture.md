@@ -144,6 +144,23 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 协议库行为契约（回调顺序、KeepAlive 归属、状态切换点、断开语义）见
 [协议适配契约](protocol-contract.md)；该文档同时是升级检查清单。
 
+### 5.2 M2 已落地的具体形态：出生
+
+进入 play 之后，协议要求本端回应的四件事全部由适配层完成，调用方只观察结果：
+
+| 时机 | 本端动作 | 上层看到的事实 |
+| --- | --- | --- |
+| 进入 `CONFIGURATION` | 发送 `ServerboundClientInformationPacket` | —（服务端据此确定视野距离） |
+| 收到 `ClientboundLoginPacket` | 无 | `ProtocolEvent.JoinedWorld` → `ClientEvent.JoinedWorld` |
+| 收到 `ClientboundPlayerPositionPacket` | 回 `ServerboundAcceptTeleportationPacket` | `PositionUpdated`（相对坐标已叠加） |
+| 收到 `ClientboundChunkBatchFinishedPacket` | 回 `ServerboundChunkBatchReceivedPacket`；首批后补发 `player_loaded` | `ChunksReceived(chunks, total)` |
+
+`client-core` 把上述事实汇总成 `Session.world: StateFlow<WorldSnapshot?>`（实体 id、维度、
+游戏模式、位置、累计区块数）。`SessionState.PLAY` 只表示协议状态，出生进度由 `world` 表达，
+不为“已出生”另造状态——服务端并不会通知“出生完成”，本库也不猜测。
+
+适配层不解析区块内容：`ChunksReceived` 只数数量。方块调色板、光照与实体属于 M4 的世界模型。
+
 ## 6. libGDX 与平台约束
 
 共享发布产物使用 Java 21 字节码，由 `verifyBytecode`（major 65）自动断言；构建、CLI 与测试仍使用 Java 25。libGDX 官方当前推荐 JDK 17/21，因此下游图形客户端不被迫使用 Java 25；启用 Minestom 单人模式的 Desktop 组合根除外。

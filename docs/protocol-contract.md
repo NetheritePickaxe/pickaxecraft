@@ -1,7 +1,7 @@
 # 协议适配契约（MCProtocolLib 26.2 / 协议 776）
 
-状态：M1 已生效
-日期：2026-11-03
+状态：M2 已生效
+日期：2026-11-04
 适用模块：`protocol-core`
 
 ## 1. 这份文档解决什么
@@ -60,8 +60,9 @@
 **本项目的做法**：**不应答、不转发、不暴露**。适配层与 `client-core` 都不发送 KeepAlive。
 若将来需要自定义应答，必须先关掉这个标志，且只能有一处实现，避免重复应答。
 
-（M1 无自动用例覆盖这一条：触发它需要等服务端的 KeepAlive 周期。来源是
-`ClientListener.packetReceived` 的分支；M2 玩家出生后会在长连接中自然覆盖。）
+（没有专门的用例：触发它要等服务端的 KeepAlive 周期。来源是
+`ClientListener.packetReceived` 的分支；出生后的长连接会自然经过它，读到异常时会以
+`NETWORK` / `PROTOCOL` 失败结束，不会静默。）
 
 ### 2.5 状态查询是一次性连接
 
@@ -101,6 +102,24 @@ Intention → StatusRequest → StatusResponse → PingRequest → PongResponse 
 `NettyHelper.resolveAddress` 默认会做 SRV 查询。M1 只接受显式 `host:port`，
 因此设置 `ATTEMPT_SRV_RESOLVE = false`，避免一次隐式 DNS 查询带来的额外延迟与不可预测性。
 
+### 2.9 play 阶段必须由本端回应的包
+
+库不会替应用回这些包：它们与业务无关，只有在真正进入世界时才出现，因此上游把它们留给了调用方。
+
+| 包 | 本端应答 | 不回应的后果 |
+| --- | --- | --- |
+| `ClientboundPlayerPositionPacket` | `ServerboundAcceptTeleportationPacket(id)` | 服务端认为玩家未就位，移动与传送都不生效 |
+| `ClientboundChunkBatchFinishedPacket` | `ServerboundChunkBatchReceivedPacket` | 服务端在若干批之后停止发送区块，视野只有出生点一小片 |
+| `ClientboundLoginPacket` 之后的首批区块 | `ServerboundPlayerLoadedPacket` | 服务端的 `PlayerLoadedEvent` 不触发，依赖“玩家已就绪”的逻辑不会开始 |
+
+另外还有一条**配置阶段的上行包**：`ServerboundClientInformationPacket`。它不属于任何
+`Clientbound` 包的应答，但必须在进入 `CONFIGURATION` 时主动发送——服务端用它确定视野距离，
+Minestom 在玩家设置为空时会在出生流程里读取失败。
+
+**本项目的做法**：全部在 `McplConnection` 内就地完成，`client-core` 与调用方不参与。
+观察点仍是 `super.callPacketReceived` 之后，因此应答总是在库完成状态处理之后发出。
+
+
 ## 3. 由本项目实现、不得记在上游账上的部分
 
 | 职责 | 位置 | 说明 |
@@ -112,11 +131,14 @@ Intention → StatusRequest → StatusResponse → PingRequest → PongResponse 
 | 失败归层 | `McplConnection.classify` | CONNECT / NETWORK / PROTOCOL，上层不用识别异常类 |
 | 会话 Actor、背压、溢出 | `client-core` | 有界缓冲 + 单消费者事件流；溢出终止会话而不是静默丢弃 |
 | 阶段词汇 | `client-core` | `SessionState` 与 `ProtocolPhase` 独立映射，便于将来更换后端 |
+| 出生应答 | `McplConnection` | 客户端设置、传送确认、区块批次确认、`player_loaded`；调用方看不到这些包 |
+| 世界快照 | `client-core` | `Session.world` 汇总维度、实体 id、位置与区块数；不向上暴露包对象 |
 
 ## 4. 明确不依赖的行为
 
 - 上游 API 的稳定性：库方不承诺，升级必须重跑联调用例。
-- 除注册表以外的具体包类型：M1 只识别 `ClientboundRegistryDataPacket`。
+- 具体包类型清单：目前只识别注册表、Login、位置同步、区块与区块批次这五类；
+  其余包一律不解释，也不假设其字段。
 - 库内部的线程数量、线程名、事件循环实现：只依赖“同一连接的回调在单一网络线程上”。
 - `Session.getChannel()` 之外的底层干预能力：M1 不需要；若将来需要，先评审 fork 策略。
 
@@ -131,6 +153,8 @@ Intention → StatusRequest → StatusResponse → PingRequest → PongResponse 
 | 关闭后网络线程回收、重复关闭安全 | `ClientSessionTest.重复关闭无副作用且网络线程被回收` |
 | 会话隔离 | `ClientSessionTest.两个客户端互不影响` |
 | 事件溢出终止而非丢弃 | `ClientSessionTest.事件缓冲写满时终止会话而不是静默丢弃` |
+| 出生：自动应答传送到位并收到区块 | `ClientSessionTest.登录后完成出生并进入世界`（客户端事件） |
+| 出生：服务端确认 `PlayerSpawnEvent` 与 `PlayerLoadedEvent` | 同上（harness 的 `awaitMilestone`） |
 
 联调用例全部经由 `client-core` 公共 API，不再直接装配协议库；这些用例同时是
 “协议实现没有穿透到上层”的证明。

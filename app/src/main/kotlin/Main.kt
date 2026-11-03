@@ -124,6 +124,11 @@ private fun runConnect(args: List<String>): Int {
 private fun describe(event: ClientEvent): String = when (event) {
     is ClientEvent.StateChanged -> "event=state state=${event.state}"
     is ClientEvent.RegistryReceived -> "event=registry id=${event.registryId} entries=${event.entryCount}"
+    is ClientEvent.JoinedWorld -> "event=joined entity=${event.entityId} dimension=${event.dimension} mode=${event.gameMode}"
+    is ClientEvent.PositionUpdated -> with(event.position) {
+        "event=position x=$x y=$y z=$z yaw=$yaw pitch=$pitch"
+    }
+    is ClientEvent.ChunksReceived -> "event=chunks batch=${event.chunks} total=${event.total}"
     ClientEvent.Closed -> "event=closed"
     is ClientEvent.Failed -> "event=failed kind=${event.error::class.simpleName} message=${event.error.message}"
 }
