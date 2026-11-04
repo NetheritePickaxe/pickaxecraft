@@ -1251,10 +1251,19 @@ class ClientSessionTest {
                 awaitCondition(EVENT_TIMEOUT_MILLIS) { session.blockStateAt(target) == 0 }
                 assertTrue(session.lastAcknowledgedSequence > 0, "服务端应回执挖掘动作")
 
-                val change = log.snapshot().filterIsInstance<ClientEvent.BlocksChanged>()
-                    .flatMap { it.changes }
-                    .firstOrNull { it.position == target }
-                assertNotNull(change, "事件流里应有这条方块变更")
+                // 方块缓存走旁路（不经过 Actor），事件却要排队——两者到达有先后差。
+                // CI 负载下这个窗口能拉长到秒级，因此事件查找也必须等待，不能查一次就断言。
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    log.snapshot().filterIsInstance<ClientEvent.BlocksChanged>()
+                        .flatMap { it.changes }
+                        .any { it.position == target }
+                }
+                val change = assertNotNull(
+                    log.snapshot().filterIsInstance<ClientEvent.BlocksChanged>()
+                        .flatMap { it.changes }
+                        .firstOrNull { it.position == target },
+                    "事件流里应有这条方块变更",
+                )
                 assertEquals(0, change.stateId)
             } finally {
                 log.close()
