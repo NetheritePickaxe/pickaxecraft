@@ -1,6 +1,7 @@
 package org.pickaxe.protocol
 
 import org.geysermc.mcprotocollib.protocol.MinecraftProtocol
+import org.pickaxe.protocol.internal.ChatInput
 import org.pickaxe.protocol.internal.McplConnection
 
 /**
@@ -29,6 +30,38 @@ public class ProtocolConnection private constructor(
     /** 是否已经进入关闭流程。 */
     public val isClosed: Boolean
         get() = connection.isShutDown
+
+    /**
+     * 发送一条聊天消息。
+     *
+     * 消息不带签名：离线模式的服务端（`enforce-secure-profile=false`）可以直接接收，
+     * 这也是本库当前支持的唯一场景；启用安全聊天的在线服务端需要会话密钥，属于 M5。
+     *
+     * 发送不与收包同步：服务端把消息广播回来之后，同一文本会作为
+     * [ProtocolEvent.ChatReceived] 再出现一次，包括发送者自己发的那条。本端不在本地插入，
+     * 因为服务端可能过滤、改写或拒收——本地插入会让“显示过”与“服务端认可”不一致。
+     *
+     * 调用线程不限；同一线程内的多次调用按调用顺序发出。
+     *
+     * @throws IllegalArgumentException 内容为空、只有空白、含换行或超过 256 个字符
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    public fun sendChat(message: String) {
+        connection.sendChat(ChatInput.message(message))
+    }
+
+    /**
+     * 发送一条命令，例如 `sendCommand("/help")`。
+     *
+     * 前导斜杠可写可不写，包里的命令不带斜杠。命令包不参与聊天签名，因此在启用安全聊天的
+     * 服务端上同样可用（能否执行仍取决于玩家权限）。
+     *
+     * @throws IllegalArgumentException 去掉斜杠后为空、只有空白、含换行或超过 256 个字符
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    public fun sendCommand(command: String) {
+        connection.sendCommand(ChatInput.command(command))
+    }
 
     public companion object {
 

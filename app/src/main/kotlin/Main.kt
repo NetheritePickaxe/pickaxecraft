@@ -17,8 +17,9 @@ private val usage = """
       status <host> [port] [--timeout <秒>]
           查询服务端状态并打印版本、人数与延迟
 
-      connect <host> [port] [--username <名称>] [--timeout <秒>]
+      connect <host> [port] [--username <名称>] [--timeout <秒>] [--say <文本>]...
           离线登录并持续打印会话事件，Ctrl+C 关闭会话后退出
+          --say 在出生完成后再发送一条聊天消息，可重复；服务端会把它广播回来
 
       --version   打印客户端版本与锁定的游戏/协议/服务端版本
       --help      打印本帮助
@@ -110,6 +111,9 @@ private fun runConnect(args: List<String>): Int {
                     "server=${parsed.address.host}:${parsed.address.port}",
             )
             var chunkReported = false
+            // 待发的聊天消息：出生完成（位置已同步且首批区块到达）后一次发出，
+            // 避免在 configuration 阶段写包被服务端当作协议错误断开。
+            val pendingSays = ArrayDeque(parsed.says)
             session.events.collect { event ->
                 println(describe(event))
                 // 重生换维度后重新打印一次摘要：同一行输出在新旧维度之间应当明显不同。
@@ -118,6 +122,16 @@ private fun runConnect(args: List<String>): Int {
                 if (!chunkReported && event is ClientEvent.ChunksReceived && session.world.value?.position != null) {
                     chunkReported = true
                     println(describeChunk(session))
+                    for (text in pendingSays) {
+                        // 校验规则由库决定（长度上限、单行），命令行不重复一份；不合法就报出来继续跑。
+                        try {
+                            session.sendChat(text)
+                            println("event=chat.sent text=$text")
+                        } catch (e: IllegalArgumentException) {
+                            System.err.println("聊天内容不合法: ${e.message}")
+                        }
+                    }
+                    pendingSays.clear()
                 }
             }
         }
@@ -181,6 +195,8 @@ private class ParsedArgs(
     val address: ServerAddress,
     val username: String,
     val timeoutSeconds: Long,
+    /** 出生后要发送的聊天消息，按命令行顺序。 */
+    val says: List<String> = emptyList(),
 ) {
     fun options(): ClientOptions = ClientOptions(
         connectTimeoutMillis = timeoutSeconds * 1000,
@@ -189,7 +205,7 @@ private class ParsedArgs(
     )
 }
 
-/** 解析 `host [port] [--username 名称] [--timeout 秒]`；不合法时打印原因并返回 null。 */
+/** 解析 `host [port] [--username 名称] [--timeout 秒] [--say 文本]`；不合法时打印原因并返回 null。 */
 private fun parseArgs(args: List<String>): ParsedArgs? {
     if (args.isEmpty()) {
         System.err.println("缺少 host")
@@ -200,6 +216,7 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
     var port = ServerAddress.DEFAULT_PORT
     var username = MinecraftClient.DEFAULT_USERNAME
     var timeoutSeconds = DEFAULT_TIMEOUT_SECONDS
+    val says = ArrayList<String>()
 
     var index = 1
     // 第二个位置参数若是纯数字则视为端口。
@@ -229,6 +246,14 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
                 timeoutSeconds = seconds
                 index += 2
             }
+            "--say" -> {
+                if (value == null) {
+                    System.err.println("--say 缺少取值")
+                    return null
+                }
+                says += value
+                index += 2
+            }
             else -> {
                 System.err.println("未知参数: $option")
                 return null
@@ -237,7 +262,7 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
     }
 
     return try {
-        ParsedArgs(ServerAddress(host, port), username, timeoutSeconds)
+        ParsedArgs(ServerAddress(host, port), username, timeoutSeconds, says)
     } catch (e: IllegalArgumentException) {
         System.err.println("参数不合法: ${e.message}")
         null

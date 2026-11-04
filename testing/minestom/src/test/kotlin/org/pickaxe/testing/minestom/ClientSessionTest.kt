@@ -628,6 +628,62 @@ class ClientSessionTest {
     }
 
     @Test
+    fun `发送的聊天与命令服务端可见`() = runBlocking {
+        // 上行有两条独立的证据链：服务端收到原文（PlayerChatEvent / 命令执行器），
+        // 以及消息被广播回来。只断言回显会漏掉“服务端其实没收到、回显是本端插的”这种情况。
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, SAY_USERNAME)
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+
+                session.sendChat(SAY_TEXT)
+                assertTrue(
+                    withContext(Dispatchers.IO) { awaitPlayerChat(SAY_USERNAME, SAY_TEXT, MILESTONE_TIMEOUT) },
+                    "服务端应收到聊天原文：$SAY_TEXT",
+                )
+
+                // 广播回来的那条才是服务端认可的版本；本端不在本地插入副本。
+                // Minestom 用系统消息广播玩家聊天，因此这里是 SYSTEM 而不是 PLAYER；
+                // harness 把默认的可翻译模板换成了字面文本，回显才能与正文对账。
+                val expectedEcho = "$SAY_USERNAME: $SAY_TEXT"
+                log.await { it is ClientEvent.ChatReceived && it.message.text == expectedEcho }
+                val echoed = awaitChat(session) { it.text == expectedEcho }
+                assertEquals(ChatKind.SYSTEM, echoed.kind, "Minestom 以系统消息广播玩家聊天")
+
+                // 命令：调用方写前导斜杠，包里不带；带空格的参数必须原样到达服务端。
+                session.sendCommand("/$ECHO_COMMAND_NAME $COMMAND_ARGS")
+                assertTrue(
+                    withContext(Dispatchers.IO) {
+                        awaitCommand(SAY_USERNAME, "$ECHO_COMMAND_NAME $COMMAND_ARGS", MILESTONE_TIMEOUT)
+                    },
+                    "服务端应执行 echo 命令并看到完整参数",
+                )
+                val reply = awaitChat(session) { it.text == ECHO_COMMAND_REPLY }
+                assertEquals(ChatKind.SYSTEM, reply.kind, "命令输出以系统消息回到本端")
+
+                // 本地校验失败不应把会话打断：这些消息一个字节都不该发出去。
+                assertFailsWith<IllegalArgumentException> { session.sendChat("x".repeat(257)) }
+                assertFailsWith<IllegalArgumentException> { session.sendCommand("/") }
+                assertEquals(SessionState.PLAY, session.state.value, "校验失败后会话应仍在 play")
+            } finally {
+                log.close()
+                session.close()
+            }
+
+            // 关闭后发送被拒绝：连接已回收，写包只会进待发队列。
+            val rejected = assertFailsWith<IllegalStateException> { session.sendChat("closed") }
+            assertTrue(
+                "CLOSED" in rejected.message.orEmpty() && "聊天" in rejected.message.orEmpty(),
+                "拒绝原因应说明当前状态与操作，实际为 ${rejected.message}",
+            )
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `事件缓冲写满时终止会话而不是静默丢弃`() = runBlocking {
         val client = MinecraftClient(ClientOptions(eventBufferCapacity = 1))
         try {
@@ -724,6 +780,11 @@ class ClientSessionTest {
         const val CHAT_SIGNATURE_ID: Int = 7
         const val SIGNATURE_FILL: Byte = 0x5A
         val SENDER_UUID: UUID = UUID.fromString("6f2a1c39-0d4f-4a2b-9c8e-1b7d3f5a0e21")
+
+        /** 聊天上行用例：正文与命令参数都由服务端侧核对，客户端只负责发。 */
+        const val SAY_USERNAME: String = "SayBot"
+        const val SAY_TEXT: String = "你好，服务端"
+        const val COMMAND_ARGS: String = "hello world"
 
         const val EVENT_TIMEOUT_MILLIS: Long = 10_000
         val MILESTONE_TIMEOUT: Duration = Duration.ofSeconds(10)

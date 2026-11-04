@@ -1,10 +1,16 @@
 package org.pickaxe.testing.minestom
 
+import net.kyori.adventure.text.Component
 import net.minestom.server.Auth
 import net.minestom.server.MinecraftServer
+import net.minestom.server.command.CommandSender
+import net.minestom.server.command.builder.Command
+import net.minestom.server.command.builder.CommandContext
+import net.minestom.server.command.builder.arguments.ArgumentType
 import net.minestom.server.coordinate.Pos
 import net.minestom.server.entity.Player
 import net.minestom.server.event.player.AsyncPlayerConfigurationEvent
+import net.minestom.server.event.player.PlayerChatEvent
 import net.minestom.server.event.player.PlayerLoadedEvent
 import net.minestom.server.event.player.PlayerSpawnEvent
 import net.minestom.server.instance.InstanceContainer
@@ -21,6 +27,17 @@ public const val DEFAULT_HOST: String = "127.0.0.1"
 
 /** 默认监听端口，与 Minecraft 惯例一致。 */
 public const val DEFAULT_PORT: Int = 25565
+
+/**
+ * 联调用的 echo 命令名。
+ *
+ * 命令上行需要一个“服务端确实执行了”的落点，而 Minestom 核心不带任何默认可用的命令，
+ * 因此在 harness 里注册一个最小命令：执行即登记事实并回一条固定文本。
+ */
+public const val ECHO_COMMAND_NAME: String = "pickaxe"
+
+/** echo 命令回给执行者的固定文本；客户端以系统消息读到它。 */
+public const val ECHO_COMMAND_REPLY: String = "pickaxe-ok"
 
 /** 出生平台高度：只铺一层够站立的石头，不生成地形，联调时无需等待区块生成。 */
 private const val GROUND_HEIGHT: Int = 40
@@ -46,6 +63,33 @@ public enum class PlayerMilestone {
 }
 
 private val milestones = ConcurrentHashMap<String, ConcurrentHashMap<PlayerMilestone, CompletableFuture<Unit>>>()
+
+/**
+ * 服务端侧的事实登记簿，键是「类别|玩家|内容」。
+ *
+ * 里程碑、聊天、命令共用一张表：它们的语义都是“服务端真的收到了某件事”，
+ * 只是键的形状不同。用例据此断言服务端侧结果，而不是只看客户端自己的回显。
+ */
+private val facts = ConcurrentHashMap<String, CompletableFuture<Unit>>()
+
+private fun fact(key: String): CompletableFuture<Unit> = facts.computeIfAbsent(key) { CompletableFuture() }
+
+private fun recordFact(key: String) {
+    fact(key).complete(Unit)
+}
+
+private fun awaitFact(key: String, timeout: Duration): Boolean {
+    val future = fact(key)
+    return try {
+        future.get(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)
+        true
+    } catch (e: java.util.concurrent.TimeoutException) {
+        false
+    } catch (e: InterruptedException) {
+        Thread.currentThread().interrupt()
+        false
+    }
+}
 
 private fun milestoneFuture(username: String, milestone: PlayerMilestone): CompletableFuture<Unit> =
     milestones
@@ -73,6 +117,18 @@ public fun awaitMilestone(username: String, milestone: PlayerMilestone, timeout:
         false
     }
 }
+
+/** 等待服务端收到某玩家发出的聊天正文；超时返回 false。 */
+public fun awaitPlayerChat(username: String, message: String, timeout: Duration): Boolean =
+    awaitFact(chatFactKey(username, message), timeout)
+
+/** 等待某玩家的命令执行到服务端的 echo 命令；[input] 是不带斜杠的完整命令串。 */
+public fun awaitCommand(username: String, input: String, timeout: Duration): Boolean =
+    awaitFact(commandFactKey(username, input), timeout)
+
+private fun chatFactKey(username: String, message: String): String = "chat|$username|$message"
+
+private fun commandFactKey(username: String, input: String): String = "command|$username|$input"
 
 /**
  * 启动一个仅供联调的最小服务端：离线认证 + 40 格高的石头平面。
@@ -121,6 +177,17 @@ public fun startHarness(port: Int = DEFAULT_PORT): InstanceContainer {
         println("event=player.loaded name=${event.player.username}")
         recordMilestone(event.player, PlayerMilestone.LOADED)
     }
+    // 聊天上行：服务端收到的原文就是证据。客户端自己的回显还要经过广播与解码，
+    // 只能证明“链路能回环”，不能证明服务端认可了这条消息。
+    MinecraftServer.getGlobalEventHandler().addListener(PlayerChatEvent::class.java) { event ->
+        println("event=player.chat name=${event.player.username} message=${event.rawMessage}")
+        recordFact(chatFactKey(event.player.username, event.rawMessage))
+        // Minestom 默认用可翻译组件（`chat.type.text`）广播，而本客户端没有语言文件，
+        // 只能渲染出键名——那样回显就无法与正文对账。这里换成字面文本，让“服务端把这段
+        // 字原样发回来了”成为可断言的事实；真实服务端走带签名的玩家聊天包，是另一条路径。
+        event.formattedMessage = Component.text("${event.player.username}: ${event.rawMessage}")
+    }
+    MinecraftServer.getCommandManager().register(EchoCommand())
 
     server.start(InetSocketAddress(DEFAULT_HOST, port))
     harnessStarted = true
@@ -134,5 +201,27 @@ public fun stopHarness() {
     harnessStarted = false
     if (MinecraftServer.isStarted() && !MinecraftServer.isStopping()) {
         MinecraftServer.process().stop()
+    }
+}
+
+/**
+ * 最小 echo 命令：登记「谁执行了什么」，再回一条固定文本。
+ *
+ * 带一个贪婪字符串参数，因此 `pickaxe hello world` 这种带空格的输入也能落到执行器；
+ * 同时保留默认执行器，单独打 `/pickaxe` 也能执行。这条命令的用途是证明命令包里的一段
+ * 字符串完整地穿过协议与命令解析器，不是演示命令系统。
+ */
+private class EchoCommand : Command(ECHO_COMMAND_NAME) {
+    init {
+        addSyntax({ sender, context -> echo(sender, context) }, ArgumentType.StringArray("args"))
+        setDefaultExecutor { sender, context -> echo(sender, context) }
+    }
+
+    private fun echo(sender: CommandSender, context: CommandContext) {
+        (sender as? Player)?.let { player ->
+            println("event=player.command name=${player.username} input=${context.input}")
+            recordFact(commandFactKey(player.username, context.input))
+        }
+        sender.sendMessage(Component.text(ECHO_COMMAND_REPLY))
     }
 }

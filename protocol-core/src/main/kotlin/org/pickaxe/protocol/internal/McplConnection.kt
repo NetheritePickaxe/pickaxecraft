@@ -47,6 +47,8 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.Clien
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundForgetLevelChunkPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundLevelChunkWithLightPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatAckPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatCommandPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundPlayerLoadedPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.level.ServerboundAcceptTeleportationPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.level.ServerboundChunkBatchReceivedPacket
@@ -65,6 +67,7 @@ import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
 import java.io.IOException
 import java.net.InetSocketAddress
+import java.util.BitSet
 import java.util.Optional
 import java.util.UUID
 import java.util.concurrent.Executor
@@ -577,7 +580,8 @@ internal class McplConnection(
      * 两者都没有样式信息可用，本层只给纯文本。
      *
      * 确认包必须紧跟着回送：不带确认时服务端的待确认窗口只增不减，真实服务端会因此
-     * 拒绝后续带签名的消息。无头客户端不发消息，但同样要维持这个窗口。
+     * 拒绝后续带签名的消息。本端只发不带签名的消息，但同样要维持这个窗口——窗口是
+     * 服务端对“客户端是否跟得上”的判断，与消息本身是否签名无关。
      */
     private fun receivePlayerChat(packet: ClientboundPlayerChatPacket) {
         send(ServerboundChatAckPacket(CHAT_ACK_PER_MESSAGE))
@@ -645,6 +649,60 @@ internal class McplConnection(
                 ParticleStatus.ALL,
             ),
         )
+    }
+
+    /**
+     * 发送一条聊天消息。
+     *
+     * 调用线程不限：协议库的 `send` 会把写入切到该连接自己的事件循环，因此上层不需要
+     * 关心网络线程。顺序只在同一调用线程内成立——跨线程调用按事件循环收到的先后排队。
+     *
+     * 消息**不带签名**。离线模式的服务端（`enforce-secure-profile=false`）接受这种消息；
+     * 启用安全聊天的服务端需要会话密钥，那属于在线模式（M5），本层不做半套签名。
+     *
+     * last-seen 窗口按“什么都没看到”填写（偏移 0、位集全空、校验 0）。协议里这是合法状态，
+     * 语义是真的：本端没有为任何已收到的消息做过签名确认。填一个假的“已看到”反而会与
+     * 服务端记录的待确认序列不一致。
+     */
+    fun sendChat(message: String) {
+        sendInPlay("聊天") {
+            ServerboundChatPacket(
+                message,
+                System.currentTimeMillis(),
+                0L,
+                null,
+                0,
+                BitSet(CHAT_ACK_WINDOW),
+                0,
+            )
+        }
+    }
+
+    /**
+     * 发送一条命令（不含前导斜杠）。
+     *
+     * 命令包本身不带签名与 last-seen 字段，因此与聊天不同：即使在启用安全聊天的服务端上
+     * 也能用，只要命令本身允许该玩家执行。
+     */
+    fun sendCommand(command: String) {
+        sendInPlay("命令") { ServerboundChatCommandPacket(command) }
+    }
+
+    /**
+     * 上行包的统一前置条件。
+     *
+     * 三项检查的顺序有讲究：关闭优先于阶段，阶段优先于连接状态——被关闭的连接上
+     * “还没到 play”是误导性的说法。晚于 play 阶段之前发送聊天会被服务端当作协议错误
+     * 断开，因此这里必须拦住，而不是交给协议库静默排队（`send` 在未连接时会把包放进
+     * 待发队列，等连接建立后再发——那正好是我们不想要的行为）。
+     */
+    private fun sendInPlay(what: String, packet: () -> Packet) {
+        check(!shutdownStarted.get()) { "连接已关闭，不能发送$what" }
+        check(lastPhase == ProtocolPhase.PLAY) {
+            "只有进入 play 阶段后才能发送$what，当前阶段为 ${lastPhase ?: "未连接"}"
+        }
+        check(isConnected) { "连接已断开，不能发送$what" }
+        send(packet())
     }
 
     private fun reportClosed(event: DisconnectedEvent) {
@@ -733,5 +791,13 @@ internal class McplConnection(
          * 攒批确认会把延迟暴露给服务端的重发逻辑，没有必要。
          */
         const val CHAT_ACK_PER_MESSAGE: Int = 1
+
+        /**
+         * last-seen 位集的位宽。
+         *
+         * 上行聊天包用固定 20 位表示“最近 20 条消息里哪些被确认过”。本端不发带签名的消息，
+         * 位集恒为空，但宽度必须与协议一致——否则写出的字节数不对，整包解码失败。
+         */
+        const val CHAT_ACK_WINDOW: Int = 20
     }
 }

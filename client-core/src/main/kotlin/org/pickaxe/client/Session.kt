@@ -226,6 +226,49 @@ public class Session internal constructor(
     /** 当前保留的聊天条数。 */
     public val chatCount: Int get() = synchronized(chatLock) { chatLog.size }
 
+    /**
+     * 发送一条聊天消息。只有 [SessionState.PLAY] 阶段可用。
+     *
+     * 消息会被服务端广播回来（包括自己发的那条），因此成功发送后事件流里会出现同一条
+     * [ClientEvent.ChatReceived]，[chat] 里也能回看到它。本端不做本地回显：服务端可能
+     * 过滤、改写或拒收，提前插入会让界面显示一条服务端并不认可的消息。
+     *
+     * 非挂起函数：写入网络是异步的，返回不代表服务端已收到。无返回值也没有回执事件——
+     * 真正的回执就是那条广播回来的消息。
+     *
+     * @throws IllegalArgumentException 内容为空、只有空白、含换行或超过 256 个字符
+     * @throws IllegalStateException 会话尚未进入 play，或已经关闭
+     */
+    public fun sendChat(message: String) {
+        playConnection("聊天").sendChat(message)
+    }
+
+    /**
+     * 发送一条命令，例如 `sendCommand("/help")`；前导斜杠可省略。
+     *
+     * 命令不走聊天签名，输出以系统消息回到 [chat]；能否执行取决于服务端给该玩家的权限。
+     *
+     * @throws IllegalArgumentException 命令为空、只有空白、含换行或超过 256 个字符
+     * @throws IllegalStateException 会话尚未进入 play，或已经关闭
+     */
+    public fun sendCommand(command: String) {
+        playConnection("命令").sendCommand(command)
+    }
+
+    /**
+     * 取可用于上行的连接。
+     *
+     * 用状态而不是连接是否存活来判断：连接存活但仍在 configuration 阶段时发送会被服务端
+     * 当作协议错误断开，那是最难定位的一类失败。关闭与未进入 play 用同一类异常（都是
+     * “现在不能发”），但消息里带上当前状态，便于区分是没连上还是已经结束。
+     */
+    private fun playConnection(what: String): ProtocolConnection {
+        check(state.value == SessionState.PLAY) {
+            "会话当前为 ${state.value}，只有进入 play 后才能发送$what"
+        }
+        return connection ?: throw IllegalStateException("会话还没有建立连接，不能发送$what")
+    }
+
     /** 协议回调：网络线程上只允许缓存写入或一次入队，溢出即终止会话。 */
     private fun onProtocolEvent(event: ProtocolEvent) {
         when (event) {

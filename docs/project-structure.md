@@ -1,6 +1,6 @@
 # 项目结构
 
-状态：M0–M2 已完成（连接链路与出生），M4a–M4e 已完成（区块内容、实体跟踪、重生换维度、玩家身份、聊天）；Headless 为第一阶段，独立 libGDX 客户端为长期下游
+状态：M0–M2 已完成（连接链路与出生），M4a–M4f 已完成（区块内容、实体跟踪、重生换维度、玩家身份、聊天读写）；Headless 为第一阶段，独立 libGDX 客户端为长期下游
 日期：2026-11-04
 
 ## 1. 结构原则
@@ -121,7 +121,8 @@ testing:minestom ──► client-core + protocol-core（版本对账）+ Minest
 - `Session`：`state`（StateFlow）、`events`（单消费者 Flow）、`world` / `registries`
   （会话级只读快照）、区块查询（`chunk` / `blockStateAt` / `biomeAt` / `loadedChunks`）、
   实体查询（`entity` / `entities` / `entityCount`）、玩家查询（`players` / `player` /
-  `playerCount` / `nameOf`）、聊天记录（`chat` / `chatCount`）与幂等 `close`。
+  `playerCount` / `nameOf`）、聊天（`chat` / `chatCount` 回看，`sendChat` / `sendCommand` 上行）
+  与幂等 `close`。
 - `ClientEvent` / `ClientException`：有序事件（含 `JoinedWorld` / `PositionUpdated` /
   `ChunksReceived` / `EntitySpawned` / `EntityRemoved` / `PlayerListChanged` /
   `ChatReceived` / `ChatDeleted` / `Respawned`）与可分类的失败。
