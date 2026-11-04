@@ -20,6 +20,7 @@ import net.minestom.server.entity.EntityCreature
 import net.minestom.server.entity.EntityType
 import net.minestom.server.entity.EquipmentSlot
 import net.minestom.server.entity.Player
+import net.minestom.server.entity.attribute.Attribute
 import net.minestom.server.event.player.AsyncPlayerConfigurationEvent
 import net.minestom.server.instance.InstanceContainer
 import net.minestom.server.instance.block.Block
@@ -1059,6 +1060,117 @@ class ClientSessionTest {
     }
 
     @Test
+    fun `实体属性可读且变化会推给本人`() = runBlocking {
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, ATTR_USERNAME)
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+                val entityId = assertNotNull(session.world.value?.entityId, "出生后应知道自己的实体 id")
+
+                // Minestom 的属性实例按需创建：出生时发的属性包可能整包为空（这正是
+                // 「事件只带变化项」的一个极端例子），因此这里不断言默认值，只等变化。
+                //
+                // 服务端改基值：Minestom 在 onAttributeChanged 里主动推给自己（PLAY 阶段），
+                // 客户端不需要任何观察者就能收到。
+                assertTrue(
+                    withContext(Dispatchers.IO) {
+                        setPlayerAttribute(ATTR_USERNAME, Attribute.MAX_HEALTH, RAISED_MAX_HEALTH)
+                    },
+                    "服务端应找到该玩家并改属性",
+                )
+                log.await {
+                    it is ClientEvent.EntityAttributesUpdated && it.entityId == entityId &&
+                        it.changed.any { a -> a.key == MAX_HEALTH_KEY }
+                }
+                assertEquals(
+                    RAISED_MAX_HEALTH,
+                    session.attribute(entityId, MAX_HEALTH_KEY)?.value,
+                    "属性事件到达时缓存应已合并",
+                )
+
+                // 改第二个属性：按键合并必须保住第一个键——整表替换在这里就会现形。
+                assertTrue(
+                    withContext(Dispatchers.IO) {
+                        setPlayerAttribute(ATTR_USERNAME, Attribute.MOVEMENT_SPEED, RAISED_MOVE_SPEED)
+                    },
+                    "服务端应能改移动速度",
+                )
+                log.await {
+                    it is ClientEvent.EntityAttributesUpdated && it.entityId == entityId &&
+                        it.changed.any { a -> a.key == MOVE_SPEED_KEY }
+                }
+                assertEquals(
+                    RAISED_MAX_HEALTH,
+                    session.attribute(entityId, MAX_HEALTH_KEY)?.value,
+                    "合并不得抹掉之前收到的属性",
+                )
+                assertEquals(
+                    RAISED_MOVE_SPEED,
+                    session.attribute(entityId, MOVE_SPEED_KEY)?.value,
+                )
+            } finally {
+                log.close()
+                session.close()
+            }
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `攻击与交互实体后两侧同时可见`() = runBlocking {
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, MOB_USERNAME)
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+
+                val zombie = withContext(Dispatchers.IO) {
+                    spawnZombie(instance, MOB_ZOMBIE_X, GROUND_LEVEL, 0.5)
+                }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    session.entities().values.any { it.type == "ZOMBIE" }
+                }
+                val zombieId = session.entities().values.first { it.type == "ZOMBIE" }.id
+
+                // 僵尸的属性实例同样按需创建，出生包可能为空；服务端改一次基值，
+                // Minestom 会把属性包推给所有观察者（本端客户端就是观察者）。
+                zombie.getAttribute(Attribute.MAX_HEALTH).setBaseValue(RAISED_MAX_HEALTH)
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    session.attribute(zombieId, MAX_HEALTH_KEY)?.value == RAISED_MAX_HEALTH
+                }
+
+                // 攻击：服务端只调事件不自动结算，harness 补一次固定伤害。
+                session.attack(zombieId)
+                assertTrue(
+                    withContext(Dispatchers.IO) { awaitEntityAttack(MOB_USERNAME, MILESTONE_TIMEOUT) },
+                    "服务端应确认这次攻击",
+                )
+                // 服务端侧：血量真的掉了。客户端侧：伤害事件包到达（第四例无回执，只能看结果）。
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { zombie.health < DEFAULT_MAX_HEALTH.toFloat() }
+                log.await { it is ClientEvent.EntityDamaged && it.entityId == zombieId }
+
+                // 交互（右键）：Minestom 只登记事件；本端没有任何回执，服务端事实就是全部证据。
+                session.interactWith(zombieId)
+                assertTrue(
+                    withContext(Dispatchers.IO) { awaitEntityInteract(MOB_USERNAME, MILESTONE_TIMEOUT) },
+                    "服务端应确认这次交互",
+                )
+            } finally {
+                log.close()
+                session.close()
+            }
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `挖掘方块后服务端世界与本地缓存同时变空`() = runBlocking {
         val client = MinecraftClient()
         try {
@@ -1323,6 +1435,19 @@ class ClientSessionTest {
         const val DIG_USERNAME: String = "DigBot"
         const val PLACE_USERNAME: String = "PlaceBot"
         const val PLACE_COUNT: Int = 8
+
+        /** 属性用例：自查默认最大生命，然后由 harness 改基值并等事件。 */
+        const val ATTR_USERNAME: String = "AttrBot"
+        const val MAX_HEALTH_KEY: String = "minecraft:max_health"
+        const val MOVE_SPEED_KEY: String = "minecraft:movement_speed"
+        const val DEFAULT_MAX_HEALTH: Double = 20.0
+        const val RAISED_MAX_HEALTH: Double = 40.0
+        const val RAISED_MOVE_SPEED: Double = 1.5
+
+        /** 实体交互用例：生成一只僵尸，攻击它、右键它，两侧对账。 */
+        const val MOB_USERNAME: String = "MobBot"
+        const val MOB_ZOMBIE_X: Double = 2.5
+        const val ATTACK_DAMAGE: Double = 3.0
 
         const val EVENT_TIMEOUT_MILLIS: Long = 10_000
         val MILESTONE_TIMEOUT: Duration = Duration.ofSeconds(10)

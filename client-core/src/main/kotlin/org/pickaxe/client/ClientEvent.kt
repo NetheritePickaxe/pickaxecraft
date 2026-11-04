@@ -1,6 +1,7 @@
 package org.pickaxe.client
 
 import org.pickaxe.protocol.chat.ChatMessage
+import org.pickaxe.protocol.entity.EntityAttribute
 import org.pickaxe.protocol.world.BlockChange
 import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
@@ -79,6 +80,30 @@ public sealed interface ClientEvent {
 
     /** 这些实体离开了视野，或已死亡/消失。 */
     public data class EntityRemoved(public val ids: List<Int>) : ClientEvent
+
+    /**
+     * 实体 [entityId] 的属性被服务端更新了。
+     *
+     * [changed] 只包含本包出现的项；完整表在 [Session.attributes]，事件到达时已合并。
+     * 本端自己的属性变化也在其中。
+     */
+    public data class EntityAttributesUpdated(
+        public val entityId: Int,
+        public val changed: List<EntityAttribute>,
+    ) : ClientEvent
+
+    /**
+     * 实体 [entityId] 受到了伤害。
+     *
+     * [sourceType] 是伤害类型的数字 id（协议不带类型注册表，本层不猜名字）；
+     * [sourceCause] / [sourceDirect] 是造成伤害的实体 id，协议里 0 表示“没有”，转成 null。
+     */
+    public data class EntityDamaged(
+        public val entityId: Int,
+        public val sourceType: Int,
+        public val sourceCause: Int?,
+        public val sourceDirect: Int?,
+    ) : ClientEvent
 
     /**
      * 玩家列表发生变化。

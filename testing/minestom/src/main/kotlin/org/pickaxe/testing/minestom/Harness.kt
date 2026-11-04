@@ -8,8 +8,14 @@ import net.minestom.server.command.builder.Command
 import net.minestom.server.command.builder.CommandContext
 import net.minestom.server.command.builder.arguments.ArgumentType
 import net.minestom.server.coordinate.Pos
+import net.minestom.server.entity.EntityCreature
+import net.minestom.server.entity.EntityType
 import net.minestom.server.entity.Player
+import net.minestom.server.entity.attribute.Attribute
+import net.minestom.server.entity.damage.DamageType
+import net.minestom.server.event.entity.EntityAttackEvent
 import net.minestom.server.event.player.AsyncPlayerConfigurationEvent
+import net.minestom.server.event.player.PlayerEntityInteractEvent
 import net.minestom.server.event.player.PlayerBlockPlaceEvent
 import net.minestom.server.event.player.PlayerChatEvent
 import net.minestom.server.event.player.PlayerFinishDiggingEvent
@@ -184,6 +190,40 @@ public fun awaitPlayerDig(username: String, x: Int, y: Int, z: Int, timeout: Dur
 public fun awaitPlayerPlace(username: String, x: Int, y: Int, z: Int, timeout: Duration): Boolean =
     awaitFact(blockFactKey("place", username, x, y, z), timeout)
 
+/** 等待服务端确认某玩家攻击了一次实体；超时返回 false。 */
+public fun awaitEntityAttack(username: String, timeout: Duration): Boolean =
+    awaitFact(entityFactKey("attack", username), timeout)
+
+/** 等待服务端确认某玩家与一次实体交互（右键）；超时返回 false。 */
+public fun awaitEntityInteract(username: String, timeout: Duration): Boolean =
+    awaitFact(entityFactKey("interact", username), timeout)
+
+private fun entityFactKey(kind: String, username: String): String = "entity|$kind|$username"
+
+/**
+ * 在实例里放一只用于联调的生物（僵尸），返回它。
+ *
+ * 僵尸是 LivingEntity：出生时属性包会推给所有观察者（含本端客户端），
+ * 被攻击时走 Minestom 的伤害管线并下发伤害事件包——两条链路都能给出双侧证据。
+ */
+public fun spawnZombie(instance: InstanceContainer, x: Double, y: Double, z: Double): EntityCreature =
+    EntityCreature(EntityType.ZOMBIE).apply {
+        setInstance(instance, Pos(x, y, z))
+    }
+
+/**
+ * 修改玩家的属性基值（服务端侧），并把新值打印出来。
+ *
+ * Minestom 在属性变化时会**主动把属性包推给本人**（PLAY 阶段直接 sendPacket），
+ * 因此客户端不需要任何观察者就能收到这次变化——这正是属性链路最省事的地方。
+ */
+public fun setPlayerAttribute(username: String, attribute: Attribute, value: Double): Boolean {
+    val player = MinecraftServer.getConnectionManager().getOnlinePlayerByUsername(username) ?: return false
+    player.getAttribute(attribute).setBaseValue(value)
+    println("event=server.attribute name=$username attribute=${attribute.key()} value=$value")
+    return true
+}
+
 /**
  * 启动一个仅供联调的最小服务端：离线认证 + 40 格高的石头平面。
  *
@@ -283,6 +323,26 @@ public fun startHarness(port: Int = DEFAULT_PORT): InstanceContainer {
         recordFact(
             blockFactKey("place", event.player.username, position.blockX(), position.blockY(), position.blockZ()),
         )
+    }
+    // 实体攻击：Minestom 只在包里目标有效时调用事件（不在视野/已死则静默忽略）。
+    // 默认实现不自动结算伤害，这里应用一次固定伤害，让「攻击真的打中了」同时具备
+    // 服务端事实（事件）与客户端证据（damage_event 包 + 属性/血量变化）。
+    MinecraftServer.getGlobalEventHandler().addListener(EntityAttackEvent::class.java) { event ->
+        val attackerName = (event.entity as? Player)?.username ?: "unknown"
+        println(
+            "event=entity.attacked name=$attackerName target=${event.target.entityType.name()} " +
+                "id=${event.target.entityId}",
+        )
+        recordFact(entityFactKey("attack", attackerName))
+        (event.target as? net.minestom.server.entity.LivingEntity)?.damage(DamageType.PLAYER_ATTACK, 3.0f)
+    }
+    // 实体交互（右键）：登记「谁右键了谁」，手与交互点都来自包本身。
+    MinecraftServer.getGlobalEventHandler().addListener(PlayerEntityInteractEvent::class.java) { event ->
+        println(
+            "event=entity.interacted name=${event.player.username} target=${event.target.entityType.name()} " +
+                "id=${event.target.entityId} hand=${event.hand}",
+        )
+        recordFact(entityFactKey("interact", event.player.username))
     }
     MinecraftServer.getCommandManager().register(EchoCommand())
 

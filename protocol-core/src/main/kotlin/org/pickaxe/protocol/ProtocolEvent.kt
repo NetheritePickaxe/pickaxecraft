@@ -1,6 +1,7 @@
 package org.pickaxe.protocol
 
 import org.pickaxe.protocol.chat.ChatMessage
+import org.pickaxe.protocol.entity.EntityAttribute
 import org.pickaxe.protocol.inventory.Container
 import org.pickaxe.protocol.world.BlockChange
 import org.pickaxe.protocol.world.ChunkColumn
@@ -237,6 +238,31 @@ public sealed interface ProtocolEvent {
      * （拒绝或改写时下发 `set_held_slot`）。两者都归到同一个事实——“现在选中的是哪一格”。
      */
     public data class HeldSlotChanged(public val slot: Int) : ProtocolEvent
+
+    /**
+     * 服务端更新了实体 [entityId] 的属性。
+     *
+     * [changed] 只包含**本包**出现的项——协议里每次只发改动的属性，不是全量快照，
+     * 没出现的键保持上一次的值。本端自查属性也在其中：Minestom（与原版一致）在
+     * 属性变化时直接推给本人。
+     */
+    public data class AttributesUpdated(
+        public val entityId: Int,
+        public val changed: List<EntityAttribute>,
+    ) : ProtocolEvent
+
+    /**
+     * 实体 [entityId] 受到了伤害。
+     *
+     * [sourceType] 是伤害类型的数字 id（协议不带类型注册表，本层不猜名字）；
+     * [sourceCause] / [sourceDirect] 是造成伤害的实体 id，协议里 0 表示“没有”，统一转成 null。
+     */
+    public data class Damaged(
+        public val entityId: Int,
+        public val sourceType: Int,
+        public val sourceCause: Int?,
+        public val sourceDirect: Int?,
+    ) : ProtocolEvent
 
     /** 会话终止，且这是本次连接唯一一次终止通知。 */
     public data class Closed(public val reason: ProtocolCloseReason) : ProtocolEvent

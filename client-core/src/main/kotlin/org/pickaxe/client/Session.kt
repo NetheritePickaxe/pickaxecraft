@@ -21,6 +21,7 @@ import org.pickaxe.protocol.ProtocolListener
 import org.pickaxe.protocol.ProtocolPhase
 import org.pickaxe.protocol.ServerAddress
 import org.pickaxe.protocol.chat.ChatMessage
+import org.pickaxe.protocol.entity.EntityAttribute
 import org.pickaxe.protocol.inventory.Container
 import org.pickaxe.protocol.inventory.Hand
 import org.pickaxe.protocol.inventory.InventoryItem
@@ -127,6 +128,13 @@ public class Session internal constructor(
     private val containers = ConcurrentHashMap<Int, Container>()
 
     /**
+     * 实体属性缓存：实体 id → 键名 → 属性。
+     *
+     * 服务端每次只下发改动的属性，这里按键合并；与区块/实体一样不占事件缓冲。
+     */
+    private val entityAttributes = ConcurrentHashMap<Int, Map<String, EntityAttribute>>()
+
+    /**
      * 当前快捷栏选中格（0–8）。
      *
      * 服务端接受切换时不回包，所以本端 [selectHotbarSlot] 成功后立即更新；服务端拒绝或改写时
@@ -194,6 +202,7 @@ public class Session internal constructor(
             containers.clear()
             heldSlotIndex = 0
             lastAcknowledgedSequenceValue = 0
+            entityAttributes.clear()
             mutableStatus.value = PlayerStatus()
             clearChat()
             mutableState.value = SessionState.CLOSED
@@ -270,6 +279,63 @@ public class Session internal constructor(
      * 两者到达顺序不固定，因此这里按查询时刻关联，而不是在实体快照里存一份副本。
      */
     public fun nameOf(entityId: Int): String? = entity(entityId)?.uuid?.let { player(it)?.name }
+
+    /**
+     * 某实体的属性表快照（键名如 `minecraft:max_health` → 属性值与修改器）。
+     *
+     * 服务端每次只下发改动的属性，这里返回**按键合并后**的累积结果；从没收到过就是空表。
+     * 本端玩家自己的属性也在其中（用 `Session.world` 里的实体 id 查询）。与区块、实体一样，
+     * 属性写入走无锁缓存、不占事件缓冲。
+     */
+    public fun attributes(entityId: Int): Map<String, EntityAttribute> =
+        entityAttributes[entityId] ?: emptyMap()
+
+    /** 按键查单个属性；从没收到过就是 null。 */
+    public fun attribute(entityId: Int, key: String): EntityAttribute? =
+        entityAttributes[entityId]?.get(key)
+
+    /**
+     * 攻击一个实体。
+     *
+     * 攻击没有回执包（「成功没有回执」的第四例）：目标不在视野里时服务端静默忽略，
+     * 打中了会以 [ClientEvent.EntityDamaged] 与实体状态变化体现。
+     *
+     * @param swing 是否跟随一次挥手动画（原版客户端攻击时总是挥手）
+     * @throws IllegalStateException 会话尚未进入 play，或已经关闭
+     */
+    public fun attack(entityId: Int, swing: Boolean = true) {
+        playConnection("攻击实体").attack(entityId, swing)
+    }
+
+    /** 挥动一只手。只是视觉表现，与攻击判定无关。 */
+    public fun swing(hand: Hand = Hand.MAIN_HAND) {
+        playConnection("挥手").swing(hand)
+    }
+
+    /**
+     * 与实体交互（右键）。
+     *
+     * @throws IllegalStateException 会话尚未进入 play，或已经关闭
+     */
+    public fun interactWith(entityId: Int, hand: Hand = Hand.MAIN_HAND, sneaking: Boolean = false) {
+        playConnection("与实体交互").interactWith(entityId, hand, sneaking)
+    }
+
+    /**
+     * 在实体表面的指定点交互（实体坐标系里的相对位置）。
+     *
+     * @throws IllegalStateException 会话尚未进入 play，或已经关闭
+     */
+    public fun interactAt(
+        entityId: Int,
+        x: Double,
+        y: Double,
+        z: Double,
+        hand: Hand = Hand.MAIN_HAND,
+        sneaking: Boolean = false,
+    ) {
+        playConnection("与实体交互").interactAt(entityId, x, y, z, hand, sneaking)
+    }
 
     /** 最近的聊天记录，按到达顺序，最多 [ClientOptions.chatHistorySize] 条；每次调用复制一份。 */
     public fun chat(): List<ChatMessage> = synchronized(chatLock) { chatLog.toList() }
@@ -607,7 +673,19 @@ public class Session internal constructor(
             }
 
             is ProtocolEvent.EntityRemoved -> {
-                if (!closing.get()) event.ids.forEach(entities::remove)
+                if (!closing.get()) {
+                    event.ids.forEach(entities::remove)
+                    event.ids.forEach(entityAttributes::remove)
+                }
+            }
+
+            // 属性按键合并：服务端每次只发改动的项，整表替换会抹掉没动的键。
+            is ProtocolEvent.AttributesUpdated -> {
+                if (!closing.get()) {
+                    val table = HashMap(entityAttributes[event.entityId] ?: emptyMap())
+                    for (attribute in event.changed) table[attribute.key] = attribute
+                    entityAttributes[event.entityId] = table
+                }
             }
 
             // 玩家列表的变化已经由适配层按包合并，一个包最多一个事件；缓存仍然先写。
@@ -663,6 +741,7 @@ public class Session internal constructor(
         containers.clear()
         heldSlotIndex = 0
         lastAcknowledgedSequenceValue = 0
+        entityAttributes.clear()
         mutableStatus.value = PlayerStatus()
         clearChat()
         mutableState.value = SessionState.CLOSED
@@ -767,6 +846,23 @@ public class Session internal constructor(
 
         is ProtocolEvent.EntityRemoved -> {
             emit(ClientEvent.EntityRemoved(event.ids))
+            true
+        }
+
+        is ProtocolEvent.AttributesUpdated -> {
+            emit(ClientEvent.EntityAttributesUpdated(event.entityId, event.changed))
+            true
+        }
+
+        is ProtocolEvent.Damaged -> {
+            emit(
+                ClientEvent.EntityDamaged(
+                    entityId = event.entityId,
+                    sourceType = event.sourceType,
+                    sourceCause = event.sourceCause,
+                    sourceDirect = event.sourceDirect,
+                ),
+            )
             true
         }
 
@@ -903,6 +999,7 @@ public class Session internal constructor(
         containers.clear()
         heldSlotIndex = 0
         lastAcknowledgedSequenceValue = 0
+        entityAttributes.clear()
         mutableStatus.value = PlayerStatus()
         clearChat()
         mutableState.value = SessionState.CLOSED

@@ -1,6 +1,8 @@
 package org.pickaxe.protocol
 
 import org.geysermc.mcprotocollib.protocol.MinecraftProtocol
+import org.cloudburstmc.math.vector.Vector3d
+import org.pickaxe.protocol.entity.EntityAttribute
 import org.pickaxe.protocol.internal.ChatInput
 import org.pickaxe.protocol.internal.DigAction
 import org.pickaxe.protocol.internal.McplConnection
@@ -157,6 +159,63 @@ public class ProtocolConnection private constructor(
      */
     public fun closeContainer(windowId: Int) {
         connection.closeContainer(windowId)
+    }
+
+    /**
+     * 某实体的属性表快照（键名 → [EntityAttribute]）；没有收到过就是空表。
+     *
+     * 服务端每次只下发改动的属性，这里返回的是**按键合并后**的累积结果。
+     * 本端自己的属性也在其中：属性变化时服务端会直接推给本人。
+     */
+    public fun attributes(entityId: Int): Map<String, EntityAttribute> = connection.attributes(entityId)
+
+    /** 按 [key]（如 `minecraft:max_health`）查单个属性；没有收到过就是 null。 */
+    public fun attribute(entityId: Int, key: String): EntityAttribute? =
+        connection.attributes(entityId)[key]
+
+    /**
+     * 攻击一个实体。
+     *
+     * 攻击没有回执包：目标不在视野里时服务端静默忽略；打中了会看到
+     * [ProtocolEvent.Damaged]（伤害事件）与实体状态变化。
+     *
+     * @param swing 是否跟随一次挥手动画（原版客户端攻击时总是挥手）
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    public fun attack(entityId: Int, swing: Boolean = true) {
+        connection.attack(entityId, swing)
+    }
+
+    /** 挥动一只手。只是视觉表现，与攻击判定无关。 */
+    public fun swing(hand: Hand = Hand.MAIN_HAND) {
+        connection.swing(hand)
+    }
+
+    /**
+     * 与实体交互（右键；如对村民交易、给生物喂食——取决于服务端玩法）。
+     *
+     * @param sneaking 是否按住潜行声明；本库不跟踪潜行状态，由调用方传
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    public fun interactWith(entityId: Int, hand: Hand = Hand.MAIN_HAND, sneaking: Boolean = false) {
+        connection.interactWith(entityId, hand, sneaking, null)
+    }
+
+    /**
+     * 在实体表面的指定点交互。
+     *
+     * [x] [y] [z] 是实体坐标系里的相对位置（原版用于铠甲架的部位判定等）。多数服务端
+     * 对有无交互点的处理一致；两者都提供是为了忠实于协议而不是替调用方做取舍。
+     */
+    public fun interactAt(
+        entityId: Int,
+        x: Double,
+        y: Double,
+        z: Double,
+        hand: Hand = Hand.MAIN_HAND,
+        sneaking: Boolean = false,
+    ) {
+        connection.interactWith(entityId, hand, sneaking, Vector3d.from(x, y, z))
     }
 
     /**

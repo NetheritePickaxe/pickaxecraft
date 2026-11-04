@@ -198,6 +198,10 @@ private fun describe(event: ClientEvent): String = when (event) {
         "event=entity.spawned id=$id type=$type$who x=$x y=$y z=$z"
     }
     is ClientEvent.EntityRemoved -> "event=entity.removed ids=${event.ids}"
+    is ClientEvent.EntityAttributesUpdated ->
+        "event=attributes id=${event.entityId} " +
+            event.changed.joinToString(" ") { "${it.key}=${it.value}" }
+    is ClientEvent.EntityDamaged -> "event=damaged id=${event.entityId} source=${event.sourceType}"
     is ClientEvent.PlayerListChanged -> "event=players updated=${event.updated.map { it.name ?: it.uuid }}" +
         " removed=${event.removed}"
     is ClientEvent.ChatReceived -> with(event.message) {

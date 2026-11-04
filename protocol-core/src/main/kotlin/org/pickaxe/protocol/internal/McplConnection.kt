@@ -12,6 +12,7 @@ import org.geysermc.mcprotocollib.network.helper.TransportHelper
 import org.geysermc.mcprotocollib.network.packet.Packet
 import org.geysermc.mcprotocollib.network.session.ClientNetworkSession
 import org.geysermc.mcprotocollib.protocol.MinecraftConstants
+import org.cloudburstmc.math.vector.Vector3d
 import org.geysermc.mcprotocollib.protocol.MinecraftProtocol
 import org.geysermc.mcprotocollib.protocol.data.ProtocolState
 import org.geysermc.mcprotocollib.protocol.data.game.PlayerListEntryAction
@@ -36,6 +37,8 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.Clientbound
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundRespawnPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundSystemChatPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundAddEntityPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundDamageEventPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundUpdateAttributesPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundEntityPositionSyncPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundMoveEntityPosPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundMoveEntityPosRotPacket
@@ -65,6 +68,9 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.Serverbound
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatCommandPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundPlayerLoadedPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.player.ServerboundAttackPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.player.ServerboundInteractPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.player.ServerboundSwingPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.inventory.ServerboundContainerClosePacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.level.ServerboundAcceptTeleportationPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.player.ServerboundSetCarriedItemPacket
@@ -77,6 +83,9 @@ import org.pickaxe.protocol.ProtocolPhase
 import org.pickaxe.protocol.ServerAddress
 import org.pickaxe.protocol.ServerStatus
 import org.pickaxe.protocol.chat.ChatFormat
+import org.pickaxe.protocol.entity.AttributeTable
+import org.pickaxe.protocol.entity.EntityAttribute
+import org.pickaxe.protocol.entity.EntityAttributeModifier
 import org.pickaxe.protocol.chat.ChatKind
 import org.pickaxe.protocol.chat.ChatMessage
 import org.pickaxe.protocol.inventory.Container
@@ -204,6 +213,14 @@ internal class McplConnection(
      * 每次都要在上一份内容上改一格，向上只交不可变快照。
      */
     private val containers = HashMap<Int, MutableContainer>()
+
+    /**
+     * 实体属性，按实体 id 累积，只在网络线程上读写。
+     *
+     * `update_attributes` 每次只带**被更新**的那些属性（出生时全量，之后只发改动的项），
+     * 因此必须按键合并：整表替换会把没动的属性抹掉。
+     */
+    private val entityAttributes = HashMap<Int, HashMap<String, EntityAttribute>>()
 
     /**
      * 当前选中的快捷栏格。
@@ -363,7 +380,21 @@ internal class McplConnection(
 
             is ClientboundAddEntityPacket -> spawnEntity(packet)
 
-            is ClientboundRemoveEntitiesPacket -> removeEntities(packet.entityIds)
+            is ClientboundRemoveEntitiesPacket -> {
+                removeEntities(packet.entityIds)
+                for (id in packet.entityIds) entityAttributes.remove(id)
+            }
+
+            is ClientboundUpdateAttributesPacket -> applyAttributes(packet)
+
+            is ClientboundDamageEventPacket -> emit(
+                ProtocolEvent.Damaged(
+                    entityId = packet.entityId,
+                    sourceType = packet.sourceTypeId,
+                    sourceCause = packet.sourceCauseId.takeIf { it >= 0 },
+                    sourceDirect = packet.sourceDirectId.takeIf { it >= 0 },
+                ),
+            )
 
             is ClientboundMoveEntityPosPacket -> updateEntity(packet.entityId) { entity ->
                 entity.copy(
@@ -658,6 +689,34 @@ internal class McplConnection(
         if (!changed) return
         updateEntity(packet.entityId) { it.copy(equipment = equipment) }
     }
+
+    /**
+     * 实体属性更新。按键合并进累积表后，把**本包出现**的项上报——事件里带全表会让
+     * 「这一包到底改了什么」无从分辨，合并结果留给读接口。
+     */
+    private fun applyAttributes(packet: ClientboundUpdateAttributesPacket) {
+        val table = entityAttributes.getOrPut(packet.entityId) { HashMap() }
+        val changed = ArrayList<EntityAttribute>(packet.attributes.size)
+        for (attribute in packet.attributes) {
+            // 协议库的内置属性表按旧版编号反查，键名会错位（详见 [AttributeTable] 的 KDoc）；
+            // `type.id` 实际返回 ordinal，而 ordinal 恰好等于 wire id，据此查我们自己的表。
+            val key = AttributeTable.key(attribute.type.id) ?: "unknown:${attribute.type.id}"
+            val converted = EntityAttribute(
+                key = key,
+                value = attribute.value,
+                modifiers = attribute.modifiers.map {
+                    EntityAttributeModifier(it.id.toString(), it.amount, it.operation.name)
+                },
+            )
+            table[converted.key] = converted
+            changed += converted
+        }
+        emit(ProtocolEvent.AttributesUpdated(packet.entityId, changed))
+    }
+
+    /** 查询某实体的属性表快照；本层由 [ProtocolConnection] 暴露给上层。 */
+    fun attributes(entityId: Int): Map<String, EntityAttribute> =
+        entityAttributes[entityId]?.toMap() ?: emptyMap()
 
     /**
      * 玩家列表更新。
@@ -976,6 +1035,40 @@ internal class McplConnection(
     fun clickSlot(container: Container, slot: Int, click: SlotClick) {
         sendInPlay("点击槽位") { ContainerClicks.packet(container, slot, click) }
     }
+
+    /**
+     * 攻击一个实体。
+     *
+     * 26.2 把攻击从交互包里拆成了独立的 `attack` 包；原版客户端攻击时还会挥手播动画，
+     * [swing] 为 true 时同样跟一发（挥竿只是视觉，服务端不会因此改判定）。
+     *
+     * 攻击**没有回执包**：服务端处理完的结果（伤害事件、实体血量变化）走各自的下发路径。
+     * 目标不存在或不在视野里时服务端会静默忽略，这是「成功没有回执」模式的第四例。
+     */
+    fun attack(entityId: Int, swing: Boolean) {
+        sendInPlay("攻击实体") { ServerboundAttackPacket(entityId) }
+        if (swing) sendInPlay("挥手") { ServerboundSwingPacket(toProtocolHand(Hand.MAIN_HAND)) }
+    }
+
+    /** 挥动一只手（左键动画）。只是视觉表现，与攻击判定无关。 */
+    fun swing(hand: Hand) {
+        sendInPlay("挥手") { ServerboundSwingPacket(toProtocolHand(hand)) }
+    }
+
+    /**
+     * 与实体交互（右键）。
+     *
+     * [location] 是交互点（实体坐标系里的相对位置）；null 时按协议编码为零向量，
+     * 服务端按「无交互点」处理。
+     */
+    fun interactWith(entityId: Int, hand: Hand, sneaking: Boolean, location: Vector3d?) {
+        sendInPlay("与实体交互") {
+            ServerboundInteractPacket(entityId, toProtocolHand(hand), location ?: Vector3d.ZERO, sneaking)
+        }
+    }
+
+    private fun toProtocolHand(hand: Hand) =
+        org.geysermc.mcprotocollib.protocol.data.game.entity.player.Hand.valueOf(hand.name)
 
     /**
      * 关闭一个窗口。
