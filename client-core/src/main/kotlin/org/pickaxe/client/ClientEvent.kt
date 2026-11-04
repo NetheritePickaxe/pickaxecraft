@@ -1,5 +1,6 @@
 package org.pickaxe.client
 
+import org.pickaxe.protocol.chat.ChatMessage
 import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
 import java.util.UUID
@@ -66,6 +67,16 @@ public sealed interface ClientEvent {
         public val updated: List<RemotePlayer>,
         public val removed: List<UUID>,
     ) : ClientEvent
+
+    /**
+     * 收到一条聊天消息（系统、玩家或伪装）。事件到达时已写入 [Session.chat]。
+     *
+     * 聊天是可回看的事实而不是可重建的状态：同一条消息不会再次到达，因此逐条投递。
+     */
+    public data class ChatReceived(public val message: ChatMessage) : ClientEvent
+
+    /** 服务端要求删除一条已签名消息；对应条目已从 [Session.chat] 移除。 */
+    public data class ChatDeleted(public val signatureId: Int) : ClientEvent
 
     /** 正常关闭：调用方主动关闭，或服务端按协议收尾。 */
     public data object Closed : ClientEvent

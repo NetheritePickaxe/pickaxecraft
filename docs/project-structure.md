@@ -1,6 +1,6 @@
 # 项目结构
 
-状态：M0–M2 已完成（连接链路与出生），M4a–M4d 已完成（区块内容、实体跟踪、重生换维度、玩家身份）；Headless 为第一阶段，独立 libGDX 客户端为长期下游
+状态：M0–M2 已完成（连接链路与出生），M4a–M4e 已完成（区块内容、实体跟踪、重生换维度、玩家身份、聊天）；Headless 为第一阶段，独立 libGDX 客户端为长期下游
 日期：2026-11-04
 
 ## 1. 结构原则
@@ -31,12 +31,14 @@ pickaxecraft/
 │       │       │   ├── ChunkColumn.kt      # 不可变区块列与 section（按坐标读方块/群系）
 │       │       │   ├── TrackedEntity.kt    # 不可变实体快照（位置、朝向、类型、自定义名称）
 │       │       │   └── RemotePlayer.kt     # 玩家列表条目（UUID、用户名、模式、延迟）
+│       │       ├── chat/
+│       │       │   └── ChatMessage.kt      # 聊天消息、来源、格式（键 + 参数顺序）
 │       │       └── internal/               # McplConnection、ComponentText、
-│       │                                   # ChunkDecoder、DimensionRegistry
+│       │                                   # ChunkDecoder、DimensionRegistry、ChatTypeRegistry
 │       └── test/kotlin/
 │           └── org/pickaxe/protocol/
 │               ├── ProtocolVersionTest.kt
-│               └── internal/ChunkDecoderTest.kt
+│               └── internal/               # ChunkDecoderTest、ChatTypeRegistryTest
 │
 ├── client-core/                    # Java 21 字节码：公共客户端 API、会话、事件
 │   └── src/main/kotlin/org/pickaxe/client/
@@ -115,20 +117,20 @@ testing:minestom ──► client-core + protocol-core（版本对账）+ Minest
 `client-core` 是初版唯一公共客户端入口，包含：
 
 - `MinecraftClient`：`status` / `connect` / `close`，一个实例至多一个活动会话。
-- `ClientOptions`：连接、登录、状态查询超时与事件缓冲容量。
+- `ClientOptions`：连接、登录、状态查询超时、事件缓冲容量与聊天记录条数。
 - `Session`：`state`（StateFlow）、`events`（单消费者 Flow）、`world` / `registries`
   （会话级只读快照）、区块查询（`chunk` / `blockStateAt` / `biomeAt` / `loadedChunks`）、
   实体查询（`entity` / `entities` / `entityCount`）、玩家查询（`players` / `player` /
-  `playerCount` / `nameOf`）与幂等 `close`。
+  `playerCount` / `nameOf`）、聊天记录（`chat` / `chatCount`）与幂等 `close`。
 - `ClientEvent` / `ClientException`：有序事件（含 `JoinedWorld` / `PositionUpdated` /
-  `ChunksReceived` / `EntitySpawned` / `EntityRemoved` / `PlayerListChanged` / `Respawned`）
-  与可分类的失败。
+  `ChunksReceived` / `EntitySpawned` / `EntityRemoved` / `PlayerListChanged` /
+  `ChatReceived` / `ChatDeleted` / `Respawned`）与可分类的失败。
 - `WorldSnapshot` / `Position`：出生过程的只读状态。方块内容走 `Session` 的区块查询，
   不塞进每次更新都要复制的快照。
 
 `protocol-core` 只提供适配层事实（`ServerAddress`、`ServerStatus`、`ProtocolEvent`、
-`ProtocolConnection`，以及 `ChunkColumn` / `ChunkSection` / `TrackedEntity` / `RemotePlayer`
-这类中立数据），
+`ProtocolConnection`，以及 `ChunkColumn` / `ChunkSection` / `TrackedEntity` / `RemotePlayer` /
+`ChatMessage` 这类中立数据），
 作为 `client-core`
 的 `api` 依赖；它的内部实现（协议库类型、Netty 会话）不是公共 API，调用方不应也无法看到
 数据包对象。

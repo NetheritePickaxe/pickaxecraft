@@ -20,6 +20,7 @@ import org.pickaxe.protocol.ProtocolFailureKind
 import org.pickaxe.protocol.ProtocolListener
 import org.pickaxe.protocol.ProtocolPhase
 import org.pickaxe.protocol.ServerAddress
+import org.pickaxe.protocol.chat.ChatMessage
 import org.pickaxe.protocol.world.ChunkColumn
 import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
@@ -100,6 +101,15 @@ public class Session internal constructor(
      */
     private val players = ConcurrentHashMap<UUID, RemotePlayer>()
 
+    /**
+     * 会话私有的聊天记录，保留最近的 [ClientOptions.chatHistorySize] 条。
+     *
+     * 只在 Actor 里写入，读取可能来自任意线程，所以用一把小锁保护。聊天不走
+     * 世界数据那套无锁缓存：它不能被覆盖，只能追加，且顺序就是显示顺序。
+     */
+    private val chatLock = Any()
+    private val chatLog = ArrayDeque<ChatMessage>()
+
     /** 有序事件流，单消费者；会话终止后正常结束。 */
     public val events: Flow<ClientEvent> = outbox.consumeAsFlow()
 
@@ -138,6 +148,7 @@ public class Session internal constructor(
             chunks.clear()
             entities.clear()
             players.clear()
+            clearChat()
             mutableState.value = SessionState.CLOSED
             outbox.close()
         }
@@ -208,6 +219,12 @@ public class Session internal constructor(
      * 两者到达顺序不固定，因此这里按查询时刻关联，而不是在实体快照里存一份副本。
      */
     public fun nameOf(entityId: Int): String? = entity(entityId)?.uuid?.let { player(it)?.name }
+
+    /** 最近的聊天记录，按到达顺序，最多 [ClientOptions.chatHistorySize] 条；每次调用复制一份。 */
+    public fun chat(): List<ChatMessage> = synchronized(chatLock) { chatLog.toList() }
+
+    /** 当前保留的聊天条数。 */
+    public val chatCount: Int get() = synchronized(chatLock) { chatLog.size }
 
     /** 协议回调：网络线程上只允许缓存写入或一次入队，溢出即终止会话。 */
     private fun onProtocolEvent(event: ProtocolEvent) {
@@ -280,6 +297,7 @@ public class Session internal constructor(
         chunks.clear()
         entities.clear()
         players.clear()
+        clearChat()
         mutableState.value = SessionState.CLOSED
         outbox.close()
         // 网络线程上不能做阻塞关闭；交回调度器。
@@ -370,6 +388,18 @@ public class Session internal constructor(
             true
         }
 
+        is ProtocolEvent.ChatReceived -> {
+            appendChat(event.message)
+            emit(ClientEvent.ChatReceived(event.message))
+            true
+        }
+
+        is ProtocolEvent.ChatDeleted -> {
+            removeChat(event.signatureId)
+            emit(ClientEvent.ChatDeleted(event.signatureId))
+            true
+        }
+
         // 登录会话不会收到状态查询结果。
         is ProtocolEvent.StatusReceived -> true
 
@@ -377,6 +407,25 @@ public class Session internal constructor(
             recordClose(event.reason)
             false
         }
+    }
+
+    private fun appendChat(message: ChatMessage) {
+        synchronized(chatLock) {
+            chatLog.addLast(message)
+            while (chatLog.size > options.chatHistorySize) chatLog.removeFirst()
+        }
+    }
+
+    /** 按编号删除一条消息；系统消息没有编号，不会被误删。 */
+    private fun removeChat(signatureId: Int) {
+        synchronized(chatLock) {
+            val index = chatLog.indexOfLast { it.signatureId == signatureId }
+            if (index >= 0) chatLog.removeAt(index)
+        }
+    }
+
+    private fun clearChat() {
+        synchronized(chatLock) { chatLog.clear() }
     }
 
     private suspend fun transition(next: SessionState) {
@@ -411,6 +460,7 @@ public class Session internal constructor(
         chunks.clear()
         entities.clear()
         players.clear()
+        clearChat()
         mutableState.value = SessionState.CLOSED
         try {
             // 服务端或协议先断开时也要回收连接资源；本方法幂等。

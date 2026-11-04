@@ -148,6 +148,14 @@ private fun describe(event: ClientEvent): String = when (event) {
     is ClientEvent.EntityRemoved -> "event=entity.removed ids=${event.ids}"
     is ClientEvent.PlayerListChanged -> "event=players updated=${event.updated.map { it.name ?: it.uuid }}" +
         " removed=${event.removed}"
+    is ClientEvent.ChatReceived -> with(event.message) {
+        val where = if (overlay) "actionbar" else kind.name.lowercase()
+        val who = listOfNotNull(senderName, targetName?.let { "-> $it" }).joinToString(" ").let {
+            if (it.isEmpty()) "" else " $it"
+        }
+        "event=chat kind=$where$who fmt=${format?.key} text=$text"
+    }
+    is ClientEvent.ChatDeleted -> "event=chat.deleted id=${event.signatureId}"
     ClientEvent.Closed -> "event=closed"
     is ClientEvent.Failed -> "event=failed kind=${event.error::class.simpleName} message=${event.error.message}"
 }
@@ -164,7 +172,7 @@ private fun describeChunk(session: Session): String {
     // 玩家列表与实体表分开统计：前者是“谁在线”，后者是“视野里有什么”。
     val players = session.players().values.map { it.name ?: it.uuid.toString() }
     return "chunk x=${column.x} z=${column.z} minY=${column.minY} sections=${column.sectionCount} " +
-        "cached=${session.loadedChunks} entities=${session.entityCount} players=$players " +
+        "cached=${session.loadedChunks} entities=${session.entityCount} chat=${session.chatCount} players=$players " +
         "block=($x, $y, $z):${session.blockStateAt(x, y, z)} below=$below"
 }
 

@@ -12,6 +12,10 @@ import net.minestom.server.MinecraftServer
 import net.minestom.server.component.DataComponents
 import net.minestom.server.coordinate.Pos
 import net.minestom.server.coordinate.Vec
+import net.minestom.server.crypto.FilterMask
+import net.minestom.server.crypto.LastSeenMessages
+import net.minestom.server.crypto.MessageSignature
+import net.minestom.server.crypto.SignedMessageBody
 import net.minestom.server.entity.EntityCreature
 import net.minestom.server.entity.EntityType
 import net.minestom.server.entity.Player
@@ -19,6 +23,10 @@ import net.minestom.server.event.player.AsyncPlayerConfigurationEvent
 import net.minestom.server.instance.InstanceContainer
 import net.minestom.server.instance.block.Block
 import net.minestom.server.instance.generator.Generator
+import net.minestom.server.network.packet.server.play.DeleteChatPacket
+import net.minestom.server.network.packet.server.play.DisguisedChatPacket
+import net.minestom.server.network.packet.server.play.PlayerChatMessagePacket
+import net.minestom.server.network.packet.server.play.SystemChatPacket
 import net.minestom.server.world.DimensionType
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
@@ -31,9 +39,15 @@ import org.pickaxe.client.MinecraftClient
 import org.pickaxe.client.Session
 import org.pickaxe.client.SessionState
 import org.pickaxe.protocol.ProtocolVersion
+import org.pickaxe.protocol.chat.ChatKind
+import org.pickaxe.protocol.chat.ChatMessage
+import org.pickaxe.protocol.chat.ChatParameter
 import org.pickaxe.protocol.ServerAddress
 import java.net.ServerSocket
 import java.time.Duration
+import java.time.Instant
+import java.util.BitSet
+import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.abs
 import kotlin.test.assertEquals
@@ -506,6 +520,114 @@ class ClientSessionTest {
     }
 
     @Test
+    fun `聊天消息可读且能按编号删除`() = runBlocking {
+        // 三个来源包字段各不相同：系统消息没有发送者，玩家消息带 UUID 与签名编号，
+        // 伪装消息有名字但没有 UUID。这里逐项对账，重点是别把它们混成一种东西。
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, CHAT_USERNAME)
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                val player = assertNotNull(
+                    MinecraftServer.getConnectionManager().getOnlinePlayerByUsername(CHAT_USERNAME),
+                    "服务端应已保存该玩家",
+                )
+                val typeId = chatTypeId(CHAT_FORMAT_KEY)
+
+                // 系统消息；动作栏与聊天栏走同一个包，只差 overlay 位。
+                player.sendMessage(Component.text(SYSTEM_CHAT_TEXT))
+                player.sendPacket(SystemChatPacket(Component.text(ACTION_BAR_TEXT), true))
+
+                // 玩家聊天：签名、消息编号、格式引用都在这一个包里。
+                player.sendPacket(
+                    PlayerChatMessagePacket(
+                        12,
+                        SENDER_UUID,
+                        CHAT_SIGNATURE_ID,
+                        MessageSignature(ByteArray(256) { SIGNATURE_FILL }),
+                        SignedMessageBody.Packed(
+                            PLAYER_CHAT_TEXT,
+                            Instant.now(),
+                            42L,
+                            LastSeenMessages.Packed.EMPTY,
+                        ),
+                        null,
+                        FilterMask(FilterMask.Type.PASS_THROUGH, BitSet()),
+                        typeId,
+                        Component.text(SENDER_NAME),
+                        null,
+                    ),
+                )
+
+                // 伪装聊天：服务端借某人的名义说话，没有 UUID 与签名。
+                player.sendPacket(
+                    DisguisedChatPacket(
+                        Component.text(DISGUISED_TEXT),
+                        typeId,
+                        Component.text(DISGUISED_SENDER),
+                        null,
+                    ),
+                )
+
+                log.await { it is ClientEvent.ChatReceived && it.message.text == SYSTEM_CHAT_TEXT }
+                val system = awaitChat(session) { it.text == SYSTEM_CHAT_TEXT }
+                assertEquals(ChatKind.SYSTEM, system.kind)
+                assertEquals(false, system.overlay, "普通系统消息显示在聊天栏")
+                assertNull(system.sender, "系统消息没有发送者身份")
+
+                val actionBar = awaitChat(session) { it.text == ACTION_BAR_TEXT }
+                assertEquals(true, actionBar.overlay, "overlay 位应区分动作栏")
+
+                val chat = awaitChat(session) { it.text == PLAYER_CHAT_TEXT }
+                assertEquals(ChatKind.PLAYER, chat.kind)
+                assertEquals(SENDER_UUID, chat.sender, "玩家消息带发送者 UUID")
+                assertEquals(SENDER_NAME, chat.senderName)
+                assertEquals(CHAT_SIGNATURE_ID, chat.signatureId, "带签名的消息应保留编号")
+                assertNotNull(chat.timestamp, "玩家消息带签名时间")
+                // 格式来自 chat_type 注册表：键与参数顺序都应与服务端一致。
+                assertEquals(CHAT_FORMAT_KEY, chat.format?.key)
+                assertEquals(
+                    listOf(ChatParameter.SENDER, ChatParameter.CONTENT),
+                    chat.format?.parameters,
+                    "普通聊天的模板是「发送者 + 正文」",
+                )
+
+                val disguised = awaitChat(session) { it.text == DISGUISED_TEXT }
+                assertEquals(ChatKind.DISGUISED, disguised.kind)
+                assertEquals(DISGUISED_SENDER, disguised.senderName)
+                assertNull(disguised.sender, "伪装消息只有名字，没有 UUID")
+                assertEquals(CHAT_FORMAT_KEY, disguised.format?.key)
+
+                assertEquals(
+                    listOf(SYSTEM_CHAT_TEXT, ACTION_BAR_TEXT, PLAYER_CHAT_TEXT, DISGUISED_TEXT),
+                    session.chat().map { it.text },
+                    "聊天记录按到达顺序保存",
+                )
+
+                // 删除只对带编号的消息生效：服务端撤回后记录里不该再有它。
+                player.sendPacket(DeleteChatPacket(MessageSignature.Packed(CHAT_SIGNATURE_ID, null)))
+                log.await { it is ClientEvent.ChatDeleted && it.signatureId == CHAT_SIGNATURE_ID }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    session.chat().none { it.signatureId == CHAT_SIGNATURE_ID }
+                }
+                assertEquals(
+                    listOf(SYSTEM_CHAT_TEXT, ACTION_BAR_TEXT, DISGUISED_TEXT),
+                    session.chat().map { it.text },
+                    "只删除被引用的那条，其余保持原顺序",
+                )
+            } finally {
+                log.close()
+                session.close()
+            }
+
+            assertEquals(0, session.chatCount, "关闭后不应继续持有聊天记录")
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `事件缓冲写满时终止会话而不是静默丢弃`() = runBlocking {
         val client = MinecraftClient(ClientOptions(eventBufferCapacity = 1))
         try {
@@ -515,6 +637,36 @@ class ClientSessionTest {
         } finally {
             client.close()
         }
+    }
+
+    /**
+     * 从聊天记录里等一条满足条件的消息。
+     *
+     * 用历史而不是事件流取内容：事件只通知“来了一条”，记录才是可回看的结果，
+     * 两者一致本身就是断言的一部分。
+     */
+    private suspend fun awaitChat(session: Session, predicate: (ChatMessage) -> Boolean): ChatMessage {
+        var found: ChatMessage? = null
+        awaitCondition(EVENT_TIMEOUT_MILLIS) {
+            found = session.chat().lastOrNull(predicate)
+            found != null
+        }
+        return assertNotNull(found)
+    }
+
+    /**
+     * 服务端 `chat_type` 注册表里的格式 id（包内编码是 id + 1，0 表示内联定义）。
+     *
+     * 从服务端注册表反查而不是写死下标：条目顺序由服务端数据决定，写死会在
+     * 换版本时变成“格式恒为空”的静默失败。
+     */
+    private fun chatTypeId(translationKey: String): Int {
+        val registry = MinecraftServer.getChatTypeRegistry()
+        val key = assertNotNull(
+            registry.keys().firstOrNull { registry.get(it)?.chat()?.translationKey() == translationKey },
+            "服务端 chat_type 注册表应包含 $translationKey",
+        )
+        return registry.getId(key) + 1
     }
 
     private fun Session.isOpen(): Boolean = state.value != SessionState.CLOSED
@@ -559,6 +711,20 @@ class ClientSessionTest {
         const val ZOMBIE_NAME: String = "名牌僵尸"
         const val RENAMED_ZOMBIE_NAME: String = "改名僵尸"
         const val KICK_MESSAGE: String = "测试踢出"
+
+        /** 聊天用例：正文、名字与编号都由服务端侧写死，客户端只负责读出来。 */
+        const val CHAT_USERNAME: String = "Chatter"
+        const val SYSTEM_CHAT_TEXT: String = "服务器公告"
+        const val ACTION_BAR_TEXT: String = "动作栏提示"
+        const val PLAYER_CHAT_TEXT: String = "你好，世界"
+        const val SENDER_NAME: String = "Alice"
+        const val DISGUISED_TEXT: String = "* Bob 挥了挥手"
+        const val DISGUISED_SENDER: String = "Bob"
+        const val CHAT_FORMAT_KEY: String = "chat.type.text"
+        const val CHAT_SIGNATURE_ID: Int = 7
+        const val SIGNATURE_FILL: Byte = 0x5A
+        val SENDER_UUID: UUID = UUID.fromString("6f2a1c39-0d4f-4a2b-9c8e-1b7d3f5a0e21")
+
         const val EVENT_TIMEOUT_MILLIS: Long = 10_000
         val MILESTONE_TIMEOUT: Duration = Duration.ofSeconds(10)
         const val THREAD_RELEASE_TIMEOUT_MILLIS: Long = 5_000

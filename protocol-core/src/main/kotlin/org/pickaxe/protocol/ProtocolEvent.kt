@@ -1,5 +1,6 @@
 package org.pickaxe.protocol
 
+import org.pickaxe.protocol.chat.ChatMessage
 import org.pickaxe.protocol.world.ChunkColumn
 import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
@@ -125,6 +126,21 @@ public sealed interface ProtocolEvent {
 
     /** 服务端要求丢弃这些实体：离开视野、死亡或消失。未跟踪的 id 直接忽略。 */
     public data class EntityRemoved(public val ids: List<Int>) : ProtocolEvent
+
+    /**
+     * 收到一条聊天消息：系统、玩家或伪装三种来源统一成 [ChatMessage]。
+     *
+     * 这是**用户可见的即时事实**，不是可重建的状态：它不进任何缓存覆盖，适配层
+     * 报一次就不再重复。文本已渲染成纯文本，样式不保留。
+     */
+    public data class ChatReceived(public val message: ChatMessage) : ProtocolEvent
+
+    /**
+     * 服务端要求删除一条已签名的玩家消息（管理操作）。
+     *
+     * 只有带签名的玩家消息能被删除；系统消息与伪装消息在协议里没有编号，删不掉。
+     */
+    public data class ChatDeleted(public val signatureId: Int) : ProtocolEvent
 
     /**
      * 玩家列表发生变化。

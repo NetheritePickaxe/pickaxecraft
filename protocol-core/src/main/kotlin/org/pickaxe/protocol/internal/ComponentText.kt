@@ -28,4 +28,15 @@ internal object ComponentText {
         }
         return plain.serialize(component).trim().ifEmpty { "（服务端未给出原因）" }
     }
+
+    /**
+     * 用户内容的渲染：聊天正文、发送者名字都走这里。
+     *
+     * 与 [render] 的区别只有一个，但很重要：不做缺省填充。空消息就是空消息，
+     * 塞一句“服务端未给出原因”会把一条正常的空行变成假信息。
+     *
+     * 翻译键仍无法解析——客户端不内置语言文件。服务端若下发可翻译组件
+     * （例如死亡消息），这里得到的是键名而不是人话，这是已知限制。
+     */
+    fun text(component: Component): String = plain.serialize(component)
 }

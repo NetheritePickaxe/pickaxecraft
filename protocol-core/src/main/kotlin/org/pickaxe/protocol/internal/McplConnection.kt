@@ -25,10 +25,14 @@ import org.geysermc.mcprotocollib.protocol.data.status.handler.ServerInfoHandler
 import org.geysermc.mcprotocollib.protocol.data.status.handler.ServerPingTimeHandler
 import org.geysermc.mcprotocollib.protocol.packet.common.serverbound.ServerboundClientInformationPacket
 import org.geysermc.mcprotocollib.protocol.packet.configuration.clientbound.ClientboundRegistryDataPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundDeleteChatPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundDisguisedChatPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundLoginPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundPlayerChatPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundPlayerInfoRemovePacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundPlayerInfoUpdatePacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundRespawnPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundSystemChatPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundAddEntityPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundEntityPositionSyncPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundMoveEntityPosPacket
@@ -42,6 +46,7 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.play
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundChunkBatchFinishedPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundForgetLevelChunkPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundLevelChunkWithLightPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatAckPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundPlayerLoadedPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.level.ServerboundAcceptTeleportationPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.level.ServerboundChunkBatchReceivedPacket
@@ -52,6 +57,9 @@ import org.pickaxe.protocol.ProtocolListener
 import org.pickaxe.protocol.ProtocolPhase
 import org.pickaxe.protocol.ServerAddress
 import org.pickaxe.protocol.ServerStatus
+import org.pickaxe.protocol.chat.ChatFormat
+import org.pickaxe.protocol.chat.ChatKind
+import org.pickaxe.protocol.chat.ChatMessage
 import org.pickaxe.protocol.world.ChunkColumn
 import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
@@ -146,6 +154,14 @@ internal class McplConnection(
     /** 配置阶段收到的维度类型表；下标即 Login 包里的维度 id。 */
     private var dimensions: List<DimensionShape> = emptyList()
 
+    /**
+     * 配置阶段收到的聊天格式表；下标即消息包里的格式 id。
+     *
+     * 缺省为空表示“没有格式可查”，此时聊天照常上报，只是没有
+     * [ChatFormat]——排版由下游按朴素形式兜底。
+     */
+    private var chatTypes: List<ChatFormat> = emptyList()
+
     /** 当前所在维度，决定区块的 section 数量与最低 Y。 */
     private var currentDimension: DimensionShape? = null
 
@@ -233,6 +249,9 @@ internal class McplConnection(
                 // 注册表条目顺序即维度 id，必须在 Login 之前读出来：区块解码依赖维度高度。
                 if (packet.registry.asString() == DimensionRegistry.REGISTRY_ID) {
                     dimensions = DimensionRegistry.parse(packet.entries)
+                }
+                if (packet.registry.asString() == ChatTypeRegistry.REGISTRY_ID) {
+                    chatTypes = ChatTypeRegistry.parse(packet.entries)
                 }
                 emit(ProtocolEvent.RegistryData(packet.registry.asString(), packet.entries.size))
             }
@@ -322,6 +341,16 @@ internal class McplConnection(
             is ClientboundPlayerInfoUpdatePacket -> applyPlayerInfo(packet)
 
             is ClientboundPlayerInfoRemovePacket -> removePlayers(packet.profileIds)
+
+            is ClientboundSystemChatPacket -> emit(ProtocolEvent.ChatReceived(systemChat(packet)))
+
+            is ClientboundPlayerChatPacket -> receivePlayerChat(packet)
+
+            is ClientboundDisguisedChatPacket ->
+                emit(ProtocolEvent.ChatReceived(disguisedChat(packet)))
+
+            is ClientboundDeleteChatPacket ->
+                emit(ProtocolEvent.ChatDeleted(packet.messageSignature.id))
 
             else -> Unit
         }
@@ -529,6 +558,62 @@ internal class McplConnection(
         emit(ProtocolEvent.PlayerListChanged(emptyList(), removed))
     }
 
+    /**
+     * 系统消息。
+     *
+     * `overlay` 区分聊天栏与动作栏：两者走同一个包，只差一个布尔位。语义上差别很大
+     * （前者可回看，后者一闪而过），所以保留这个标记，让下游自己决定。
+     */
+    private fun systemChat(packet: ClientboundSystemChatPacket): ChatMessage = ChatMessage(
+        kind = ChatKind.SYSTEM,
+        text = ComponentText.text(packet.content),
+        overlay = packet.isOverlay,
+    )
+
+    /**
+     * 玩家聊天。
+     *
+     * 正文优先取未签名内容：服务端在过滤或改写后会把它单独下发，`content` 保留原始输入。
+     * 两者都没有样式信息可用，本层只给纯文本。
+     *
+     * 确认包必须紧跟着回送：不带确认时服务端的待确认窗口只增不减，真实服务端会因此
+     * 拒绝后续带签名的消息。无头客户端不发消息，但同样要维持这个窗口。
+     */
+    private fun receivePlayerChat(packet: ClientboundPlayerChatPacket) {
+        send(ServerboundChatAckPacket(CHAT_ACK_PER_MESSAGE))
+
+        emit(
+            ProtocolEvent.ChatReceived(
+                ChatMessage(
+                    kind = ChatKind.PLAYER,
+                    text = packet.unsignedContent?.let(ComponentText::text) ?: packet.content,
+                    sender = packet.sender,
+                    senderName = ComponentText.text(packet.name),
+                    targetName = packet.targetName?.let(ComponentText::text),
+                    format = ChatTypeRegistry.formatOf(packet.chatType, chatTypes),
+                    timestamp = packet.timeStamp,
+                    // 没带签名的消息（服务端关闭了安全聊天）无法被 delete_chat 回收，
+                    // 给它一个编号反而会让上层以为可以。
+                    signatureId = if (packet.messageSignature != null) packet.index else null,
+                ),
+            ),
+        )
+    }
+
+    /**
+     * 伪装聊天：服务端借某人的名义说话（`/say`、`/me`、控制台）。
+     *
+     * 带名字但没有 UUID 与签名，因此不能当成玩家消息处理：谁都能被“冒充”，
+     * 本层也不去猜是哪个玩家。
+     */
+    private fun disguisedChat(packet: ClientboundDisguisedChatPacket): ChatMessage = ChatMessage(
+        kind = ChatKind.DISGUISED,
+        text = ComponentText.text(packet.message),
+        senderName = ComponentText.text(packet.name),
+        targetName = packet.targetName?.let(ComponentText::text),
+        format = ChatTypeRegistry.formatOf(packet.chatType, chatTypes),
+    )
+
     private fun reportPhase() {
         val phase = when (packetProtocol.inboundState) {
             ProtocolState.LOGIN -> ProtocolPhase.LOGIN
@@ -640,5 +725,13 @@ internal class McplConnection(
          * 属于哪一层，所以本层只读所有实体都成立的下标 2。
          */
         const val CUSTOM_NAME_INDEX: Int = 2
+
+        /**
+         * 每条玩家消息回送的确认步长。
+         *
+         * 协议语义是“自上次确认以来又看到了几条”，逐条确认时恒为 1；
+         * 攒批确认会把延迟暴露给服务端的重发逻辑，没有必要。
+         */
+        const val CHAT_ACK_PER_MESSAGE: Int = 1
     }
 }

@@ -14,6 +14,7 @@
 - [M4b 实施记录](plans/m4b-entity-tracking.md)：实体跟踪的相对位移累积、事件与状态的分工。
 - [M4c 实施记录](plans/m4c-respawn.md)：重生换维度时缓存、维度高度与 `player_loaded` 的复位。
 - [M4d 实施记录](plans/m4d-player-identity.md)：玩家列表的分片合并、元数据下标白名单与实体→名字的查询时关联。
+- [M4e 实施记录](plans/m4e-chat.md)：三类聊天包的收敛、格式注册表与确认/删除义务。
 - [M1 实施计划](plans/m1-implementation-plan.md)：自有客户端 API、连接生命周期、联调迁移、CLI 与提前 Android 探针；末尾附实施记录与偏差。
 - [协议适配契约](protocol-contract.md)：`protocol-core` 与协议库之间哪些行为由库保证、哪些由本项目实现，以及升级检查清单。
 - [Android 反糖探针](android-dex-probe.md)：D8 实测结论（minSdk 26、重复类、`HexFormat`）与仍未验证的运行时项。
@@ -37,6 +38,7 @@ M4a 让客户端读到区块内容：`Session.blockStateAt` / `biomeAt` / `chunk
 M4b 让客户端看到实体：`Session.entity` / `entities` 返回位置与朝向（相对位移已在适配层叠加），增删通过事件流可见。
 M4c 让换维度可用：重生后按新维度重新解码区块，旧维度的区块与实体一并作废。
 M4d 让实体有名字：`Session.players` / `nameOf` 把 UUID 关联到用户名，实体快照带上自定义名称。
+M4e 让客户端能读聊天：`Session.chat` 回看最近消息，格式来自 `chat_type` 注册表，删除包按编号移除。
 `protocol-core` 负责协议事实转换、区块解码与资源回收，`client-core` 负责会话 Actor、有界缓冲、区块缓存与错误分类；协议库的隐含行为已写入[协议适配契约](protocol-contract.md)。
 
 Android 只完成了构建链探针（D8 可产出 dex，`minSdk` 下限 26），运行时仍属 M3 门控；实体、背包与光照仍属 M4 的后续增量。

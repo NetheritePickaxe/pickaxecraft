@@ -142,6 +142,8 @@ Netty 网络线程（每连接一个，线程名前缀 pickaxe-mcpl）
   也不会挤掉控制事件。三者的区别只在增删是否需要通知：区块增删由批次计数覆盖；实体增删
   （`EntitySpawned` / `EntityRemoved`）走事件流，位置增量只写缓存；玩家列表由适配层把一个包
   合并成一条 `PlayerListChanged`，条目再多也不会退化成按条投递。
+- 聊天与上面几类相反：一条消息是“发生过一次”的事实，不能被覆盖也不可重建，因此照常走
+  Channel；会话 Actor 把它追加到有界聊天记录（默认 200 条）后再投递事件，回看与通知因此一致。
 - 事件流是单消费者；终止事件（`Closed`/`Failed`）恰好一次，之后流结束。
 - 失败在适配层归层（`CONNECT`/`NETWORK`/`PROTOCOL`），上层按层选择处理策略，
   不需要识别协议库或 Netty 的异常类。
@@ -235,6 +237,25 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 
 实现记录见 [M4d 实施记录](plans/m4d-player-identity.md)。
 
+### 5.7 M4e 已落地的具体形态：聊天
+
+三个来源包（系统、玩家、伪装）收敛成 `ChatMessage`，用 `ChatKind` 区分——混成一个纯文本
+会丢掉“谁说的”和“能不能撤回”，而这两件事都不可逆：
+
+- **格式是引用不是文本**：聊天包只给 `Holder<ChatType>`（注册表下标或内联定义），模板键与
+  参数顺序来自配置阶段的 `minecraft:chat_type`。本层给出 `ChatFormat(key, parameters)`，
+  不内置翻译表——模板文本不在协议里。查不到格式时为 `null`，消息照常上报。
+- **观察者也要确认**：每条玩家消息后回 `ServerboundChatAckPacket`（步长 1）。不回时服务端的
+  待确认窗口只增不减，真实服务端会因此拒绝后续带签名的消息。
+- **可撤回的只有带签名的玩家消息**：删除包按服务端分配的编号引用；没有签名的消息不给编号，
+  系统与伪装消息没有编号。删除时既发事件也从聊天记录里摘掉那一条。
+- **文本是纯文本**：颜色、粗体与点击事件不保留；可翻译组件（如死亡消息）得到键名，
+  因为客户端没有语言文件。
+- **存储**：`Session.chat()` / `chatCount`，按到达顺序保留最近 `ClientOptions.chatHistorySize` 条，
+  关闭与溢出都会清空。
+
+实现记录见 [M4e 实施记录](plans/m4e-chat.md)。
+
 ## 6. libGDX 与平台约束
 
 共享发布产物使用 Java 21 字节码，由 `verifyBytecode`（major 65）自动断言；构建、CLI 与测试仍使用 Java 25。libGDX 官方当前推荐 JDK 17/21，因此下游图形客户端不被迫使用 Java 25；启用 Minestom 单人模式的 Desktop 组合根除外。
@@ -275,6 +296,9 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 - 版本常量与协议库 codec 常量对账，注册表 NBT 可加载。
 - `ClientSessionTest` 通过公共 API 真实连接 Minestom：Status 查询返回 776，离线登录进入 play 并收到注册表数据；另覆盖会话隔离、服务端断开、连接失败、关闭后线程回收与事件溢出；出生后读到的方块状态与服务端 `stateId` 对账。依赖组合或版本错配时，编译仍会通过，只有这些用例会失败。
 - `ChunkDecoderTest` 用手工构造的字节覆盖调色板三种形态、跨 long 边界与畸形数据：真服务端只会生成它自己使用的形态，边界只能这样造。
+- `ChatTypeRegistryTest` 锁定服务端 `chat_type` 的 NBT 形状（缺字段、少参数、未知占位符）与下标解析：
+  字段名对不上时不会报错，只会让所有消息失去格式，联调里很难看出来。
+- 聊天联调用例逐项对账三类消息的身份、格式键与编号，并验证删除只移除被引用的那条。
 - Minestom 测试覆盖真实状态迁移，不用自有 Mock 替代全部联调。
 - 构建门控：字节码主版本、模块依赖边界（Netty / MCProtocolLib / Minestom 不得出现在业务模块）。
 - 跨仓库门控：独立 libGDX 消费工程验证发布产物和线程桥接；Android/iOS 分别在真实运行时验证，不能用 JVM 单测替代。

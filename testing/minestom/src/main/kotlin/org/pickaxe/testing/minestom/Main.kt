@@ -1,10 +1,23 @@
 package org.pickaxe.testing.minestom
 
+import net.kyori.adventure.text.Component
+import net.minestom.server.MinecraftServer
+import net.minestom.server.network.packet.server.play.DisguisedChatPacket
 import org.pickaxe.protocol.ProtocolVersion
+import java.time.Duration
 import java.util.concurrent.CountDownLatch
 import kotlin.system.exitProcess
 
 /** 联调服务的命令行用法。 */
+/** 广播间隔：比一次 CLI 连接（默认 8 秒）短，保证至少能看到一条。 */
+private const val CHAT_BROADCAST_INTERVAL_SECONDS: Int = 3
+
+/** 每隔这么多轮发一条伪装聊天。 */
+private const val DISGUISED_EVERY_ROUNDS: Int = 2
+
+/** 伪装聊天用的格式（`[发送者] 正文`），与普通聊天的键不同，便于在日志里区分。 */
+private const val ANNOUNCEMENT_FORMAT: String = "chat.type.announcement"
+
 private const val USAGE: String = "用法: minestom [--port <1..65535>]，默认端口 $DEFAULT_PORT"
 
 /**
@@ -16,6 +29,7 @@ private const val USAGE: String = "用法: minestom [--port <1..65535>]，默认
 public fun main(args: Array<String>) {
     val port = parsePort(args)
     startHarness(port)
+    startChatBroadcast()
 
     // 结束日志放在 hook 内：JVM 开始关闭后主线程可能先被终止，
     // 若把“已停止”写在 await 之后，日志会随机缺失。
@@ -37,6 +51,39 @@ public fun main(args: Array<String>) {
     )
 
     stopped.await()
+}
+
+/**
+ * 定时广播一条系统消息，让命令行客户端能直接看到聊天链路。
+ *
+ * 只在命令行服务端启用：测试用 [startHarness] 直接起服务，广播会污染用例里对
+ * 聊天记录的精确断言。
+ */
+private fun startChatBroadcast() {
+    // 伪装聊天的格式 id 要按注册表顺序取：包内编码是 id + 1，0 表示内联定义。
+    val registry = MinecraftServer.getChatTypeRegistry()
+    val announcement = registry.keys()
+        .firstOrNull { registry.get(it)?.chat()?.translationKey() == ANNOUNCEMENT_FORMAT }
+        ?.let { registry.getId(it) + 1 }
+
+    var round = 0
+    MinecraftServer.getSchedulerManager().buildTask {
+        round++
+        for (player in MinecraftServer.getConnectionManager().onlinePlayers) {
+            player.sendMessage(Component.text("服务器广播 #$round"))
+            // 每隔几轮补一条伪装聊天：它带名字但没有发送者 UUID，与系统消息不是一回事。
+            if (announcement != null && round % DISGUISED_EVERY_ROUNDS == 0) {
+                player.sendPacket(
+                    DisguisedChatPacket(
+                        Component.text("控制台播报 #$round"),
+                        announcement,
+                        Component.text("控制台"),
+                        null,
+                    ),
+                )
+            }
+        }
+    }.repeat(Duration.ofSeconds(CHAT_BROADCAST_INTERVAL_SECONDS.toLong())).schedule()
 }
 
 /**

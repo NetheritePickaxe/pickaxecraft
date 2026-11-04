@@ -24,6 +24,13 @@ public data class ClientOptions(
      * [ClientException.EventOverflow]，不做静默丢弃。
      */
     public val eventBufferCapacity: Int = 256,
+    /**
+     * 会话保留的聊天条数上限；超出后丢弃最早的消息。
+     *
+     * 聊天是可回看的历史而不是状态，保留全部会让长会话无限增长；200 条约等于
+     * 一屏半的可翻阅量，需要更长的历史应当由调用方自己在事件流上累积。
+     */
+    public val chatHistorySize: Int = 200,
 ) {
     init {
         require(connectTimeoutMillis > 0) { "connectTimeoutMillis 必须为正数" }
@@ -31,6 +38,7 @@ public data class ClientOptions(
         require(statusTimeoutMillis > 0) { "statusTimeoutMillis 必须为正数" }
         require(readTimeoutMillis > 0) { "readTimeoutMillis 必须为正数" }
         require(eventBufferCapacity > 0) { "eventBufferCapacity 必须为正数" }
+        require(chatHistorySize > 0) { "chatHistorySize 必须为正数" }
     }
 
     internal fun connectTimeoutSeconds(): Int = toSeconds(connectTimeoutMillis)
