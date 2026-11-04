@@ -1,5 +1,6 @@
 package org.pickaxe.app
 
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.pickaxe.client.ClientEvent
 import org.pickaxe.client.ClientException
@@ -8,6 +9,7 @@ import org.pickaxe.client.MinecraftClient
 import org.pickaxe.client.Session
 import org.pickaxe.protocol.ProtocolVersion
 import org.pickaxe.protocol.ServerAddress
+import kotlin.math.ceil
 import kotlin.system.exitProcess
 
 private val usage = """
@@ -17,9 +19,10 @@ private val usage = """
       status <host> [port] [--timeout <秒>]
           查询服务端状态并打印版本、人数与延迟
 
-      connect <host> [port] [--username <名称>] [--timeout <秒>] [--say <文本>]...
+      connect <host> [port] [--username <名称>] [--timeout <秒>] [--say <文本>]... [--walk <格数>]
           离线登录并持续打印会话事件，Ctrl+C 关闭会话后退出
           --say 在出生完成后再发送一条聊天消息，可重复；服务端会把它广播回来
+          --walk 在出生后沿 +X 方向走指定格数（每步 0.5 格），打印每一步的坐标
 
       --version   打印客户端版本与锁定的游戏/协议/服务端版本
       --help      打印本帮助
@@ -132,6 +135,7 @@ private fun runConnect(args: List<String>): Int {
                         }
                     }
                     pendingSays.clear()
+                    parsed.walkDistance?.let { distance -> walkForward(session, distance) }
                 }
             }
         }
@@ -174,6 +178,35 @@ private fun describe(event: ClientEvent): String = when (event) {
     is ClientEvent.Failed -> "event=failed kind=${event.error::class.simpleName} message=${event.error.message}"
 }
 
+/** 每步移动的距离：半格，足够看出“人真的在走”，也不会让服务端的距离校验有意见。 */
+private const val WALK_STEP: Double = 0.5
+
+/** 步间间隔：20 次/秒，与真实客户端的移动包频率一致。 */
+private const val WALK_INTERVAL_MILLIS: Long = 50
+
+/**
+ * 沿 +X 方向走 [distance] 格。
+ *
+ * 每步只声明坐标，朝向保持出生时的值——走到服务端的是移动包而不是一次传送。
+ * 步数向上取整，最后一步停在精确的终点上；终点由本端声明，服务端不接受时会有
+ * 位置同步把它改回来（这一步的现场证据看日志里的 `event=position`）。
+ */
+private suspend fun walkForward(session: Session, distance: Double) {
+    val start = session.world.value?.position ?: run {
+        System.err.println("位置尚未同步，跳过 --walk")
+        return
+    }
+    val steps = ceil(distance / WALK_STEP).toInt()
+    for (step in 1..steps) {
+        val x = start.x + minOf(step * WALK_STEP, distance)
+        session.moveTo(start.copy(x = x))
+        println("event=move.sent x=$x y=${start.y} z=${start.z}")
+        delay(WALK_INTERVAL_MILLIS)
+    }
+    val end = session.world.value?.position
+    println("event=move.done from=${start.x} x=${end?.x} y=${end?.y} z=${end?.z}")
+}
+
 /** 出生点所在区块的摘要：维度范围、缓存数量与脚下方块。 */
 private fun describeChunk(session: Session): String {
     val position = session.world.value?.position ?: return "chunk=unknown reason=位置尚未同步"
@@ -197,6 +230,8 @@ private class ParsedArgs(
     val timeoutSeconds: Long,
     /** 出生后要发送的聊天消息，按命令行顺序。 */
     val says: List<String> = emptyList(),
+    /** 出生后沿 +X 方向走的格数；null 表示不走。 */
+    val walkDistance: Double? = null,
 ) {
     fun options(): ClientOptions = ClientOptions(
         connectTimeoutMillis = timeoutSeconds * 1000,
@@ -217,6 +252,7 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
     var username = MinecraftClient.DEFAULT_USERNAME
     var timeoutSeconds = DEFAULT_TIMEOUT_SECONDS
     val says = ArrayList<String>()
+    var walkDistance: Double? = null
 
     var index = 1
     // 第二个位置参数若是纯数字则视为端口。
@@ -254,6 +290,15 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
                 says += value
                 index += 2
             }
+            "--walk" -> {
+                val distance = value?.toDoubleOrNull()
+                if (distance == null || distance <= 0.0 || !distance.isFinite()) {
+                    System.err.println("--walk 需要一个正数格数")
+                    return null
+                }
+                walkDistance = distance
+                index += 2
+            }
             else -> {
                 System.err.println("未知参数: $option")
                 return null
@@ -262,7 +307,7 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
     }
 
     return try {
-        ParsedArgs(ServerAddress(host, port), username, timeoutSeconds, says)
+        ParsedArgs(ServerAddress(host, port), username, timeoutSeconds, says, walkDistance)
     } catch (e: IllegalArgumentException) {
         System.err.println("参数不合法: ${e.message}")
         null

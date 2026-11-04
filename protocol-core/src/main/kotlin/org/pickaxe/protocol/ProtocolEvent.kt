@@ -68,6 +68,22 @@ public sealed interface ProtocolEvent {
     ) : ProtocolEvent
 
     /**
+     * 本端已把位置或朝向声明给服务端。
+     *
+     * 与 [PositionUpdated] 的区别是**谁说的**：那个是服务端下发的权威坐标，这个是本端
+     * 上行的事实。服务端接受移动时不回包，因此调用方读到的“我在哪”只能来自这里；
+     * 服务端不同意时会用 [PositionUpdated] 覆盖。
+     */
+    public data class PositionSent(
+        public val x: Double,
+        public val y: Double,
+        public val z: Double,
+        public val yaw: Float,
+        public val pitch: Float,
+        public val onGround: Boolean,
+    ) : ProtocolEvent
+
+    /**
      * 服务端完成重生或维度切换。
      *
      * 旧维度的区块与实体全部作废：服务端会按新维度重发，本端必须丢掉旧缓存，

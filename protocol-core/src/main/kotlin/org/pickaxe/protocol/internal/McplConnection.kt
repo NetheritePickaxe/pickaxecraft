@@ -73,6 +73,7 @@ import java.util.UUID
 import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * 协议库会话的受控封装。
@@ -127,12 +128,16 @@ internal class McplConnection(
     @Volatile
     private var statusInfo: ServerStatusInfo? = null
 
+    /**
+     * 本端声明的位置与朝向。
+     *
+     * 两个线程都会写：网络线程在服务端同步/传送时覆盖，调用线程在 [moveTo] / [look] 时覆盖。
+     * 因此它必须是整体替换的不可变值，而不是一组各自更新的字段——否则“只发变了的那部分”
+     * 会在两端交错时算出错的增量基准。最后写入者胜出，与真实客户端遇到延迟时的行为一致。
+     */
+    private val pose = AtomicReference(LocalPose(0.0, 0.0, 0.0, 0f, 0f, false))
+
     // 以下状态只在连接自己的网络线程上读写，无需同步。
-    private var positionX: Double = 0.0
-    private var positionY: Double = 0.0
-    private var positionZ: Double = 0.0
-    private var yaw: Float = 0f
-    private var pitch: Float = 0f
     private var chunkTotal: Int = 0
     private var playerLoadedSent: Boolean = false
 
@@ -371,14 +376,20 @@ internal class McplConnection(
      */
     private fun acceptTeleport(packet: ClientboundPlayerPositionPacket) {
         val relative = packet.relatives
-        positionX = if (PositionElement.X in relative) positionX + packet.position.x else packet.position.x
-        positionY = if (PositionElement.Y in relative) positionY + packet.position.y else packet.position.y
-        positionZ = if (PositionElement.Z in relative) positionZ + packet.position.z else packet.position.z
-        yaw = if (PositionElement.Y_ROT in relative) yaw + packet.yRot else packet.yRot
-        pitch = if (PositionElement.X_ROT in relative) pitch + packet.xRot else packet.xRot
+        val current = pose.get()
+        val next = LocalPose(
+            x = if (PositionElement.X in relative) current.x + packet.position.x else packet.position.x,
+            y = if (PositionElement.Y in relative) current.y + packet.position.y else packet.position.y,
+            z = if (PositionElement.Z in relative) current.z + packet.position.z else packet.position.z,
+            yaw = if (PositionElement.Y_ROT in relative) current.yaw + packet.yRot else packet.yRot,
+            pitch = if (PositionElement.X_ROT in relative) current.pitch + packet.xRot else packet.xRot,
+            // 传送不改变“是否站在地上”：那是本端对脚下的判断，服务端不会随传送一起告诉本端。
+            onGround = current.onGround,
+        )
+        pose.set(next)
 
         send(ServerboundAcceptTeleportationPacket(packet.id))
-        emit(ProtocolEvent.PositionUpdated(positionX, positionY, positionZ, yaw, pitch))
+        emit(ProtocolEvent.PositionUpdated(next.x, next.y, next.z, next.yaw, next.pitch))
     }
 
     /**
@@ -686,6 +697,52 @@ internal class McplConnection(
      */
     fun sendCommand(command: String) {
         sendInPlay("命令") { ServerboundChatCommandPacket(command) }
+    }
+
+    /**
+     * 声明本端移动到了指定位置与朝向。
+     *
+     * 只发与上一状态不同的部分：协议里 `pos` / `rot` / `pos_rot` 是三个包，缺的字段由服务端
+     * 沿用上一状态，所以选择逻辑在 [Movement] 里独立实现并单测。
+     *
+     * 不做本地物理与预测：调用方给什么就发什么，服务端不同意时会下发位置同步/传送把它改回来。
+     * 服务端**接受**移动时不会回包，因此这里在发送后就把本地姿态推进到目标值并上报
+     * [ProtocolEvent.PositionSent]——否则“发出去了但本地还停在原地”，后续的差分会一直错。
+     */
+    fun moveTo(x: Double, y: Double, z: Double, yaw: Float, pitch: Float, onGround: Boolean) {
+        Movement.requirePosition(x, y, z)
+        Movement.requireAngles(yaw, pitch)
+        val current = pose.get()
+        applyPose(LocalPose(x, y, z, yaw, pitch, onGround), current, "移动")
+    }
+
+    /**
+     * 只改朝向，位置保持不变。
+     *
+     * 服务端的 `rot` 包不带坐标，因此这条路径在尚未收到位置同步时也能用——它只依赖本地
+     * 记录的朝向，不依赖“我在哪”。
+     */
+    fun look(yaw: Float, pitch: Float, onGround: Boolean) {
+        Movement.requireAngles(yaw, pitch)
+        val current = pose.get()
+        applyPose(current.copy(yaw = yaw, pitch = pitch, onGround = onGround), current, "转向")
+    }
+
+    /** 比较、发包、推进本地姿态；状态完全一致时不发任何包。 */
+    private fun applyPose(target: LocalPose, current: LocalPose, what: String) {
+        val packet = Movement.packet(current, target) ?: return
+        sendInPlay(what) { packet }
+        pose.set(target)
+        emit(
+            ProtocolEvent.PositionSent(
+                x = target.x,
+                y = target.y,
+                z = target.z,
+                yaw = target.yaw,
+                pitch = target.pitch,
+                onGround = target.onGround,
+            ),
+        )
     }
 
     /**

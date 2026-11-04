@@ -36,6 +36,7 @@ import org.pickaxe.client.ClientEvent
 import org.pickaxe.client.ClientException
 import org.pickaxe.client.ClientOptions
 import org.pickaxe.client.MinecraftClient
+import org.pickaxe.client.Position
 import org.pickaxe.client.Session
 import org.pickaxe.client.SessionState
 import org.pickaxe.protocol.ProtocolVersion
@@ -684,6 +685,108 @@ class ClientSessionTest {
     }
 
     @Test
+    fun `移动与转向服务端可见`() = runBlocking {
+        // 上行的证据在服务端：PlayerMoveEvent 里带着客户端提交的目标坐标。只断言本地快照
+        // 会漏掉“包根本没发出去”这种情况。
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, MOVE_USERNAME)
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+                val spawn = assertNotNull(session.world.value?.position, "出生后应已同步位置")
+                assertEquals(GROUND_LEVEL, spawn.y, POSITION_TOLERANCE, "出生点应在平台顶面")
+
+                val player = assertNotNull(
+                    MinecraftServer.getConnectionManager().getOnlinePlayerByUsername(MOVE_USERNAME),
+                    "服务端应已保存该玩家",
+                )
+
+                // 一次坐标与朝向同时变化的移动：协议里应当是一个 pos_rot 包。
+                val target = Position(
+                    x = spawn.x + MOVE_DISTANCE,
+                    y = spawn.y,
+                    z = spawn.z + MOVE_DISTANCE,
+                    yaw = 45f,
+                    pitch = 10f,
+                )
+                session.moveTo(target)
+
+                // 服务端接受移动时不回包，因此快照只能由本端声明推进。
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position == target }
+                assertTrue(
+                    withContext(Dispatchers.IO) {
+                        awaitPlayerMove(MOVE_USERNAME, MILESTONE_TIMEOUT) { move ->
+                            abs(move.x - target.x) < POSITION_TOLERANCE &&
+                                abs(move.z - target.z) < POSITION_TOLERANCE &&
+                                move.yaw == target.yaw &&
+                                move.pitch == target.pitch
+                        }
+                    },
+                    "服务端应收到这次移动，实际观察到 ${observedMoves(MOVE_USERNAME)}",
+                )
+                assertEquals(target.x, player.position.x, POSITION_TOLERANCE, "服务端位置应与声明一致")
+                assertEquals(target.z, player.position.z, POSITION_TOLERANCE, "服务端位置应与声明一致")
+
+                // 只改朝向：协议里的 rot 包不带坐标，服务端必须保留原位置。
+                session.look(LOOK_YAW, LOOK_PITCH)
+                assertTrue(
+                    withContext(Dispatchers.IO) {
+                        awaitPlayerMove(MOVE_USERNAME, MILESTONE_TIMEOUT) { move ->
+                            move.yaw == LOOK_YAW && move.pitch == LOOK_PITCH
+                        }
+                    },
+                    "服务端应收到这次转向，实际观察到 ${observedMoves(MOVE_USERNAME)}",
+                )
+                assertEquals(LOOK_YAW, player.position.yaw, "转向后服务端朝向应更新")
+                assertEquals(target.x, player.position.x, POSITION_TOLERANCE, "仅转向不应挪动位置")
+
+                // 服务端可以随时改写位置：传送到达后快照必须换成服务端的坐标，后续移动
+                // 从新坐标接上（本地自说自话的坐标不能覆盖服务端的权威值）。
+                player.teleport(Pos(CORRECTION_X, GROUND_LEVEL, CORRECTION_Z, 0f, 0f)).join()
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    val position = session.world.value?.position
+                    position != null && abs(position.x - CORRECTION_X) < POSITION_TOLERANCE
+                }
+
+                // 等确认包回到服务端，否则 Minestom 会把移动当成“传送未确认”丢掉。
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    abs(player.position.x - CORRECTION_X) < POSITION_TOLERANCE
+                }
+                session.moveTo(Position(CORRECTION_X, GROUND_LEVEL, CORRECTION_Z + MOVE_DISTANCE, LOOK_YAW, LOOK_PITCH))
+                assertTrue(
+                    withContext(Dispatchers.IO) {
+                        awaitPlayerMove(MOVE_USERNAME, MILESTONE_TIMEOUT) { move ->
+                            abs(move.z - (CORRECTION_Z + MOVE_DISTANCE)) < POSITION_TOLERANCE
+                        }
+                    },
+                    "传送之后应能从服务端给的新坐标继续移动，实际观察到 ${observedMoves(MOVE_USERNAME)}",
+                )
+
+                // 本地非法值一个字节都不该发出去，且会话不能被这个错误打断。
+                assertFailsWith<IllegalArgumentException> {
+                    session.moveTo(spawn.copy(x = Double.NaN))
+                }
+                assertEquals(SessionState.PLAY, session.state.value, "校验失败后会话应仍在 play")
+            } finally {
+                log.close()
+                session.close()
+            }
+
+            val rejected = assertFailsWith<IllegalStateException> {
+                session.moveTo(Position(0.0, 0.0, 0.0, 0f, 0f))
+            }
+            assertTrue(
+                "CLOSED" in rejected.message.orEmpty() && "移动" in rejected.message.orEmpty(),
+                "拒绝原因应说明当前状态与操作，实际为 ${rejected.message}",
+            )
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `事件缓冲写满时终止会话而不是静默丢弃`() = runBlocking {
         val client = MinecraftClient(ClientOptions(eventBufferCapacity = 1))
         try {
@@ -785,6 +888,16 @@ class ClientSessionTest {
         const val SAY_USERNAME: String = "SayBot"
         const val SAY_TEXT: String = "你好，服务端"
         const val COMMAND_ARGS: String = "hello world"
+
+        /** 移动上行用例：目标坐标由客户端给定，服务端侧的 PlayerMoveEvent 是唯一证据。 */
+        const val MOVE_USERNAME: String = "MoveBot"
+        const val MOVE_DISTANCE: Double = 2.0
+        const val LOOK_YAW: Float = 90f
+        const val LOOK_PITCH: Float = 15f
+
+        /** 服务端强制传送的目标：与出生点同区块，避开“移动进未加载区块”的分支。 */
+        const val CORRECTION_X: Double = 5.5
+        const val CORRECTION_Z: Double = 1.5
 
         const val EVENT_TIMEOUT_MILLIS: Long = 10_000
         val MILESTONE_TIMEOUT: Duration = Duration.ofSeconds(10)

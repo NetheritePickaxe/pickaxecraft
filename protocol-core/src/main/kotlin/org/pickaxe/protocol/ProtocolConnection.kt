@@ -63,6 +63,44 @@ public class ProtocolConnection private constructor(
         connection.sendCommand(ChatInput.command(command))
     }
 
+    /**
+     * 把本端位置与朝向声明给服务端。
+     *
+     * 只发送与上一状态不同的分量（协议里 `pos`、`rot`、`pos_rot` 是三个包）；坐标与朝向
+     * 都没变且落地标记也没变时什么也不发。
+     *
+     * 服务端**接受**移动时不回包，因此这条调用不产生“确认”事件；服务端不同意时下发位置
+     * 同步，表现为 [ProtocolEvent.PositionUpdated]。本端在发送后立即把自己记录的位置推进到
+     * 目标值，并上报 [ProtocolEvent.PositionSent]。
+     *
+     * 调用线程不限；同一线程内的多次调用按调用顺序发出。
+     *
+     * @throws IllegalArgumentException 任一坐标为 NaN 或无穷
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    public fun moveTo(
+        x: Double,
+        y: Double,
+        z: Double,
+        yaw: Float,
+        pitch: Float,
+        onGround: Boolean = false,
+    ) {
+        connection.moveTo(x, y, z, yaw, pitch, onGround)
+    }
+
+    /**
+     * 只改朝向，位置不变。
+     *
+     * 协议里的 `rot` 包不带坐标，因此这条路径不要求已经收到过位置同步。
+     *
+     * @throws IllegalArgumentException 任一角度为 NaN 或无穷
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    public fun look(yaw: Float, pitch: Float, onGround: Boolean = false) {
+        connection.look(yaw, pitch, onGround)
+    }
+
     public companion object {
 
         /**

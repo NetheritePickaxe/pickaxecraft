@@ -1,6 +1,6 @@
 # 项目结构
 
-状态：M0–M2 已完成（连接链路与出生），M4a–M4f 已完成（区块内容、实体跟踪、重生换维度、玩家身份、聊天读写）；Headless 为第一阶段，独立 libGDX 客户端为长期下游
+状态：M0–M2 已完成（连接链路与出生），M4a–M4g 已完成（区块内容、实体跟踪、重生换维度、玩家身份、聊天读写、移动上行）；Headless 为第一阶段，独立 libGDX 客户端为长期下游
 日期：2026-11-04
 
 ## 1. 结构原则
@@ -33,12 +33,12 @@ pickaxecraft/
 │       │       │   └── RemotePlayer.kt     # 玩家列表条目（UUID、用户名、模式、延迟）
 │       │       ├── chat/
 │       │       │   └── ChatMessage.kt      # 聊天消息、来源、格式（键 + 参数顺序）
-│       │       └── internal/               # McplConnection、ComponentText、
+│       │       └── internal/               # McplConnection、ComponentText、ChatInput、Movement、
 │       │                                   # ChunkDecoder、DimensionRegistry、ChatTypeRegistry
 │       └── test/kotlin/
 │           └── org/pickaxe/protocol/
 │               ├── ProtocolVersionTest.kt
-│               └── internal/               # ChunkDecoderTest、ChatTypeRegistryTest
+│               └── internal/               # ChunkDecoderTest、ChatTypeRegistryTest、ChatInputTest、MovementTest
 │
 ├── client-core/                    # Java 21 字节码：公共客户端 API、会话、事件
 │   └── src/main/kotlin/org/pickaxe/client/
@@ -121,7 +121,8 @@ testing:minestom ──► client-core + protocol-core（版本对账）+ Minest
 - `Session`：`state`（StateFlow）、`events`（单消费者 Flow）、`world` / `registries`
   （会话级只读快照）、区块查询（`chunk` / `blockStateAt` / `biomeAt` / `loadedChunks`）、
   实体查询（`entity` / `entities` / `entityCount`）、玩家查询（`players` / `player` /
-  `playerCount` / `nameOf`）、聊天（`chat` / `chatCount` 回看，`sendChat` / `sendCommand` 上行）
+  `playerCount` / `nameOf`）、聊天（`chat` / `chatCount` 回看，`sendChat` / `sendCommand` 上行）、
+  移动（`moveTo` 声明位置与朝向，`look` 只改朝向）
   与幂等 `close`。
 - `ClientEvent` / `ClientException`：有序事件（含 `JoinedWorld` / `PositionUpdated` /
   `ChunksReceived` / `EntitySpawned` / `EntityRemoved` / `PlayerListChanged` /

@@ -12,6 +12,7 @@ import net.minestom.server.entity.Player
 import net.minestom.server.event.player.AsyncPlayerConfigurationEvent
 import net.minestom.server.event.player.PlayerChatEvent
 import net.minestom.server.event.player.PlayerLoadedEvent
+import net.minestom.server.event.player.PlayerMoveEvent
 import net.minestom.server.event.player.PlayerSpawnEvent
 import net.minestom.server.instance.InstanceContainer
 import net.minestom.server.instance.block.Block
@@ -126,6 +127,46 @@ public fun awaitPlayerChat(username: String, message: String, timeout: Duration)
 public fun awaitCommand(username: String, input: String, timeout: Duration): Boolean =
     awaitFact(commandFactKey(username, input), timeout)
 
+/**
+ * 服务端观察到的一次移动。
+ *
+ * 坐标是**客户端提交的目标位置**（[PlayerMoveEvent.newPosition]），不是服务端最终落点：
+ * 两者在事件被取消或被其它监听器改写时会不同，而这里要证明的正是“包里的坐标确实是这个”。
+ */
+public data class ObservedMove(
+    val x: Double,
+    val y: Double,
+    val z: Double,
+    val yaw: Float,
+    val pitch: Float,
+    val onGround: Boolean,
+)
+
+/**
+ * 每个玩家被观察到的移动序列，按到达顺序。
+ *
+ * 用序列而不是“事实集合”：移动是连续量，按坐标做键会因精度差异永远对不上；
+ * 用例需要的是“有没有出现过一次落在容差内的移动”。
+ */
+private val moves = ConcurrentHashMap<String, java.util.concurrent.CopyOnWriteArrayList<ObservedMove>>()
+
+/** 某玩家到目前为止被观察到的移动；没有时返回空列表。 */
+public fun observedMoves(username: String): List<ObservedMove> = moves[username]?.toList().orEmpty()
+
+/**
+ * 等待某玩家出现一次满足条件的移动；超时返回 false。
+ *
+ * 轮询而不是注册回调：调用方通常在协议事件到达后才开始等，早先到达的移动必须能被看到。
+ */
+public fun awaitPlayerMove(username: String, timeout: Duration, predicate: (ObservedMove) -> Boolean): Boolean {
+    val deadline = System.nanoTime() + timeout.toNanos()
+    while (System.nanoTime() < deadline) {
+        if (observedMoves(username).any(predicate)) return true
+        Thread.sleep(5)
+    }
+    return observedMoves(username).any(predicate)
+}
+
 private fun chatFactKey(username: String, message: String): String = "chat|$username|$message"
 
 private fun commandFactKey(username: String, input: String): String = "command|$username|$input"
@@ -186,6 +227,27 @@ public fun startHarness(port: Int = DEFAULT_PORT): InstanceContainer {
         // 只能渲染出键名——那样回显就无法与正文对账。这里换成字面文本，让“服务端把这段
         // 字原样发回来了”成为可断言的事实；真实服务端走带签名的玩家聊天包，是另一条路径。
         event.formattedMessage = Component.text("${event.player.username}: ${event.rawMessage}")
+    }
+    // 移动上行：事件里带的是客户端提交的目标位置，是“包里的坐标真的到了服务端”的直接证据。
+    // 只落 onGround 的状态包不会触发这个事件（服务端只刷新落地状态），联调用例对此另作断言。
+    MinecraftServer.getGlobalEventHandler().addListener(PlayerMoveEvent::class.java) { event ->
+        val target = event.newPosition
+        println(
+            "event=player.move name=${event.player.username} " +
+                "x=${target.x()} y=${target.y()} z=${target.z()} " +
+                "yaw=${target.yaw()} pitch=${target.pitch()}",
+        )
+        moves.computeIfAbsent(event.player.username) { java.util.concurrent.CopyOnWriteArrayList() }
+            .add(
+                ObservedMove(
+                    x = target.x(),
+                    y = target.y(),
+                    z = target.z(),
+                    yaw = target.yaw(),
+                    pitch = target.pitch(),
+                    onGround = event.isOnGround,
+                ),
+            )
     }
     MinecraftServer.getCommandManager().register(EchoCommand())
 

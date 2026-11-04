@@ -256,6 +256,38 @@ public class Session internal constructor(
     }
 
     /**
+     * 把本端移动到 [position]，并把该位置声明给服务端。只有 [SessionState.PLAY] 阶段可用。
+     *
+     * 只发送与上一状态不同的分量（位置与朝向都没变时一个字节也不发），因此可以按固定频率
+     * 反复调用同一个位置而不产生流量。本库不做物理与预测：坐标就是调用方给的值。
+     *
+     * 服务端接受移动时**不回包**，所以 [world] 里的位置在调用后立即变成 [position] ——
+     * 它表示“本端声明的坐标”，不是“服务端确认过的坐标”。服务端不同意时会下发位置同步，
+     * 表现为 [ClientEvent.PositionUpdated] 并把快照改回来。
+     *
+     * 落地标记 [onGround] 由调用方判断：无头客户端不做碰撞检测，默认 `false`。
+     *
+     * @throws IllegalArgumentException 任一坐标为 NaN 或无穷
+     * @throws IllegalStateException 会话尚未进入 play，或已经关闭
+     */
+    public fun moveTo(position: Position, onGround: Boolean = false) {
+        playConnection("移动").moveTo(position.x, position.y, position.z, position.yaw, position.pitch, onGround)
+    }
+
+    /**
+     * 只改朝向，位置不变。只有 [SessionState.PLAY] 阶段可用。
+     *
+     * 协议里的朝向包不带坐标，因此这条路径不要求已经收到过位置同步；但它**不会**改变
+     * 位置，想同时移动请用 [moveTo]。
+     *
+     * @throws IllegalArgumentException 任一角度为 NaN 或无穷
+     * @throws IllegalStateException 会话尚未进入 play，或已经关闭
+     */
+    public fun look(yaw: Float, pitch: Float, onGround: Boolean = false) {
+        playConnection("转向").look(yaw, pitch, onGround)
+    }
+
+    /**
      * 取可用于上行的连接。
      *
      * 用状态而不是连接是否存活来判断：连接存活但仍在 configuration 阶段时发送会被服务端
@@ -385,6 +417,17 @@ public class Session internal constructor(
             // 位置可能先于 Login 到达（协议没有强制顺序）；此时快照只有位置，其余字段留空。
             mutableWorld.update { it.orEmpty().copy(position = position) }
             emit(ClientEvent.PositionUpdated(position))
+            true
+        }
+
+        is ProtocolEvent.PositionSent -> {
+            // 服务端接受移动时不会回包，快照只能由本端声明推进；不发事件——这是调用方自己
+            // 发起的动作，再回一个事件只是把同一件事说两遍。服务端纠正走 PositionUpdated。
+            mutableWorld.update {
+                it.orEmpty().copy(
+                    position = Position(event.x, event.y, event.z, event.yaw, event.pitch),
+                )
+            }
             true
         }
 

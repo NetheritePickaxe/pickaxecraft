@@ -32,7 +32,13 @@ public sealed interface ClientEvent {
         public val gameMode: String,
     ) : ClientEvent
 
-    /** 位置同步已完成（确认包已自动回送）。 */
+    /**
+     * 服务端下发了位置同步（确认包已自动回送）。
+     *
+     * 这是**服务端的权威坐标**：出生、传送、以及对本端移动的修正都走它。
+     * 本端自己用 [Session.moveTo] 声明的移动不会产生这个事件——服务端接受移动时不回包，
+     * 快照由 [Session.world] 直接推进；只在这里看到“服务端改了本端的位置”。
+     */
     public data class PositionUpdated(public val position: Position) : ClientEvent
 
     /**

@@ -8,7 +8,7 @@ Minestom 在本仓库只用于 `testing:minestom` 联调。最终客户端若需
 
 下游渲染以 libGDX GL20/GLES 2.0 + ANGLE 为基线，验证 ANGLE Vulkan 并保留回退路径，跟踪 MC 原版的 Vulkan 演进；所有图形依赖仍只存在于外部客户端仓库。
 
-> 当前进度：M2 出生链路已完成，M4a 区块内容已可查询（`Session.blockStateAt` / `biomeAt` / `chunk`，与服务端 `stateId` 对账），M4b 实体已可跟踪（`Session.entity` / `entities`，坐标与服务端对账），M4c 重生换维度可用，M4d 玩家列表与实体名字可解析（`Session.players` / `nameOf`），M4e 聊天可读（`Session.chat`，含格式与删除），M4f 聊天可发（`Session.sendChat` / `sendCommand`）；背包、移动上行、元数据其余字段与 Android 运行时验证（M3）尚未开始。
+> 当前进度：M2 出生链路已完成，M4a 区块内容已可查询（`Session.blockStateAt` / `biomeAt` / `chunk`，与服务端 `stateId` 对账），M4b 实体已可跟踪（`Session.entity` / `entities`，坐标与服务端对账），M4c 重生换维度可用，M4d 玩家列表与实体名字可解析（`Session.players` / `nameOf`），M4e 聊天可读（`Session.chat`，含格式与删除），M4f 聊天可发（`Session.sendChat` / `sendCommand`），M4g 移动可发（`Session.moveTo` / `look`，只发变化的分量）；背包、元数据其余字段、方块交互与 Android 运行时验证（M3）尚未开始。
 
 ## 规划文档
 
@@ -46,6 +46,7 @@ CI 在 Ubuntu 上以同样的命令执行（`.github/workflows/ci.yml`）。
 ./gradlew :app:run --args="--version"    # 客户端版本、Minecraft 26.2、协议 776、Minestom 版本
 ./gradlew :app:run --args="--help"
 ./gradlew :app:run --args="connect 127.0.0.1 25565 --say 你好"   # 出生后发一条聊天，服务端会广播回来
+./gradlew :app:run --args="connect 127.0.0.1 25565 --walk 3"     # 出生后沿 +X 走 3 格（每步 0.5）
 ```
 
 联调用的 Minestom 服务端：
