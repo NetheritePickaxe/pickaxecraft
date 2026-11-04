@@ -24,6 +24,7 @@ import org.pickaxe.protocol.chat.ChatMessage
 import org.pickaxe.protocol.inventory.Container
 import org.pickaxe.protocol.inventory.InventoryItem
 import org.pickaxe.protocol.inventory.PlayerInventoryLayout
+import org.pickaxe.protocol.inventory.SlotClick
 import org.pickaxe.protocol.world.ChunkColumn
 import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
@@ -267,18 +268,30 @@ public class Session internal constructor(
     public fun inventory(): Container? = containers[Container.PLAYER_WINDOW_ID]
 
     /**
-     * 当前打开的非玩家容器（箱子、工作台……）；没有打开或会话关闭后为 null。
+     * 当前打开的容器（箱子、工作台……）；没有打开或会话关闭后为 null。
      *
      * 同一时刻最多一个：服务端打开新容器时会先关掉旧的。
      */
     public fun container(): Container? =
-        containers.values.firstOrNull { it.windowId != Container.PLAYER_WINDOW_ID }
+        containers[activeWindowId]?.takeUnless { it.isPlayerInventory }
 
     /** 按窗口 id 取容器快照；窗口 0 与当前打开的容器都在其中。 */
     public fun container(windowId: Int): Container? = containers[windowId]
 
     /** 所有窗口的快照；每次调用都会复制一份映射。 */
     public fun containers(): Map<Int, Container> = HashMap(containers)
+
+    /**
+     * 当前活动的窗口 id：有打开的容器时是它，否则是玩家背包（0）。
+     *
+     * 服务端按递增顺序分配窗口 id，所以“最大的非 0 窗口”就是最后打开的那个；同一时刻
+     * 只会有一个，用最大值只是为了在乱序到达时不至于随机挑一个。
+     */
+    public val activeWindowId: Int
+        get() = containers.keys
+            .filter { it != Container.PLAYER_WINDOW_ID }
+            .maxOrNull()
+            ?: Container.PLAYER_WINDOW_ID
 
     /** 服务端认为本端选中的快捷栏格（0–8）。 */
     public val heldSlot: Int get() = heldSlotIndex
@@ -290,6 +303,15 @@ public class Session internal constructor(
      * 存一份副本只会让人忘记它已经过期。
      */
     public fun heldItem(): InventoryItem? = inventory()?.slot(PlayerInventoryLayout.hotbar(heldSlot))
+
+    /**
+     * 光标上的物品（点着不放的那一堆）；没有时为 null。
+     *
+     * 读的是活动窗口（[activeWindowId]）：没开容器时是玩家背包，打开箱子时是箱子窗口——服务端只在
+     * 当前菜单上维护光标，这里跟着它的视角走。点击之后光标由服务端确认：本库不预测点击结果，
+     * 等 `set_cursor_item` 或整包内容到达。
+     */
+    public fun cursorItem(): InventoryItem? = containers[activeWindowId]?.cursor
 
     /**
      * 发送一条聊天消息。只有 [SessionState.PLAY] 阶段可用。
@@ -364,6 +386,54 @@ public class Session internal constructor(
      */
     public fun selectHotbarSlot(slot: Int) {
         playConnection("切换快捷栏").selectHotbarSlot(slot)
+    }
+
+    /**
+     * 点击当前活动窗口（有打开的容器时是它，否则是玩家背包）的一格。
+     *
+     * 等价于 [clickSlot] 用在 [activeWindowId] 上；窗口内容还没到时抛
+     * `IllegalStateException`——没有内容状态号可用，发出去只会被服务端拒绝。
+     *
+     * @throws IllegalArgumentException 槽位为负，或玩家背包窗口的槽位超过 46
+     * @throws IllegalStateException 会话尚未进入 play、已经关闭，或该窗口内容尚未到达
+     */
+    public fun clickSlot(slot: Int, click: SlotClick) {
+        clickSlot(activeWindowId, slot, click)
+    }
+
+    /**
+     * 点击指定窗口的一格：拿起、放下、快速转移、与快捷栏交换、丢弃。
+     *
+     * **结果不由本端预测**：调用后 [inventory] / [container] 仍是旧内容，等服务端下发
+     * 权威内容后才变，并以 [ClientEvent.InventoryChanged] 通知。因此“点了还没生效”是正常现象，
+     * 想确认结果就等事件，而不是重试点击。
+     *
+     * 打开着的容器窗口里，容器自己的格子在前，其后是背包段（3 行箱子时背包从 27 开始）；
+     * 这些背包槽位在快照里可能并不存在（服务端只发容器自己的格子），但仍然可以点击。
+     *
+     * @throws IllegalArgumentException 槽位为负，或玩家背包窗口的槽位超过 46
+     * @throws IllegalStateException 会话尚未进入 play、已经关闭，或该窗口内容尚未到达
+     */
+    public fun clickSlot(windowId: Int, slot: Int, click: SlotClick) {
+        val container = containers[windowId] ?: throw IllegalStateException(
+            "窗口 $windowId 的内容还没有到达，无法点击；等 ContainerOpened/InventoryChanged 之后再试",
+        )
+        playConnection("点击槽位").clickSlot(container, slot, click)
+    }
+
+    /**
+     * 关闭一个已打开的窗口。窗口 0（玩家背包）会被忽略。
+     *
+     * 客户端主动关闭时服务端不回包，因此关闭在发出时就已生效：本端随即移除该窗口并投递
+     * [ClientEvent.ContainerClosed]（事件经会话 Actor 异步到达，稍晚于调用返回）。服务端自己
+     * 关窗（插件调用关闭）走的是同一个事件，所以只监听事件、不区分是谁发起的。
+     *
+     * 已经搬进背包的物品不受影响。
+     *
+     * @throws IllegalStateException 会话尚未进入 play，或已经关闭
+     */
+    public fun closeContainer(windowId: Int) {
+        playConnection("关闭窗口").closeContainer(windowId)
     }
 
     /**

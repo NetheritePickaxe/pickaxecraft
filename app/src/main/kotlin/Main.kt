@@ -9,6 +9,8 @@ import org.pickaxe.client.MinecraftClient
 import org.pickaxe.client.Session
 import org.pickaxe.protocol.ProtocolVersion
 import org.pickaxe.protocol.ServerAddress
+import org.pickaxe.protocol.inventory.Container
+import org.pickaxe.protocol.inventory.SlotClick
 import kotlin.math.ceil
 import kotlin.system.exitProcess
 
@@ -20,11 +22,22 @@ private val usage = """
           查询服务端状态并打印版本、人数与延迟
 
       connect <host> [port] [--username <名称>] [--timeout <秒>] [--say <文本>]...
-              [--walk <格数>] [--hold <0-8>]
+              [--walk <格数>] [--hold <0-8>] [--click <槽位>[:动作]]... [--close-window]
           离线登录并持续打印会话事件，Ctrl+C 关闭会话后退出
           --say 在出生完成后再发送一条聊天消息，可重复；服务端会把它广播回来
           --walk 在出生后沿 +X 方向走指定格数（每步 0.5 格），打印每一步的坐标
           --hold 在出生后切换到指定快捷栏格，并打印该格上的物品
+          --click 在出生后点击一格，可重复；动作见下，缺省为 pickup
+          --close-window 在其余动作之后关闭当前打开的容器
+
+          点击动作:
+            pickup      左键拿起或放下整堆（默认）
+            right       右键拿起半堆或放下一个
+            quick       Shift 点击，快速转移
+            swap<N>     与快捷栏第 N 格交换，N 为 0-8
+            throw       丢弃一个
+            throw-all   丢弃整堆
+            all         双击收拢同类物品
 
       --version   打印客户端版本与锁定的游戏/协议/服务端版本
       --help      打印本帮助
@@ -142,6 +155,8 @@ private fun runConnect(args: List<String>): Int {
                         println("event=held.sent slot=$slot item=${session.heldItem()}")
                     }
                     parsed.walkDistance?.let { distance -> walkForward(session, distance) }
+                    for (click in parsed.clicks) { clickSlot(session, click) }
+                    if (parsed.closeWindow) closeActiveWindow(session)
                 }
             }
         }
@@ -222,6 +237,49 @@ private suspend fun walkForward(session: Session, distance: Double) {
     println("event=move.done from=${start.x} x=${end?.x} y=${end?.y} z=${end?.z}")
 }
 
+/** 一次点击的参数：窗口槽位与意图。 */
+private data class ClickArg(val slot: Int, val click: SlotClick)
+
+/**
+ * 点击一格并打印“已发出”。
+ *
+ * 打印的是**发送**这件事，不是结果：本库不做本地预测，槽位真正变化要等服务端下发内容，
+ * 会在随后的 `event=inventory` 行里出现。窗口内容还没到时跳过而不是抛出去——命令行不该
+ * 因为一次早到的点击而整场退出。
+ */
+private fun clickSlot(session: Session, arg: ClickArg) {
+    try {
+        session.clickSlot(arg.slot, arg.click)
+    } catch (e: IllegalArgumentException) {
+        System.err.println("点击参数不合法: ${e.message}")
+        return
+    } catch (e: IllegalStateException) {
+        System.err.println("跳过点击（${e.message}）")
+        return
+    }
+    println("event=click.sent window=${session.activeWindowId} slot=${arg.slot} kind=${describeClick(arg.click)}")
+}
+
+/** 关闭当前打开的容器；没有容器时说明原因，不当作错误。 */
+private fun closeActiveWindow(session: Session) {
+    val windowId = session.activeWindowId
+    if (windowId == Container.PLAYER_WINDOW_ID) {
+        System.err.println("没有打开的窗口，跳过 --close-window")
+        return
+    }
+    session.closeContainer(windowId)
+    println("event=window.close.sent window=$windowId")
+}
+
+/** 点击意图的短名字，与命令行里的动作写法一致。 */
+private fun describeClick(click: SlotClick): String = when (click) {
+    is SlotClick.Pickup -> if (click.rightButton) "right" else "pickup"
+    is SlotClick.QuickMove -> if (click.rightButton) "quick-right" else "quick"
+    is SlotClick.SwapWithHotbar -> "swap${click.hotbar}"
+    is SlotClick.Throw -> if (click.wholeStack) "throw-all" else "throw"
+    SlotClick.PickupAll -> "all"
+}
+
 /** 出生点所在区块的摘要：维度范围、缓存数量与脚下方块。 */
 private fun describeChunk(session: Session): String {
     val position = session.world.value?.position ?: return "chunk=unknown reason=位置尚未同步"
@@ -252,6 +310,10 @@ private class ParsedArgs(
     val walkDistance: Double? = null,
     /** 出生后要切换到的快捷栏格；null 表示不切。 */
     val holdSlot: Int? = null,
+    /** 出生后要点击的格子，按命令行顺序。 */
+    val clicks: List<ClickArg> = emptyList(),
+    /** 其余动作之后是否关闭当前打开的容器。 */
+    val closeWindow: Boolean = false,
 ) {
     fun options(): ClientOptions = ClientOptions(
         connectTimeoutMillis = timeoutSeconds * 1000,
@@ -274,6 +336,8 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
     val says = ArrayList<String>()
     var walkDistance: Double? = null
     var holdSlot: Int? = null
+    val clicks = ArrayList<ClickArg>()
+    var closeWindow = false
 
     var index = 1
     // 第二个位置参数若是纯数字则视为端口。
@@ -329,6 +393,19 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
                 walkDistance = distance
                 index += 2
             }
+            "--click" -> {
+                val click = value?.let(::parseClick)
+                if (click == null) {
+                    System.err.println("--click 需要 <槽位>[:动作]，动作见 --help")
+                    return null
+                }
+                clicks += click
+                index += 2
+            }
+            "--close-window" -> {
+                closeWindow = true
+                index += 1
+            }
             else -> {
                 System.err.println("未知参数: $option")
                 return null
@@ -337,9 +414,47 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
     }
 
     return try {
-        ParsedArgs(ServerAddress(host, port), username, timeoutSeconds, says, walkDistance, holdSlot)
+        ParsedArgs(
+            address = ServerAddress(host, port),
+            username = username,
+            timeoutSeconds = timeoutSeconds,
+            says = says,
+            walkDistance = walkDistance,
+            holdSlot = holdSlot,
+            clicks = clicks,
+            closeWindow = closeWindow,
+        )
     } catch (e: IllegalArgumentException) {
         System.err.println("参数不合法: ${e.message}")
         null
     }
+}
+
+/**
+ * 解析 `槽位[:动作]`。
+ *
+ * 动作名与协议里的点击类型一一对应，但不暴露协议名：`swap<N>` 里的 N 是快捷栏下标，
+ * 不是窗口槽位——这两套编号在窗口 0 里差 36，混用会静默点到别的格子。
+ */
+private fun parseClick(value: String): ClickArg? {
+    val parts = value.split(':', limit = 2)
+    val slot = parts[0].toIntOrNull()
+    if (slot == null || slot < 0) return null
+
+    val kind = parts.getOrNull(1) ?: "pickup"
+    val click = when {
+        kind == "pickup" -> SlotClick.Pickup()
+        kind == "right" -> SlotClick.Pickup(rightButton = true)
+        kind == "quick" -> SlotClick.QuickMove()
+        kind == "quick-right" -> SlotClick.QuickMove(rightButton = true)
+        kind == "throw" -> SlotClick.Throw()
+        kind == "throw-all" -> SlotClick.Throw(wholeStack = true)
+        kind == "all" -> SlotClick.PickupAll
+        // 越界的快捷栏下标由 SlotClick 自己拒绝，这里只负责把错误挡在启动阶段。
+        kind.startsWith("swap") -> runCatching {
+            SlotClick.SwapWithHotbar(kind.removePrefix("swap").toInt())
+        }.getOrNull()
+        else -> null
+    } ?: return null
+    return ClickArg(slot, click)
 }

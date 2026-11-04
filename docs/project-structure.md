@@ -34,15 +34,16 @@ pickaxecraft/
 │       │       ├── chat/
 │       │       │   └── ChatMessage.kt      # 聊天消息、来源、格式（键 + 参数顺序）
 │       │       ├── inventory/
-│       │       │   └── Container.kt        # 容器快照、物品堆、窗口 0 槽位布局
+│       │       │   ├── Container.kt        # 容器快照、物品堆、窗口 0 槽位布局
+│       │       │   └── SlotClick.kt        # 点击意图：拿起、快速转移、换快捷栏、丢弃、收拢
 │       │       └── internal/               # McplConnection、ComponentText、ChatInput、Movement、
-│       │                                   # MutableContainer、PlayerSlotMapping、ChunkDecoder、
-│       │                                   # DimensionRegistry、ChatTypeRegistry
+│       │                                   # MutableContainer、PlayerSlotMapping、ContainerClicks、
+│       │                                   # ChunkDecoder、DimensionRegistry、ChatTypeRegistry
 │       └── test/kotlin/
 │           └── org/pickaxe/protocol/
 │               ├── ProtocolVersionTest.kt
 │               └── internal/               # ChunkDecoderTest、ChatTypeRegistryTest、ChatInputTest、
-│                                           # MovementTest、PlayerSlotMappingTest
+│                                           # MovementTest、PlayerSlotMappingTest、ContainerClicksTest
 │
 ├── client-core/                    # Java 21 字节码：公共客户端 API、会话、事件
 │   └── src/main/kotlin/org/pickaxe/client/

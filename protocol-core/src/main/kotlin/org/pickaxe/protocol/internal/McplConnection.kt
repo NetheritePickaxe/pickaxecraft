@@ -61,6 +61,7 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.Serverbound
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatCommandPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundPlayerLoadedPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.inventory.ServerboundContainerClosePacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.level.ServerboundAcceptTeleportationPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.player.ServerboundSetCarriedItemPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.level.ServerboundChunkBatchReceivedPacket
@@ -76,6 +77,7 @@ import org.pickaxe.protocol.chat.ChatKind
 import org.pickaxe.protocol.chat.ChatMessage
 import org.pickaxe.protocol.inventory.Container
 import org.pickaxe.protocol.inventory.InventoryItem
+import org.pickaxe.protocol.inventory.SlotClick
 import org.pickaxe.protocol.world.ChunkColumn
 import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
@@ -394,7 +396,7 @@ internal class McplConnection(
 
             is ClientboundOpenScreenPacket -> openScreen(packet)
 
-            is ClientboundContainerClosePacket -> closeContainer(packet.containerId)
+            is ClientboundContainerClosePacket -> forgetContainer(packet.containerId)
 
             is ClientboundContainerSetContentPacket -> setContainerContent(packet)
 
@@ -409,11 +411,7 @@ internal class McplConnection(
                 }
             }
 
-            is ClientboundSetCursorItemPacket -> {
-                val container = containerFor(Container.PLAYER_WINDOW_ID)
-                container.cursor = packet.contents?.toInventoryItem()
-                emit(ProtocolEvent.ContainerUpdated(container.snapshot()))
-            }
+            is ClientboundSetCursorItemPacket -> applyCursor(packet.contents)
 
             is ClientboundSetHeldSlotPacket -> setHeldSlot(packet.slot)
 
@@ -736,12 +734,12 @@ internal class McplConnection(
     }
 
     /**
-     * 关闭窗口。
+     * 服务端关闭窗口。
      *
      * 窗口 0 是玩家背包，服务端不会关闭它；收到就忽略——把背包当成“已关闭”会让
      * 后续查询凭空失败。
      */
-    private fun closeContainer(windowId: Int) {
+    private fun forgetContainer(windowId: Int) {
         if (windowId == Container.PLAYER_WINDOW_ID) return
         if (containers.remove(windowId) == null) return
         emit(ProtocolEvent.ContainerClosed(windowId))
@@ -755,6 +753,25 @@ internal class McplConnection(
             items = packet.items.map { it?.toInventoryItem() },
             cursor = packet.carriedItem?.toInventoryItem(),
         )
+        emit(ProtocolEvent.ContainerUpdated(container.snapshot()))
+    }
+
+    /**
+     * 记录光标物品。
+     *
+     * 协议里光标不带窗口 id：它属于玩家，但服务端只在**当前打开的那个菜单**上维护它（原版客户端
+     * 也是把光标存在 menu 上）。因此这里写到活动窗口——没开容器时就是窗口 0。这样“点这个窗口时
+     * 声明给服务端的光标”与“这个窗口快照里的光标”永远是同一份，不会出现两处各说一套。
+     *
+     * 没有变化就不上报：服务端在去同步检测之后可能补发一条相同的光标。
+     */
+    private fun applyCursor(item: ItemStack?) {
+        val windowId = containers.keys.filter { it != Container.PLAYER_WINDOW_ID }.maxOrNull()
+            ?: Container.PLAYER_WINDOW_ID
+        val container = containerFor(windowId)
+        val cursor = item?.toInventoryItem()
+        if (container.cursor == cursor) return
+        container.cursor = cursor
         emit(ProtocolEvent.ContainerUpdated(container.snapshot()))
     }
 
@@ -903,6 +920,37 @@ internal class McplConnection(
         if (heldSlot == slot) return
         heldSlot = slot
         emit(ProtocolEvent.HeldSlotChanged(slot))
+    }
+
+    /**
+     * 点击一个窗口槽位。
+     *
+     * [container] 是调用方手上的快照，`windowId` 与 `stateId` 都从它取：适配层的容器状态是
+     * 网络线程独占的，跨线程读不安全，而快照不可变、本来就是调用方看到的那个版本。
+     *
+     * 不做本地预测，也不发确认：点击的结果由服务端下发的整包内容或单槽更新体现
+     * （[ProtocolEvent.ContainerUpdated]），本地视图永远跟着服务端走。
+     */
+    fun clickSlot(container: Container, slot: Int, click: SlotClick) {
+        sendInPlay("点击槽位") { ContainerClicks.packet(container, slot, click) }
+    }
+
+    /**
+     * 关闭一个窗口。
+     *
+     * 这个包也没有成功回执：**客户端主动关闭时服务端不回 `container_close`**——它只在
+     * 服务端自己关窗（插件调用 `closeInventory`）时才下发关闭包，因为主动关的那一端已经知道了。
+     * 因此发送后立即在本地收敛（移除窗口并上报 [ProtocolEvent.ContainerClosed]）；服务端随后
+     * 若再发关闭包，[forgetContainer] 找不到窗口，不会重复上报。
+     *
+     * 窗口 0（玩家背包）关不掉：它是玩家的身体，不是可以合上的箱子，传 0 直接忽略。
+     * 没打开过的窗口也直接忽略，不发无意义的包。
+     */
+    fun closeContainer(windowId: Int) {
+        if (windowId == Container.PLAYER_WINDOW_ID) return
+        if (containers[windowId] == null) return
+        sendInPlay("关闭窗口") { ServerboundContainerClosePacket(windowId) }
+        forgetContainer(windowId)
     }
 
     /**

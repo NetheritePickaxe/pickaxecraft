@@ -48,11 +48,13 @@ internal class MutableContainer(val windowId: Int) {
     var type: String? = null
     var title: String? = null
     var stateId: Int = 0
+
+    /** 光标物品；记在**活动窗口**上，与点这个窗口的格子时声明给服务端的那份保持一致。 */
     var cursor: InventoryItem? = null
 
     private val items = ArrayList<InventoryItem?>()
 
-    /** 用整包内容替换全部槽位。 */
+    /** 用整包内容替换全部槽位与光标。 */
     fun setContent(stateId: Int, items: List<InventoryItem?>, cursor: InventoryItem?) {
         this.stateId = stateId
         this.items.clear()

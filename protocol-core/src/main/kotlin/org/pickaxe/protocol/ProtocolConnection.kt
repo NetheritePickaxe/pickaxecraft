@@ -3,7 +3,9 @@ package org.pickaxe.protocol
 import org.geysermc.mcprotocollib.protocol.MinecraftProtocol
 import org.pickaxe.protocol.internal.ChatInput
 import org.pickaxe.protocol.internal.McplConnection
+import org.pickaxe.protocol.inventory.Container
 import org.pickaxe.protocol.inventory.PlayerInventoryLayout
+import org.pickaxe.protocol.inventory.SlotClick
 
 /**
  * 一条协议连接的句柄。
@@ -116,6 +118,41 @@ public class ProtocolConnection private constructor(
             "快捷栏下标应在 0..${PlayerInventoryLayout.HOTBAR_SIZE - 1} 之间，实际为 $slot"
         }
         connection.selectHotbarSlot(slot)
+    }
+
+    /**
+     * 点击一个窗口槽位，例如把箱子里的物品拿到光标上、再放进背包。
+     *
+     * [container] 必须是本端持有的那一份快照（[ProtocolEvent.ContainerOpened] /
+     * [ProtocolEvent.ContainerUpdated] 里给的对象）：包里的窗口 id 与内容状态号都从它取，
+     * 服务端据此判断本端看到的是不是最新内容。传一份过期的快照不会写坏数据——服务端会发现
+     * 不一致，并把权威内容整包下发。
+     *
+     * **不做本地预测**：调用后本端内容不变，等服务端的 `container_set_content` /
+     * `container_set_slot` / `set_cursor_item` 到达后才是新状态，表现为
+     * [ProtocolEvent.ContainerUpdated]。因此“点了但还没生效”是正常现象，不要据此判断失败。
+     *
+     * 调用线程不限；同一线程内的多次调用按调用顺序发出。
+     *
+     * @throws IllegalArgumentException 槽位为负，或玩家背包窗口的槽位超过 46
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    public fun clickSlot(container: Container, slot: Int, click: SlotClick) {
+        connection.clickSlot(container, slot, click)
+    }
+
+    /**
+     * 关闭一个已打开的窗口（窗口 0 会被忽略）。
+     *
+     * 客户端主动关闭时服务端**不回包**——只有服务端自己关窗才会下发 `container_close`。
+     * 因此这条调用在本地立即收敛：窗口从缓存移除并上报 [ProtocolEvent.ContainerClosed]。
+     * 已经搬进背包的物品不受影响；关窗时光标上还剩的物品由服务端决定去处（丢到地上或塞回背包），
+     * 表现为随后的背包内容更新。
+     *
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    public fun closeContainer(windowId: Int) {
+        connection.closeContainer(windowId)
     }
 
     public companion object {

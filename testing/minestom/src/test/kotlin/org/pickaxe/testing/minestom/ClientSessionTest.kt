@@ -48,7 +48,9 @@ import org.pickaxe.protocol.ProtocolVersion
 import org.pickaxe.protocol.chat.ChatKind
 import org.pickaxe.protocol.chat.ChatMessage
 import org.pickaxe.protocol.chat.ChatParameter
+import org.pickaxe.protocol.inventory.Container
 import org.pickaxe.protocol.inventory.PlayerInventoryLayout
+import org.pickaxe.protocol.inventory.SlotClick
 import org.pickaxe.protocol.ServerAddress
 import java.net.ServerSocket
 import java.time.Duration
@@ -956,6 +958,105 @@ class ClientSessionTest {
     }
 
     @Test
+    fun `容器点击能把物品搬到背包`() = runBlocking {
+        // 点击不做本地预测：每一步都以“服务端事实 + 服务端回给客户端的内容”双侧对账。
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, CLICK_USERNAME)
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.inventory() != null }
+
+                val player = assertNotNull(
+                    MinecraftServer.getConnectionManager().getOnlinePlayerByUsername(CLICK_USERNAME),
+                    "服务端应已保存该玩家",
+                )
+
+                val chest = Inventory(InventoryType.CHEST_3_ROW, Component.text(CLICK_CHEST_TITLE))
+                chest.setItemStack(CLICK_SLOT, ItemStack.of(Material.GOLD_INGOT, GOLD_COUNT))
+                chest.setItemStack(SHIFT_SLOT, ItemStack.of(Material.APPLE, APPLE_COUNT))
+                chest.setItemStack(THROW_SLOT, ItemStack.of(Material.DIRT, DIRT_COUNT))
+                player.openInventory(chest)
+
+                log.await { it is ClientEvent.ContainerOpened }
+                val windowId = log.snapshot().filterIsInstance<ClientEvent.ContainerOpened>().first().windowId
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    session.container(windowId)?.slot(CLICK_SLOT)?.itemId == Material.GOLD_INGOT.id()
+                }
+
+                // ① 左键点箱子第 0 格：整堆到光标上。光标由服务端回给本端（本端不预测）。
+                session.clickSlot(windowId, CLICK_SLOT, SlotClick.Pickup())
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    session.container(windowId)?.cursor?.itemId == Material.GOLD_INGOT.id()
+                }
+                assertEquals(GOLD_COUNT, session.container(windowId)?.cursor?.count, "左键拿整堆")
+                assertNull(session.container(windowId)?.slot(CLICK_SLOT), "箱子该格应已空")
+                assertEquals(windowId, session.activeWindowId, "开着箱子时活动窗口就是它")
+
+                // ② 再左键点窗口里的快捷栏第一格（3 行箱子：27 格容器 + 27 格背包之后）：物品落进背包。
+                session.clickSlot(windowId, CHEST_HOTBAR_FIRST_SLOT, SlotClick.Pickup())
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    session.inventory()?.slot(PlayerInventoryLayout.HOTBAR_FIRST)?.itemId ==
+                        Material.GOLD_INGOT.id()
+                }
+                assertEquals(
+                    GOLD_COUNT,
+                    session.inventory()?.slot(PlayerInventoryLayout.HOTBAR_FIRST)?.count,
+                    "背包槽位（36）拿到整堆",
+                )
+                assertEquals(
+                    GOLD_COUNT,
+                    player.inventory.getItemStack(0).amount(),
+                    "服务端背包第 0 格与客户端第 36 格是同一格",
+                )
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.container(windowId)?.cursor == null }
+
+                // ③ Shift 点击：服务端自己决定落到背包哪一格，本端只认结果。
+                // 一次点击会改两个容器，服务端先发背包整包、再发容器整包，两边都要等，不能只看一半。
+                session.clickSlot(windowId, SHIFT_SLOT, SlotClick.QuickMove())
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    session.inventory()?.slots?.any { it?.itemId == Material.APPLE.id() } == true
+                }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.container(windowId)?.slot(SHIFT_SLOT) == null }
+                assertEquals(
+                    APPLE_COUNT,
+                    session.inventory()?.slots?.firstOrNull { it?.itemId == Material.APPLE.id() }?.count,
+                    "Shift 点击整堆转移，数量不变",
+                )
+                assertTrue(chest.getItemStack(SHIFT_SLOT).isAir, "服务端箱子里这一格也应已空")
+
+                // ④ 丢弃整堆：箱子这一格清空（掉落物实体不在本用例的断言范围）。
+                session.clickSlot(windowId, THROW_SLOT, SlotClick.Throw(wholeStack = true))
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.container(windowId)?.slot(THROW_SLOT) == null }
+                assertTrue(chest.getItemStack(THROW_SLOT).isAir, "服务端箱子里这一格应已空")
+
+                // ⑤ 关闭窗口在发出时就生效（服务端接受时不回包），事件因此早于服务端处理到达；
+                // 服务端侧的状态要等一个来回。
+                session.closeContainer(windowId)
+                log.await { it is ClientEvent.ContainerClosed && it.windowId == windowId }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { player.getOpenInventory() == null }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.container() == null }
+                assertNotNull(session.inventory(), "关掉箱子不影响玩家自己的背包")
+                assertEquals(Container.PLAYER_WINDOW_ID, session.activeWindowId)
+
+                // 越界槽位与已经不存在的窗口都在本地被挡下，不会发出坏包。
+                assertFailsWith<IllegalArgumentException> {
+                    session.clickSlot(PlayerInventoryLayout.SIZE, SlotClick.Pickup())
+                }
+                assertFailsWith<IllegalArgumentException> { session.clickSlot(-1, SlotClick.Pickup()) }
+                assertFailsWith<IllegalStateException> { session.clickSlot(windowId, 0, SlotClick.Pickup()) }
+                assertEquals(SessionState.PLAY, session.state.value, "校验失败后会话应仍在 play")
+            } finally {
+                log.close()
+                session.close()
+            }
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `事件缓冲写满时终止会话而不是静默丢弃`() = runBlocking {
         val client = MinecraftClient(ClientOptions(eventBufferCapacity = 1))
         try {
@@ -1073,6 +1174,24 @@ class ClientSessionTest {
         const val CHEST_TITLE: String = "测试箱子"
         const val CHEST_TYPE: String = "GENERIC_9X3"
         const val HELD_SLOT: Int = 3
+
+        /** 点击用例的账号、箱子标题与三个格子上的物品数量。 */
+        const val CLICK_USERNAME: String = "ClickBot"
+        const val CLICK_CHEST_TITLE: String = "点击箱子"
+        const val CLICK_SLOT: Int = 0
+        const val SHIFT_SLOT: Int = 1
+        const val THROW_SLOT: Int = 2
+        const val GOLD_COUNT: Int = 3
+        const val APPLE_COUNT: Int = 2
+        const val DIRT_COUNT: Int = 5
+
+        /**
+         * 3 行箱子窗口里快捷栏第一格的窗口槽位：27 格容器 + 27 格主背包，之后才是快捷栏。
+         *
+         * Minestom 的打开容器整包只带容器自己的槽位，所以这一格在快照里并不存在——
+         * 但它仍然是合法点击目标，这也正是“容器窗口不校验槽位上限”的原因。
+         */
+        const val CHEST_HOTBAR_FIRST_SLOT: Int = 54
 
         /** 自身状态用例：数值由服务端设置，客户端只负责读出来。 */
         const val STATE_USERNAME: String = "StateBot"
