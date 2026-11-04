@@ -1,7 +1,7 @@
 package org.pickaxe.protocol.world
 
 /**
- * 一组按位宽压缩的数值，区块里的方块与生物群系都用它表示。
+ * 一段按位宽压缩的数值，区块里的方块与生物群系都用它表示。
  *
  * 三种形态对应协议里的同一段编码：
  * - [bitsPerEntry] 为 0：整段只有一个值（[singleValue]），不占数组；
@@ -16,10 +16,10 @@ internal class PalettedContainer(
     private val palette: IntArray?,
     private val storage: LongArray,
     private val singleValue: Int,
-) {
+) : BlockStorage {
 
     /** @param index 取值在 `0 until 16^3`（方块）或 `0 until 4^3`（生物群系）之间。 */
-    fun at(index: Int): Int {
+    override fun at(index: Int): Int {
         if (bitsPerEntry == 0) return singleValue
 
         val valuesPerLong = Long.SIZE_BITS / bitsPerEntry
@@ -29,6 +29,30 @@ internal class PalettedContainer(
         val id = ((storage[longIndex] ushr bitIndex) and mask).toInt()
         return palette?.get(id) ?: id
     }
+
+    /** 展开成每格一个 int；只在写入时调用。 */
+    override fun toArray(size: Int): IntArray = IntArray(size) { at(it) }
+}
+
+/**
+ * 一段方块内容的存储形态。
+ *
+ * 解码出来的区块用 [PalettedContainer]（压缩），一旦被方块变更改过就换成每格一个 int 的
+ * 展开形态：局部改动压缩数据需要重建调色板，成本与展开整段相当，而展开后写一格是常数时间。
+ */
+internal interface BlockStorage {
+    fun at(index: Int): Int
+
+    /** 展开成 [size] 个值的新数组。 */
+    fun toArray(size: Int): IntArray
+}
+
+/** 展开形态的方块存储：一次修改只复制数组，不再碰调色板。 */
+internal class FlatBlockStorage(private val values: IntArray) : BlockStorage {
+
+    override fun at(index: Int): Int = values[index]
+
+    override fun toArray(size: Int): IntArray = values.copyOf()
 }
 
 /**
@@ -39,19 +63,23 @@ internal class PalettedContainer(
  * 不在本库职责内（见 `docs/architecture.md` 的世界模型小节）。
  */
 public class ChunkSection internal constructor(
-    /** 服务端统计的非空气方块数；全空气时为 0。 */
-    public val blockCount: Int,
-    private val blocks: PalettedContainer,
+    /** 服务端统计的非空气方块数；被方块变更改过之后由本层自己维护。 */
+    blockCount: Int,
+    private val blocks: BlockStorage,
     private val biomes: PalettedContainer,
 ) {
 
-    /** 是否为服务端标记的空层（全部为空气）。 */
+    /** 非空气方块数。方块变更会按增量维护它，区块解码后由服务端下发的值初始化。 */
+    public var blockCount: Int = blockCount
+        private set
+
+    /** 是否为全空气层。渲染层靠它跳过整层，因此方块变更后必须跟着更新。 */
     public val isEmpty: Boolean get() = blockCount == 0
 
     /** 读取层内方块状态 id。 */
     public fun blockStateAt(x: Int, y: Int, z: Int): Int {
         requireLocal(x, y, z)
-        return blocks.at((y shl 8) or (z shl 4) or x)
+        return blocks.at(indexOf(x, y, z))
     }
 
     /**
@@ -64,18 +92,44 @@ public class ChunkSection internal constructor(
         return biomes.at(((y shr 2) shl 4) or ((z shr 2) shl 2) or (x shr 2))
     }
 
+    /**
+     * 写入一格方块，返回新的层；值没变时返回自己。
+     *
+     * 写时复制：调用方拿到的是新对象，旧层仍可被其它线程安全读取。展开只发生一次——
+     * 同一层后续的写入直接改副本。
+     */
+    internal fun withBlock(x: Int, y: Int, z: Int, stateId: Int): ChunkSection {
+        val index = indexOf(x, y, z)
+        val previous = blocks.at(index)
+        if (previous == stateId) return this
+
+        val values = blocks.toArray(SECTION_VOLUME)
+        values[index] = stateId
+
+        // 空层计数靠“状态 id 0 是空气”这条不变量维护：原版的全局方块状态注册表从
+        // `minecraft:air` 开始，所有版本 0 都是空气。不维护它的话，把方块放进空气层之后
+        // 仍然报告“整层是空的”，渲染层会整层跳过——数据是对的，方块却看不见。
+        val delta = (if (stateId == AIR_STATE) 0 else 1) - (if (previous == AIR_STATE) 0 else 1)
+        return ChunkSection(blockCount + delta, FlatBlockStorage(values), biomes)
+    }
+
     private fun requireLocal(x: Int, y: Int, z: Int) {
         require(x in 0..15 && y in 0..15 && z in 0..15) {
             "层内坐标必须在 0–15 之间，实际为 ($x, $y, $z)"
         }
     }
+
+    private fun indexOf(x: Int, y: Int, z: Int): Int = (y shl 8) or (z shl 4) or x
 }
 
 /**
  * 一列已解码的区块。
  *
- * 不可变：服务端重发同一坐标的区块时，上层看到的是一个新对象，而不是就地改写。
+ * 对上层**不可变**：服务端重发同一坐标的区块时，上层看到的是一个新对象，而不是就地改写。
  * 因此它可以被多个线程读取，也可以直接作为缓存值——这正是 `client-core` 的用法。
+ *
+ * 方块变更走 [withBlock]：复制受影响的那一层再生成新列，读取路径完全不变。未被改动的
+ * section 继续保留压缩形态，因此“出生点挖掉一块方块”不会让整个视野的内存翻倍。
  *
  * 未解码的内容：光照、高度图与方块实体（NBT）。它们不影响“读某个坐标是什么方块”，
  * 需要时再按相同方式补上（见 `docs/plans/m4a-chunk-model.md`）。
@@ -131,6 +185,27 @@ public class ChunkColumn internal constructor(
         return section.biomeAt(worldX and 15, (worldY - minY) and 15, worldZ and 15)
     }
 
+    /**
+     * 写入一格方块，返回新的列；没有变化时返回自己。
+     *
+     * 坐标不属于本列、或 Y 超出该维度高度时返回 null：批量方块变更可能跨越刚刚被卸载的
+     * 区块，那不是错误，而是“这条变更在本端已经没有落点”。
+     *
+     * @return 新的列；坐标不可写时返回 null
+     */
+    public fun withBlock(worldX: Int, worldY: Int, worldZ: Int, stateId: Int): ChunkColumn? {
+        if (worldX shr 4 != x || worldZ shr 4 != z) return null
+        if (worldY < minY || worldY >= maxY) return null
+
+        val index = (worldY - minY) / SECTION_HEIGHT
+        val updated = sections[index].withBlock(worldX and 15, (worldY - minY) and 15, worldZ and 15, stateId)
+        if (updated === sections[index]) return this
+
+        val next = sections.toMutableList()
+        next[index] = updated
+        return ChunkColumn(x, z, minY, next)
+    }
+
     override fun toString(): String =
         "ChunkColumn(x=$x, z=$z, minY=$minY, sections=$sectionCount)"
 
@@ -145,3 +220,9 @@ public class ChunkColumn internal constructor(
 }
 
 private const val SECTION_HEIGHT: Int = 16
+
+/** 一层 16×16×16 的格数。 */
+private const val SECTION_VOLUME: Int = 16 * 16 * 16
+
+/** 空气的全局方块状态 id。 */
+private const val AIR_STATE: Int = 0

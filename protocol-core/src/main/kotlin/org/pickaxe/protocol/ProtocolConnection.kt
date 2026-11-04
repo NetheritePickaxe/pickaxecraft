@@ -2,10 +2,14 @@ package org.pickaxe.protocol
 
 import org.geysermc.mcprotocollib.protocol.MinecraftProtocol
 import org.pickaxe.protocol.internal.ChatInput
+import org.pickaxe.protocol.internal.DigAction
 import org.pickaxe.protocol.internal.McplConnection
 import org.pickaxe.protocol.inventory.Container
+import org.pickaxe.protocol.inventory.Hand
 import org.pickaxe.protocol.inventory.PlayerInventoryLayout
 import org.pickaxe.protocol.inventory.SlotClick
+import org.pickaxe.protocol.world.BlockFace
+import org.pickaxe.protocol.world.BlockPosition
 
 /**
  * 一条协议连接的句柄。
@@ -153,6 +157,96 @@ public class ProtocolConnection private constructor(
      */
     public fun closeContainer(windowId: Int) {
         connection.closeContainer(windowId)
+    }
+
+    /**
+     * 开始挖掘 [position] 处方块的 [face] 那一面。
+     *
+     * 这只是三段中的第一段：服务端收到后开始计时（挖掘耗时为 0 的方块会当场打碎），
+     * 到时间之前既不下发方块变更，也不报错。取消用 [cancelDigging]，完成用 [finishDigging]；
+     * 想一次完成，用 [digBlock]。
+     *
+     * 坐标与面必须在三段之间保持一致：服务端按两者配对，中途改动等于重新开始。
+     *
+     * @throws IllegalArgumentException 坐标超出协议位宽，或角度分量非法
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    public fun startDigging(position: BlockPosition, face: BlockFace = BlockFace.UP) {
+        connection.dig(DigAction.START, position, face)
+    }
+
+    /**
+     * 放弃正在进行的挖掘。松手、换目标或被打断时发。
+     *
+     * 服务端会回滚它对这次挖掘做的预测（如果有），并回一个确认序号。
+     *
+     * @throws IllegalArgumentException 坐标超出协议位宽
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    public fun cancelDigging(position: BlockPosition, face: BlockFace = BlockFace.UP) {
+        connection.dig(DigAction.CANCEL, position, face)
+    }
+
+    /**
+     * 完成挖掘：服务端在这一刻真正打碎方块、掉落物品并广播方块变更。
+     *
+     * 本库不计算挖掘进度。真实客户端会在本地按方块硬度与手持工具算出耗时，到点再发这个包；
+     * 提前发送会被严格的服务端忽略（无回执），宽松的服务端（例如联调用的 Minestom）则接受。
+     *
+     * @throws IllegalArgumentException 坐标超出协议位宽
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    public fun finishDigging(position: BlockPosition, face: BlockFace = BlockFace.UP) {
+        connection.dig(DigAction.FINISH, position, face)
+    }
+
+    /**
+     * 一次性挖掉一块方块：开始 + 完成，不等挖掘进度。
+     *
+     * 适合无头客户端与自动化：真客户端要按方块硬度与工具算耗时，那属于游戏规则而非协议。
+     * 严格的服务端会拒绝“进度不足”的完成包（无回执），需要被认可时请自己控制三段。
+     *
+     * @throws IllegalArgumentException 坐标超出协议位宽
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    public fun digBlock(position: BlockPosition, face: BlockFace = BlockFace.UP) {
+        connection.digBlock(position, face)
+    }
+
+    /**
+     * 对着某格方块使用物品：放置方块，或与方块交互（开箱子、按按钮、耕地）。
+     *
+     * 同一个包承担两件事，由服务端按手里的物品与方块行为决定，本端不判断——判断需要物品
+     * 组件与方块行为表，那属于下游客户端的资产。
+     *
+     * 光标位置是点击点在方块内的相对坐标（三轴 0..1），服务端会据此验算面的命中点，
+     * 默认取方块中心。放置方块时，落点是 `position.offset(face)`。
+     *
+     * @param insideBlock 玩家头部是否在目标方块内部；只有贴墙放置才会用到，默认 false
+     * @throws IllegalArgumentException 坐标超出协议位宽，或光标位置不在 0..1 之间
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    public fun useOnBlock(
+        position: BlockPosition,
+        face: BlockFace = BlockFace.UP,
+        cursorX: Float = 0.5f,
+        cursorY: Float = 0.5f,
+        cursorZ: Float = 0.5f,
+        hand: Hand = Hand.MAIN_HAND,
+        insideBlock: Boolean = false,
+    ) {
+        connection.useOnBlock(position, face, cursorX, cursorY, cursorZ, hand, insideBlock)
+    }
+
+    /**
+     * 对着空气使用手里的物品：吃、喝、投掷、拉弓。
+     *
+     * 包里带本端当前视角，服务端据此决定投掷物的方向。想让服务端先转过来，先调 [look]。
+     *
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    public fun useItem(hand: Hand = Hand.MAIN_HAND) {
+        connection.useItem(hand)
     }
 
     public companion object {

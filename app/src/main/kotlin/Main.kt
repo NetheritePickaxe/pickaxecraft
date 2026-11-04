@@ -11,7 +11,10 @@ import org.pickaxe.protocol.ProtocolVersion
 import org.pickaxe.protocol.ServerAddress
 import org.pickaxe.protocol.inventory.Container
 import org.pickaxe.protocol.inventory.SlotClick
+import org.pickaxe.protocol.world.BlockFace
+import org.pickaxe.protocol.world.BlockPosition
 import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.system.exitProcess
 
 private val usage = """
@@ -23,12 +26,16 @@ private val usage = """
 
       connect <host> [port] [--username <名称>] [--timeout <秒>] [--say <文本>]...
               [--walk <格数>] [--hold <0-8>] [--click <槽位>[:动作]]... [--close-window]
+              [--dig] [--place]
           离线登录并持续打印会话事件，Ctrl+C 关闭会话后退出
           --say 在出生完成后再发送一条聊天消息，可重复；服务端会把它广播回来
           --walk 在出生后沿 +X 方向走指定格数（每步 0.5 格），打印每一步的坐标
           --hold 在出生后切换到指定快捷栏格，并打印该格上的物品
           --click 在出生后点击一格，可重复；动作见下，缺省为 pickup
           --close-window 在其余动作之后关闭当前打开的容器
+          --dig 在出生后挖掉脚下那一格，等待服务端的方块变更回包
+          --place 在出生后把手中物品放到脚旁东侧一格的上面；不能放进玩家自己
+               占据的格子（服务端做碰撞检查，见 plan 文档），所以偏东一格
 
           点击动作:
             pickup      左键拿起或放下整堆（默认）
@@ -157,6 +164,8 @@ private fun runConnect(args: List<String>): Int {
                     parsed.walkDistance?.let { distance -> walkForward(session, distance) }
                     for (click in parsed.clicks) { clickSlot(session, click) }
                     if (parsed.closeWindow) closeActiveWindow(session)
+                    if (parsed.digBelow) digBelow(session)
+                    if (parsed.placeBelow) placeBelow(session)
                 }
             }
         }
@@ -180,6 +189,10 @@ private fun describe(event: ClientEvent): String = when (event) {
     }
     is ClientEvent.Respawned -> "event=respawned dimension=${event.dimension} mode=${event.gameMode}"
     is ClientEvent.ChunksReceived -> "event=chunks batch=${event.chunks} total=${event.total}"
+    is ClientEvent.BlocksChanged -> event.changes.joinToString(" ") { change ->
+        "event=block.changed pos=${change.position} state=${change.stateId}"
+    }
+    is ClientEvent.BlockAcknowledged -> "event=block.ack sequence=${event.sequence}"
     is ClientEvent.EntitySpawned -> with(event.entity) {
         val who = customName?.let { " name=$it" }.orEmpty()
         "event=entity.spawned id=$id type=$type$who x=$x y=$y z=$z"
@@ -280,6 +293,86 @@ private fun describeClick(click: SlotClick): String = when (click) {
     SlotClick.PickupAll -> "all"
 }
 
+/** 等待方块缓存出现变化的时限：覆盖两个往返绰绰有余，又不至于让演示卡住。 */
+private const val BLOCK_CHANGE_TIMEOUT_MILLIS: Long = 3_000
+
+/** 脚下方块：客户端不做物理，直接用声明的坐标向下取整再减一。 */
+private fun blockBelow(session: Session): BlockPosition? {
+    val position = session.world.value?.position ?: run {
+        System.err.println("位置尚未同步，跳过方块交互")
+        return null
+    }
+    return BlockPosition(position.x.toInt(), floor(position.y).toInt() - 1, position.z.toInt())
+}
+
+/**
+ * 挖掉脚下那一格。
+ *
+ * 打印的是**发送**与**结果**两件事：本库不做挖掘进度，`dig.sent` 只证明包发出去了；
+ * `dig.done` 里的 state 才是服务端认可的权威结果——它来自方块变更写入后的缓存。
+ */
+private suspend fun digBelow(session: Session) {
+    val target = blockBelow(session) ?: return
+    val before = session.blockStateAt(target)
+    try {
+        session.digBlock(target)
+    } catch (e: IllegalArgumentException) {
+        System.err.println("挖掘参数不合法: ${e.message}")
+        return
+    } catch (e: IllegalStateException) {
+        System.err.println("跳过挖掘（${e.message}）")
+        return
+    }
+    println("event=dig.sent pos=$target before=$before")
+    val confirmed = awaitBlockState(target, expectNot = before, session)
+    println(
+        "event=dig.done pos=$target state=${session.blockStateAt(target)} " +
+            "ack=${session.lastAcknowledgedSequence} confirmed=$confirmed",
+    )
+}
+
+/**
+ * 把手中物品放到脚旁东侧一格的上面。
+ *
+ * 不放“脚下方块的上表面”是有意的：那格正是玩家自己占据的格子，服务端会做碰撞检查、
+ * 只回确认不放置（原版行为）。偏东一格避开了自己的碰撞盒，演示才能看到真实的放置。
+ */
+private suspend fun placeBelow(session: Session) {
+    val feetBlock = blockBelow(session) ?: return
+    val target = feetBlock.offset(BlockFace.EAST)
+    val above = target.offset(BlockFace.UP)
+    val before = session.blockStateAt(above)
+    try {
+        session.useOnBlock(target, BlockFace.UP, cursorY = 1f)
+    } catch (e: IllegalArgumentException) {
+        System.err.println("放置参数不合法: ${e.message}")
+        return
+    } catch (e: IllegalStateException) {
+        System.err.println("跳过放置（${e.message}）")
+        return
+    }
+    println("event=place.sent pos=$target face=UP placingAt=$above held=${session.heldItem()}")
+    val confirmed = awaitBlockState(above, expectNot = before, session)
+    println(
+        "event=place.done pos=$above state=${session.blockStateAt(above)} " +
+            "ack=${session.lastAcknowledgedSequence} confirmed=$confirmed",
+    )
+}
+
+/** 轮询方块缓存直到它变成 [expectNot] 以外的值，或超时。 */
+private suspend fun awaitBlockState(
+    target: BlockPosition,
+    expectNot: Int?,
+    session: Session,
+): Boolean {
+    val deadline = System.nanoTime() + BLOCK_CHANGE_TIMEOUT_MILLIS * 1_000_000
+    while (System.nanoTime() < deadline) {
+        if (session.blockStateAt(target) != expectNot) return true
+        delay(50)
+    }
+    return false
+}
+
 /** 出生点所在区块的摘要：维度范围、缓存数量与脚下方块。 */
 private fun describeChunk(session: Session): String {
     val position = session.world.value?.position ?: return "chunk=unknown reason=位置尚未同步"
@@ -314,6 +407,10 @@ private class ParsedArgs(
     val clicks: List<ClickArg> = emptyList(),
     /** 其余动作之后是否关闭当前打开的容器。 */
     val closeWindow: Boolean = false,
+    /** 出生后挖掉脚下方块。 */
+    val digBelow: Boolean = false,
+    /** 出生后把手中物品放到脚下方块的上表面。 */
+    val placeBelow: Boolean = false,
 ) {
     fun options(): ClientOptions = ClientOptions(
         connectTimeoutMillis = timeoutSeconds * 1000,
@@ -338,6 +435,8 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
     var holdSlot: Int? = null
     val clicks = ArrayList<ClickArg>()
     var closeWindow = false
+    var digBelow = false
+    var placeBelow = false
 
     var index = 1
     // 第二个位置参数若是纯数字则视为端口。
@@ -406,6 +505,14 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
                 closeWindow = true
                 index += 1
             }
+            "--dig" -> {
+                digBelow = true
+                index += 1
+            }
+            "--place" -> {
+                placeBelow = true
+                index += 1
+            }
             else -> {
                 System.err.println("未知参数: $option")
                 return null
@@ -423,6 +530,8 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
             holdSlot = holdSlot,
             clicks = clicks,
             closeWindow = closeWindow,
+            digBelow = digBelow,
+            placeBelow = placeBelow,
         )
     } catch (e: IllegalArgumentException) {
         System.err.println("参数不合法: ${e.message}")

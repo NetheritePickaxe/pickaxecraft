@@ -2,6 +2,7 @@ package org.pickaxe.protocol
 
 import org.pickaxe.protocol.chat.ChatMessage
 import org.pickaxe.protocol.inventory.Container
+import org.pickaxe.protocol.world.BlockChange
 import org.pickaxe.protocol.world.ChunkColumn
 import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
@@ -121,6 +122,26 @@ public sealed interface ProtocolEvent {
         public val x: Int,
         public val z: Int,
     ) : ProtocolEvent
+
+    /**
+     * 服务端下发的方块变更，这是世界内容的**权威结果**。
+     *
+     * 一个包一条事件：单格变更（`block_update`）与整段批量变更（`section_blocks_update`，
+     * 爆炸、水流、区块回滚）统一成这个形状。批量包一次可能带几百格，逐格发事件会把有界
+     * 缓冲打满，因此 [changes] 一次性携带整批。
+     *
+     * 与区块一样属于**世界数据**：监听者应当写入缓存并立即返回。上层据此更新区块缓存，
+     * 挖掉一块方块之后 `blockStateAt` 才不会继续返回旧值。
+     */
+    public data class BlocksChanged(public val changes: List<BlockChange>) : ProtocolEvent
+
+    /**
+     * 服务端确认处理了某个交互序号（见 `player_action` / `use_item_on` / `use_item`）。
+     *
+     * 序号由本端自增，服务端原样回送，因此这是“动作确实到达并处理完了”的唯一直接证据：
+     * 方块变更不能当回执用——它也可能来自别的玩家或别的动作。
+     */
+    public data class BlockChangeAcknowledged(public val sequence: Int) : ProtocolEvent
 
     /**
      * 一个实体进入视野。[entity] 是首次观测到的完整状态。

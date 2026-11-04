@@ -28,22 +28,27 @@ pickaxecraft/
 │       │       ├── ProtocolEvent.kt        # 事件、阶段、断开原因、失败分层
 │       │       ├── ProtocolConnection.kt   # 对上层暴露的唯一入口
 │       │       ├── world/
-│       │       │   ├── ChunkColumn.kt      # 不可变区块列与 section（按坐标读方块/群系）
-│       │       │   ├── TrackedEntity.kt    # 不可变实体快照（位置、朝向、类型、自定义名称）
+│       │       │   ├── BlockPosition.kt    # 方块坐标（带协议位宽校验）、六向面、方块变更
+│       │       │   ├── ChunkColumn.kt      # 区块列与 section（按坐标读方块/群系；变更走写时复制）
+│       │       │   ├── TrackedEntity.kt    # 不可变实体快照（位置、朝向、类型、自定义名称、装备）
 │       │       │   └── RemotePlayer.kt     # 玩家列表条目（UUID、用户名、模式、延迟）
 │       │       ├── chat/
 │       │       │   └── ChatMessage.kt      # 聊天消息、来源、格式（键 + 参数顺序）
 │       │       ├── inventory/
 │       │       │   ├── Container.kt        # 容器快照、物品堆、窗口 0 槽位布局
+│       │       │   ├── Hand.kt             # 主手 / 副手
 │       │       │   └── SlotClick.kt        # 点击意图：拿起、快速转移、换快捷栏、丢弃、收拢
 │       │       └── internal/               # McplConnection、ComponentText、ChatInput、Movement、
 │       │                                   # MutableContainer、PlayerSlotMapping、ContainerClicks、
-│       │                                   # ChunkDecoder、DimensionRegistry、ChatTypeRegistry
+│       │                                   # BlockInteraction、ChunkDecoder、DimensionRegistry、
+│       │                                   # ChatTypeRegistry
 │       └── test/kotlin/
 │           └── org/pickaxe/protocol/
 │               ├── ProtocolVersionTest.kt
+│               ├── world/                  # ChunkColumnWriteTest（写时复制与空层计数）
 │               └── internal/               # ChunkDecoderTest、ChatTypeRegistryTest、ChatInputTest、
-│                                           # MovementTest、PlayerSlotMappingTest、ContainerClicksTest
+│                                           # MovementTest、PlayerSlotMappingTest、ContainerClicksTest、
+│                                           # BlockInteractionTest
 │
 ├── client-core/                    # Java 21 字节码：公共客户端 API、会话、事件
 │   └── src/main/kotlin/org/pickaxe/client/

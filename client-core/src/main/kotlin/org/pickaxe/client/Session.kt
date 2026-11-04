@@ -22,9 +22,13 @@ import org.pickaxe.protocol.ProtocolPhase
 import org.pickaxe.protocol.ServerAddress
 import org.pickaxe.protocol.chat.ChatMessage
 import org.pickaxe.protocol.inventory.Container
+import org.pickaxe.protocol.inventory.Hand
 import org.pickaxe.protocol.inventory.InventoryItem
 import org.pickaxe.protocol.inventory.PlayerInventoryLayout
 import org.pickaxe.protocol.inventory.SlotClick
+import org.pickaxe.protocol.world.BlockChange
+import org.pickaxe.protocol.world.BlockFace
+import org.pickaxe.protocol.world.BlockPosition
 import org.pickaxe.protocol.world.ChunkColumn
 import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
@@ -132,6 +136,15 @@ public class Session internal constructor(
     private var heldSlotIndex: Int = 0
 
     /**
+     * 最近一次被服务端确认的方块交互序号。
+     *
+     * 序号由适配层自增，服务端在 `block_changed_ack` 里原样回送；这是“挖/放的动作确实
+     * 处理完了”的唯一直接证据。会话刚建立时为 0——还没有任何交互被确认过。
+     */
+    @Volatile
+    private var lastAcknowledgedSequenceValue: Int = 0
+
+    /**
      * 会话私有的聊天记录，保留最近的 [ClientOptions.chatHistorySize] 条。
      *
      * 只在 Actor 里写入，读取可能来自任意线程，所以用一把小锁保护。聊天不走
@@ -180,6 +193,7 @@ public class Session internal constructor(
             players.clear()
             containers.clear()
             heldSlotIndex = 0
+            lastAcknowledgedSequenceValue = 0
             mutableStatus.value = PlayerStatus()
             clearChat()
             mutableState.value = SessionState.CLOSED
@@ -211,6 +225,10 @@ public class Session internal constructor(
      */
     public fun blockStateAt(x: Int, y: Int, z: Int): Int? =
         chunk(x shr 4, z shr 4)?.blockStateAt(x, y, z)
+
+    /** [blockStateAt] 的方块坐标版本；交互结果核对时少写三个参数。 */
+    public fun blockStateAt(position: BlockPosition): Int? =
+        blockStateAt(position.x, position.y, position.z)
 
     /**
      * 按世界坐标读取生物群系 id（`minecraft:worldgen/biome` 注册表下标）；
@@ -437,6 +455,90 @@ public class Session internal constructor(
     }
 
     /**
+     * 开始挖掘 [position] 处方块的 [face] 那一面。三段挖掘的第一段。
+     *
+     * 服务端对开始、取消、完成都会回确认（[ClientEvent.BlockAcknowledged]）；挖掘耗时为 0 的
+     * 方块会在开始时就碎掉，表现为紧随其后的 [ClientEvent.BlocksChanged]。
+     *
+     * @throws IllegalArgumentException 坐标超出协议位宽
+     * @throws IllegalStateException 会话尚未进入 play，或已经关闭
+     */
+    public fun startDigging(position: BlockPosition, face: BlockFace = BlockFace.UP) {
+        playConnection("挖掘方块").startDigging(position, face)
+    }
+
+    /** 放弃正在进行的挖掘。@throws 见 [startDigging]。 */
+    public fun cancelDigging(position: BlockPosition, face: BlockFace = BlockFace.UP) {
+        playConnection("挖掘方块").cancelDigging(position, face)
+    }
+
+    /**
+     * 完成挖掘：方块在这一刻真正被打碎。
+     *
+     * 本库不计算挖掘进度（硬度、工具、状态效果都属于游戏规则）；提前发送会被严格的服务端
+     * 忽略，宽松的服务端接受。需要动画时用 [startDigging] + 自己计时 + 本方法。
+     *
+     * @throws IllegalArgumentException 坐标超出协议位宽
+     * @throws IllegalStateException 会话尚未进入 play，或已经关闭
+     */
+    public fun finishDigging(position: BlockPosition, face: BlockFace = BlockFace.UP) {
+        playConnection("挖掘方块").finishDigging(position, face)
+    }
+
+    /**
+     * 一次性挖掉一块方块：开始 + 完成，不等挖掘进度。
+     *
+     * 结果由服务端下发：方块变更以 [ClientEvent.BlocksChanged] 到达并写入缓存，之后
+     * [blockStateAt] 才返回新值。空手挖石头在生存模式下可能没有进度，严格的服务端会忽略
+     * 这次完成——判断依据是确认事件与方块变更，而不是本方法的返回（它没有返回值）。
+     *
+     * @throws IllegalArgumentException 坐标超出协议位宽
+     * @throws IllegalStateException 会话尚未进入 play，或已经关闭
+     */
+    public fun digBlock(position: BlockPosition, face: BlockFace = BlockFace.UP) {
+        playConnection("挖掘方块").digBlock(position, face)
+    }
+
+    /**
+     * 对着某格方块使用物品：主手拿着方块时是放置（落点为 `position.offset(face)`），
+     * 空手或拿着工具时是与方块交互（开箱子、按按钮……）。
+     *
+     * 与挖掘一样由服务端裁决：能放就下发方块变更，不能放只回确认。光标默认取方块中心，
+     * 需要精确命中面的某一点时再传。
+     *
+     * @throws IllegalArgumentException 坐标超出协议位宽，或光标位置不在 0..1 之间
+     * @throws IllegalStateException 会话尚未进入 play，或已经关闭
+     */
+    public fun useOnBlock(
+        position: BlockPosition,
+        face: BlockFace = BlockFace.UP,
+        cursorX: Float = 0.5f,
+        cursorY: Float = 0.5f,
+        cursorZ: Float = 0.5f,
+        hand: Hand = Hand.MAIN_HAND,
+        insideBlock: Boolean = false,
+    ) {
+        playConnection("使用物品").useOnBlock(position, face, cursorX, cursorY, cursorZ, hand, insideBlock)
+    }
+
+    /**
+     * 对着空气使用手里的物品（吃、喝、投掷、拉弓）。朝向取本端当前视角。
+     *
+     * @throws IllegalStateException 会话尚未进入 play，或已经关闭
+     */
+    public fun useItem(hand: Hand = Hand.MAIN_HAND) {
+        playConnection("使用物品").useItem(hand)
+    }
+
+    /**
+     * 最近一次被服务端确认的方块交互序号；还没有任何交互被确认时为 0。
+     *
+     * 这是“挖/放的动作处理完了”的回执，也是这一轮唯一的新机制：真实客户端用它做预测
+     * 回滚，本库不做预测，只把它作为对账证据暴露出来。
+     */
+    public val lastAcknowledgedSequence: Int get() = lastAcknowledgedSequenceValue
+
+    /**
      * 取可用于上行的连接。
      *
      * 用状态而不是连接是否存活来判断：连接存活但仍在 configuration 阶段时发送会被服务端
@@ -461,6 +563,24 @@ public class Session internal constructor(
             is ProtocolEvent.ChunkUnloaded -> {
                 if (!closing.get()) chunks.remove(chunkKey(event.x, event.z))
                 return
+            }
+
+            // 方块变更与区块同属世界数据：先写缓存再进事件流，消费者收到事件时一定能查到新值。
+            // 变更落在未加载的区块上不是错误——那条变更在本端没有落点，直接丢弃。
+            is ProtocolEvent.BlocksChanged -> {
+                if (!closing.get()) {
+                    for (change in event.changes) {
+                        val position = change.position
+                        val key = chunkKey(position.x shr 4, position.z shr 4)
+                        chunks.computeIfPresent(key) { _, column ->
+                            column.withBlock(position.x, position.y, position.z, change.stateId) ?: column
+                        }
+                    }
+                }
+            }
+
+            is ProtocolEvent.BlockChangeAcknowledged -> {
+                if (!closing.get()) lastAcknowledgedSequenceValue = event.sequence
             }
 
             // 重生会换维度：旧维度的区块与实体全部作废。清理必须发生在网络线程上，
@@ -542,6 +662,7 @@ public class Session internal constructor(
         players.clear()
         containers.clear()
         heldSlotIndex = 0
+        lastAcknowledgedSequenceValue = 0
         mutableStatus.value = PlayerStatus()
         clearChat()
         mutableState.value = SessionState.CLOSED
@@ -628,6 +749,16 @@ public class Session internal constructor(
         // 区块与卸载在 onProtocolEvent 里已写入缓存，不经过 Actor；列出来是为了让
         // 这里的穷尽分支跟上协议事件的增长——新增事件没有处理策略时应当编译失败。
         is ProtocolEvent.ChunkLoaded, is ProtocolEvent.ChunkUnloaded -> true
+
+        is ProtocolEvent.BlocksChanged -> {
+            emit(ClientEvent.BlocksChanged(event.changes))
+            true
+        }
+
+        is ProtocolEvent.BlockChangeAcknowledged -> {
+            emit(ClientEvent.BlockAcknowledged(event.sequence))
+            true
+        }
 
         is ProtocolEvent.EntitySpawned -> {
             emit(ClientEvent.EntitySpawned(event.entity))
@@ -771,6 +902,7 @@ public class Session internal constructor(
         players.clear()
         containers.clear()
         heldSlotIndex = 0
+        lastAcknowledgedSequenceValue = 0
         mutableStatus.value = PlayerStatus()
         clearChat()
         mutableState.value = SessionState.CLOSED

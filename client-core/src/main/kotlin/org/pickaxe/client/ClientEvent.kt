@@ -1,6 +1,7 @@
 package org.pickaxe.client
 
 import org.pickaxe.protocol.chat.ChatMessage
+import org.pickaxe.protocol.world.BlockChange
 import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
 import java.util.UUID
@@ -51,6 +52,22 @@ public sealed interface ClientEvent {
 
     /** 一个区块批次已接收并确认。[total] 是本次会话累计区块数。 */
     public data class ChunksReceived(public val chunks: Int, public val total: Int) : ClientEvent
+
+    /**
+     * 服务端下发了方块变更；区块缓存已更新，[Session.blockStateAt] 能查到新值。
+     *
+     * 一个服务端包对应一个事件：单格变更是一条、爆炸或水流是整批。批量变更可能跨越
+     * 未加载的区块，那些格不会出现在 [changes] 里（它们在服务端本来就没有落点）。
+     */
+    public data class BlocksChanged(public val changes: List<BlockChange>) : ClientEvent
+
+    /**
+     * 服务端确认处理了本端的某个方块交互（见 [Session.digBlock] 等）。
+     *
+     * [sequence] 是本端自增、由服务端原样回送的序号；这是“动作确实到达并处理完了”的
+     * 唯一直接证据。本库不做方块预测，这个事件主要是给需要严格时序的调用方对账用的。
+     */
+    public data class BlockAcknowledged(public val sequence: Int) : ClientEvent
 
     /**
      * 一个实体进入视野。

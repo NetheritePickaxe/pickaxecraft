@@ -10,7 +10,9 @@ import net.minestom.server.command.builder.arguments.ArgumentType
 import net.minestom.server.coordinate.Pos
 import net.minestom.server.entity.Player
 import net.minestom.server.event.player.AsyncPlayerConfigurationEvent
+import net.minestom.server.event.player.PlayerBlockPlaceEvent
 import net.minestom.server.event.player.PlayerChatEvent
+import net.minestom.server.event.player.PlayerFinishDiggingEvent
 import net.minestom.server.event.player.PlayerLoadedEvent
 import net.minestom.server.event.player.PlayerMoveEvent
 import net.minestom.server.event.player.PlayerSpawnEvent
@@ -171,6 +173,17 @@ private fun chatFactKey(username: String, message: String): String = "chat|$user
 
 private fun commandFactKey(username: String, input: String): String = "command|$username|$input"
 
+private fun blockFactKey(kind: String, username: String, x: Int, y: Int, z: Int): String =
+    "$kind|$username|$x,$y,$z"
+
+/** 等待某玩家在服务端真正完成一次挖掘（方块被打碎）；超时返回 false。 */
+public fun awaitPlayerDig(username: String, x: Int, y: Int, z: Int, timeout: Duration): Boolean =
+    awaitFact(blockFactKey("dig", username, x, y, z), timeout)
+
+/** 等待某玩家在服务端真正放置了一个方块；超时返回 false。 */
+public fun awaitPlayerPlace(username: String, x: Int, y: Int, z: Int, timeout: Duration): Boolean =
+    awaitFact(blockFactKey("place", username, x, y, z), timeout)
+
 /**
  * 启动一个仅供联调的最小服务端：离线认证 + 40 格高的石头平面。
  *
@@ -248,6 +261,28 @@ public fun startHarness(port: Int = DEFAULT_PORT): InstanceContainer {
                     onGround = event.isOnGround,
                 ),
             )
+    }
+    // 方块交互：完成挖掘与放置都登记事实并打印。开始挖掘不登记——它只是“服务端开始计时”，
+    // 方块还没有变化；完成才是「世界真的变了」的那一步。
+    MinecraftServer.getGlobalEventHandler().addListener(PlayerFinishDiggingEvent::class.java) { event ->
+        val position = event.blockPosition
+        println(
+            "event=player.dig.finish name=${event.player.username} " +
+                "x=${position.blockX()} y=${position.blockY()} z=${position.blockZ()}",
+        )
+        recordFact(
+            blockFactKey("dig", event.player.username, position.blockX(), position.blockY(), position.blockZ()),
+        )
+    }
+    MinecraftServer.getGlobalEventHandler().addListener(PlayerBlockPlaceEvent::class.java) { event ->
+        val position = event.blockPosition
+        println(
+            "event=player.place name=${event.player.username} block=${event.block.name()} " +
+                "x=${position.blockX()} y=${position.blockY()} z=${position.blockZ()}",
+        )
+        recordFact(
+            blockFactKey("place", event.player.username, position.blockX(), position.blockY(), position.blockZ()),
+        )
     }
     MinecraftServer.getCommandManager().register(EchoCommand())
 

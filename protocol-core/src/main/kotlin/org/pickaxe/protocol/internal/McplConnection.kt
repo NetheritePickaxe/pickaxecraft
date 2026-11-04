@@ -18,6 +18,7 @@ import org.geysermc.mcprotocollib.protocol.data.game.PlayerListEntryAction
 import org.geysermc.mcprotocollib.protocol.data.game.entity.player.HandPreference
 import org.geysermc.mcprotocollib.protocol.data.game.entity.player.PositionElement
 import org.geysermc.mcprotocollib.protocol.data.game.item.ItemStack
+import org.geysermc.mcprotocollib.protocol.data.game.level.block.BlockChangeEntry
 import org.geysermc.mcprotocollib.protocol.data.game.setting.ChatVisibility
 import org.geysermc.mcprotocollib.protocol.data.game.setting.ParticleStatus
 import org.geysermc.mcprotocollib.protocol.data.game.setting.SkinPart
@@ -54,9 +55,12 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.C
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundOpenScreenPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundSetCursorItemPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundSetPlayerInventoryPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundBlockChangedAckPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundBlockUpdatePacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundChunkBatchFinishedPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundForgetLevelChunkPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundLevelChunkWithLightPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundSectionBlocksUpdatePacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatAckPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatCommandPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatPacket
@@ -76,8 +80,12 @@ import org.pickaxe.protocol.chat.ChatFormat
 import org.pickaxe.protocol.chat.ChatKind
 import org.pickaxe.protocol.chat.ChatMessage
 import org.pickaxe.protocol.inventory.Container
+import org.pickaxe.protocol.inventory.Hand
 import org.pickaxe.protocol.inventory.InventoryItem
 import org.pickaxe.protocol.inventory.SlotClick
+import org.pickaxe.protocol.world.BlockChange
+import org.pickaxe.protocol.world.BlockFace
+import org.pickaxe.protocol.world.BlockPosition
 import org.pickaxe.protocol.world.ChunkColumn
 import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
@@ -89,6 +97,7 @@ import java.util.UUID
 import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -152,6 +161,18 @@ internal class McplConnection(
      * 会在两端交错时算出错的增量基准。最后写入者胜出，与真实客户端遇到延迟时的行为一致。
      */
     private val pose = AtomicReference(LocalPose(0.0, 0.0, 0.0, 0f, 0f, false))
+
+    /**
+     * 方块交互的序号，从 1 开始递增。
+     *
+     * 协议要求 `player_action`、`use_item_on`、`use_item` 各带一个客户端自增的序号，服务端在
+     * `block_changed_ack` 里把它原样回送。本库不做方块预测，序号因此只承担**回执**职责，
+     * 但它仍然必须单调递增且不重复：服务端用序号判断“这个动作是不是已经过期”，
+     * 重复或倒退的序号会让后续方块更新被当成过期预测丢掉。
+     *
+     * 用原子量而不是网络线程本地变量：交互由调用线程发起，而发包本身会切到网络线程。
+     */
+    private val blockSequence = AtomicInteger(0)
 
     // 以下状态只在连接自己的网络线程上读写，无需同步。
     private var chunkTotal: Int = 0
@@ -325,6 +346,21 @@ internal class McplConnection(
             is ClientboundForgetLevelChunkPacket ->
                 emit(ProtocolEvent.ChunkUnloaded(packet.x, packet.z))
 
+            // 方块变更：服务端下发的才是权威结果。挖掉一块方块后本地缓存要跟着变，
+            // 否则 `blockStateAt` 会一直返回已经不存在的方块。
+            is ClientboundBlockUpdatePacket ->
+                emit(ProtocolEvent.BlocksChanged(listOf(blockChange(packet.entry))))
+
+            // 批量版本（爆炸、水流、区块回滚）：一个包一个事件。逐格发事件会打满有界缓冲。
+            is ClientboundSectionBlocksUpdatePacket -> {
+                if (packet.entries.isNotEmpty()) {
+                    emit(ProtocolEvent.BlocksChanged(packet.entries.map(::blockChange)))
+                }
+            }
+
+            is ClientboundBlockChangedAckPacket ->
+                emit(ProtocolEvent.BlockChangeAcknowledged(packet.sequence))
+
             is ClientboundAddEntityPacket -> spawnEntity(packet)
 
             is ClientboundRemoveEntitiesPacket -> removeEntities(packet.entityIds)
@@ -485,6 +521,12 @@ internal class McplConnection(
         dimensions.getOrNull(id) ?: throw IllegalStateException(
             "$context 指向维度 id $id，但 dimension_type 注册表只有 ${dimensions.size} 项",
         )
+
+    /** 协议里的方块变更条目 → 上层看到的不可变事实。 */
+    private fun blockChange(entry: BlockChangeEntry): BlockChange {
+        val position = entry.position
+        return BlockChange(BlockPosition(position.x, position.y, position.z), entry.block)
+    }
 
     /**
      * 区块批次确认。
@@ -952,6 +994,78 @@ internal class McplConnection(
         sendInPlay("关闭窗口") { ServerboundContainerClosePacket(windowId) }
         forgetContainer(windowId)
     }
+
+    /**
+     * 开始、取消或完成一次挖掘。
+     *
+     * 三段都是独立的包，坐标与面必须**原样带回**同一组值：服务端按坐标配对“开始”与“结束”，
+     * 中途改了坐标会被当成一次新的动作，前一段的进度作废。
+     *
+     * 服务端对这三段都会回 `block_changed_ack`（挖掘耗时为 0 的方块还会立刻下发方块变更），
+     * 因此调用方可以据此判断“服务端处理到哪一步了”。
+     */
+    fun dig(action: DigAction, position: BlockPosition, face: BlockFace) {
+        val sequence = nextSequence()
+        sendInPlay("挖掘方块") { BlockInteraction.digPacket(action, position, face, sequence) }
+    }
+
+    /**
+     * 一次性挖掉一块方块：开始 + 完成。
+     *
+     * 不等待挖掘进度——真客户端要按方块硬度、手持工具与状态效果算出耗时，再决定何时发完成；
+     * 那是游戏规则，不是协议。严格的服务端会拒绝“进度不足”的完成包（无回执），
+     * 需要动画或需要被服务端认可的场合，请改用 [dig] 分别发三段。
+     */
+    fun digBlock(position: BlockPosition, face: BlockFace) {
+        dig(DigAction.START, position, face)
+        dig(DigAction.FINISH, position, face)
+    }
+
+    /**
+     * 对着某格方块使用物品：放置方块，或与方块交互（开箱子、按按钮、耕地）。
+     *
+     * 光标位置是点击点在方块内的相对坐标（三轴 0..1）。它决定“点在哪个面、哪一格”，
+     * 服务端会据此验算，因此不能随便填：默认值取方块中心。
+     */
+    fun useOnBlock(
+        position: BlockPosition,
+        face: BlockFace,
+        cursorX: Float,
+        cursorY: Float,
+        cursorZ: Float,
+        hand: Hand,
+        insideBlock: Boolean,
+    ) {
+        val sequence = nextSequence()
+        sendInPlay("使用物品") {
+            BlockInteraction.useOnBlockPacket(
+                position = position,
+                face = face,
+                cursorX = cursorX,
+                cursorY = cursorY,
+                cursorZ = cursorZ,
+                hand = hand,
+                insideBlock = insideBlock,
+                sequence = sequence,
+            )
+        }
+    }
+
+    /**
+     * 对着空气使用手里的物品（吃、喝、投掷、拉弓）。
+     *
+     * 朝向取自本端当前视角：服务端拿它决定投掷物飞出去的方向，填 0 会让投掷物总是朝正南。
+     */
+    fun useItem(hand: Hand) {
+        val sequence = nextSequence()
+        val current = pose.get()
+        sendInPlay("使用物品") {
+            BlockInteraction.useItemPacket(hand, current.yaw, current.pitch, sequence)
+        }
+    }
+
+    /** 取下一个交互序号。从 1 开始：0 在某些服务端实现里被当作“没有序号”。 */
+    private fun nextSequence(): Int = blockSequence.incrementAndGet()
 
     /**
      * 上行包的统一前置条件。

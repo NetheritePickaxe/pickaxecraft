@@ -51,6 +51,8 @@ import org.pickaxe.protocol.chat.ChatParameter
 import org.pickaxe.protocol.inventory.Container
 import org.pickaxe.protocol.inventory.PlayerInventoryLayout
 import org.pickaxe.protocol.inventory.SlotClick
+import org.pickaxe.protocol.world.BlockFace
+import org.pickaxe.protocol.world.BlockPosition
 import org.pickaxe.protocol.ServerAddress
 import java.net.ServerSocket
 import java.time.Duration
@@ -1057,6 +1059,121 @@ class ClientSessionTest {
     }
 
     @Test
+    fun `挖掘方块后服务端世界与本地缓存同时变空`() = runBlocking {
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, DIG_USERNAME)
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+
+                // 脚下方块：出生点在平台顶上，脚底下那格是石头，两侧都能直接核对。
+                val spawn = assertNotNull(session.world.value?.position, "出生后应已同步位置")
+                val target = BlockPosition(spawn.x.toInt(), GROUND_LEVEL.toInt() - 1, spawn.z.toInt())
+                val before = assertNotNull(session.blockStateAt(target), "出生点所在区块应已加载")
+                assertEquals(
+                    instance.getBlock(target.x, target.y, target.z).stateId(),
+                    before,
+                    "本地缓存应与服务端一致",
+                )
+                assertEquals(0, session.lastAcknowledgedSequence, "还没有交互被确认过")
+
+                session.digBlock(target)
+
+                // 服务端侧：finish 事件的登记是“方块真的被打碎了”的直接证据。
+                assertTrue(
+                    withContext(Dispatchers.IO) {
+                        awaitPlayerDig(DIG_USERNAME, target.x, target.y, target.z, MILESTONE_TIMEOUT)
+                    },
+                    "服务端应完成这次挖掘",
+                )
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    instance.getBlock(target.x, target.y, target.z) == Block.AIR
+                }
+
+                // 客户端侧：方块变更写入缓存，确认序号前进。
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.blockStateAt(target) == 0 }
+                assertTrue(session.lastAcknowledgedSequence > 0, "服务端应回执挖掘动作")
+
+                val change = log.snapshot().filterIsInstance<ClientEvent.BlocksChanged>()
+                    .flatMap { it.changes }
+                    .firstOrNull { it.position == target }
+                assertNotNull(change, "事件流里应有这条方块变更")
+                assertEquals(0, change.stateId)
+            } finally {
+                log.close()
+                session.close()
+            }
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `放置方块后服务端与本地缓存同时可见`() = runBlocking {
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, PLACE_USERNAME)
+            try {
+                val log = EventLog(this, session)
+                try {
+                    log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                    awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+
+                    val player = assertNotNull(
+                        MinecraftServer.getConnectionManager().getOnlinePlayerByUsername(PLACE_USERNAME),
+                        "服务端应已保存该玩家",
+                    )
+                    // 放置需要手上有方块：发一组石头到主手。客户端从背包快照里看到它——
+                    // 这条链路同时验证了 M4h 的槽位换算（主手 = 快捷栏第 0 格 = 窗口槽位 36）。
+                    player.setItemInMainHand(ItemStack.of(Material.STONE, PLACE_COUNT))
+                    awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                        session.heldItem()?.count == PLACE_COUNT
+                    }
+
+                    val spawn = assertNotNull(session.world.value?.position, "出生后应已同步位置")
+                    // 点在旁边一块石头的顶面：离出生点两格，避开玩家自己的碰撞盒。
+                    val target = BlockPosition(spawn.x.toInt() + 2, GROUND_LEVEL.toInt() - 1, spawn.z.toInt())
+                    val above = target.offset(BlockFace.UP)
+                    assertEquals(
+                        0,
+                        assertNotNull(session.blockStateAt(above), "目标格所在区块应已加载"),
+                        "目标格原本应是空气",
+                    )
+
+                    session.useOnBlock(target, BlockFace.UP, cursorY = 1f)
+
+                    assertTrue(
+                        withContext(Dispatchers.IO) {
+                            awaitPlayerPlace(PLACE_USERNAME, above.x, above.y, above.z, MILESTONE_TIMEOUT)
+                        },
+                        "服务端应完成这次放置",
+                    )
+                    awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                        instance.getBlock(above.x, above.y, above.z) == Block.STONE
+                    }
+                    awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                        session.blockStateAt(above) == instance.getBlock(above.x, above.y, above.z).stateId()
+                    }
+                    assertTrue(session.lastAcknowledgedSequence > 0, "服务端应回执放置动作")
+
+                    val change = log.snapshot().filterIsInstance<ClientEvent.BlocksChanged>()
+                        .flatMap { it.changes }
+                        .firstOrNull { it.position == above }
+                    assertNotNull(change, "事件流里应有这条方块变更")
+                } finally {
+                    log.close()
+                }
+            } finally {
+                session.close()
+            }
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `事件缓冲写满时终止会话而不是静默丢弃`() = runBlocking {
         val client = MinecraftClient(ClientOptions(eventBufferCapacity = 1))
         try {
@@ -1201,6 +1318,11 @@ class ClientSessionTest {
         const val STATE_LEVEL: Int = 5
         const val STATE_EXPERIENCE_BAR: Float = 0.5f
         const val EQUIPMENT_HELMET: String = "HELMET"
+
+        /** 方块交互用例：挖出生点脚下的那格石头，把服务端发的石头放到旁边两格的顶面。 */
+        const val DIG_USERNAME: String = "DigBot"
+        const val PLACE_USERNAME: String = "PlaceBot"
+        const val PLACE_COUNT: Int = 8
 
         const val EVENT_TIMEOUT_MILLIS: Long = 10_000
         val MILESTONE_TIMEOUT: Duration = Duration.ofSeconds(10)

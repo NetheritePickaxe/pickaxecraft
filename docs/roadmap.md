@@ -1,6 +1,6 @@
 # 实施路线
 
-状态：M2 已完成（出生链路打通），M4a–M4j 已完成（区块内容、实体跟踪、重生换维度、玩家身份、聊天读写、移动上行、背包读写、自身状态与装备、容器点击）；M3 仍在等待真机或模拟器环境
+状态：M2 已完成（出生链路打通），M4a–M4k 已完成（区块内容、实体跟踪、重生换维度、玩家身份、聊天读写、移动上行、背包读写、自身状态与装备、容器点击、方块交互）；M3 仍在等待真机或模拟器环境
 日期：2026-11-04
 
 ## 1. 执行原则
@@ -40,7 +40,8 @@
   `container` / `heldItem` 给出窗口槽位上的物品与容器内容，`selectHotbarSlot` 可切换选中格；
   自身状态可读（M4i）——`Session.status` 给出生命/饥饿/经验，实体快照带 `equipment`；
   容器可操作（M4j）——`Session.clickSlot` 拿起、放下、Shift 转移、换到快捷栏、丢弃，
-  `closeContainer` 关窗，`cursorItem` 读光标。
+  `closeContainer` 关窗，`cursorItem` 读光标；世界可动（M4k）——`Session.digBlock` /
+  `useOnBlock` 挖掘与放置，服务端下发的方块变更写回区块缓存（写时复制），交互序号作为回执。
   光照、高度图与方块实体仍未建立。
 
 ## 3. M0：工程基线与协议后端（已完成）
@@ -247,7 +248,7 @@ M1 只要求进入 GAME，不要求玩家出生、传送/区块确认或世界�
 
 仍未交付：生物血量（元数据下标依赖实体层级）、属性表、状态效果、物品组件与可读名字、
 拖拽与创造模式取整堆、容器属性（熔炉进度之类）、光照/高度图/方块实体、跨服转移、命令补全、
-冲刺/潜行/飞行状态、方块交互、libGDX 消费工程。
+冲刺/潜行/飞行状态、与实体交互（攻击/骑乘）、挖掘进度的服务端认可、libGDX 消费工程。
 
 ### 实际进展：M4j 容器点击与关闭窗口（2026-11-04）
 
@@ -263,6 +264,24 @@ M1 只要求进入 GAME，不要求玩家出生、传送/区块确认或世界�
 - 关闭窗口是第二处“成功没有回执”：客户端主动关窗时服务端不回包，关闭在发出时本地生效；
 - 联调用例走完整搬运链路：拿起 → 放进背包 → Shift 转移 → 丢弃 → 关窗，客户端与服务端双侧对账；
 - CLI 新增 `--click <槽位>[:动作]` 与 `--close-window`。
+
+### 实际进展：M4k 方块交互（2026-11-04）
+
+实施记录见 [M4k 实施记录](plans/m4k-block-interaction.md)。已交付：
+
+- `BlockPosition`（带协议位宽校验）、`BlockFace`、`BlockChange`、`Hand` 四个公共类型；
+- `Session.startDigging / cancelDigging / finishDigging / digBlock`：挖掘三段原语加
+  “开始+完成”的便捷组合，坐标与面在三段之间必须一致（文档约定 + 单测钉住映射）；
+- `Session.useOnBlock`（放置或与方块交互，光标默认方块中心）与 `useItem`（对空气用物品）；
+- 交互序号：客户端自增、服务端在 `block_changed_ack` 里回送，`Session.lastAcknowledgedSequence`
+  与 `ClientEvent.BlockAcknowledged` 暴露这条回执链路；
+- 方块变更落回缓存：`block_update` / `section_blocks_update` 统一成 `BlocksChanged` 事件，
+  `ChunkColumn.withBlock` 写时复制（复制受影响 section 并展开成每格一个 int），空层计数按
+  增量维护（0 恒为空气）；
+- 联调用例两侧对账：挖掘后 `instance.getBlock` 变空气且客户端 `blockStateAt` 变 0；放置后
+  两侧同见 `minecraft:stone`，回执序号前进；
+- CLI 新增 `--dig` 与 `--place`（放置点偏东一格：放进玩家自己占据的格子会被服务端碰撞检查
+  拒绝，只回确认不下发方块变更）。
 
 ## 8. M5：生产化能力
 

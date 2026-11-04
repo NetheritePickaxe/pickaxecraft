@@ -2,11 +2,18 @@ package org.pickaxe.testing.minestom
 
 import net.kyori.adventure.text.Component
 import net.minestom.server.MinecraftServer
+import net.minestom.server.entity.Player
+import net.minestom.server.event.player.PlayerSpawnEvent
+import net.minestom.server.item.ItemStack
+import net.minestom.server.item.Material
 import net.minestom.server.network.packet.server.play.DisguisedChatPacket
 import org.pickaxe.protocol.ProtocolVersion
 import java.time.Duration
 import java.util.concurrent.CountDownLatch
 import kotlin.system.exitProcess
+
+/** 演示模式下发给进服玩家的石头数量。 */
+private const val DEMO_ITEM_COUNT: Int = 16
 
 /** 联调服务的命令行用法。 */
 /** 广播间隔：比一次 CLI 连接（默认 8 秒）短，保证至少能看到一条。 */
@@ -29,6 +36,7 @@ private const val USAGE: String = "用法: minestom [--port <1..65535>]，默认
 public fun main(args: Array<String>) {
     val port = parsePort(args)
     startHarness(port)
+    startDemoGiveItems()
     startChatBroadcast()
 
     // 结束日志放在 hook 内：JVM 开始关闭后主线程可能先被终止，
@@ -51,6 +59,18 @@ public fun main(args: Array<String>) {
     )
 
     stopped.await()
+}
+
+/**
+ * 演示模式：给进服玩家发一组石头，让 `--place` 有东西可放。
+ *
+ * 只在命令行服务端启用：联调用例的服务端不发物品，避免污染对背包内容的精确断言。
+ * 这里的 listener 注册在 [startHarness] 之后，是同一事件的第二个监听器，互不影响。
+ */
+private fun startDemoGiveItems() {
+    MinecraftServer.getGlobalEventHandler().addListener(PlayerSpawnEvent::class.java) { event ->
+        event.player.setItemInMainHand(ItemStack.of(Material.STONE, DEMO_ITEM_COUNT))
+    }
 }
 
 /**
