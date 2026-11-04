@@ -65,6 +65,18 @@ public sealed interface ProtocolEvent {
     ) : ProtocolEvent
 
     /**
+     * 服务端完成重生或维度切换。
+     *
+     * 旧维度的区块与实体全部作废：服务端会按新维度重发，本端必须丢掉旧缓存，
+     * 否则会把上一个维度的 section 数量套到新维度上。位置要等紧随其后的位置同步包，
+     * 在此之前没有可信坐标。
+     */
+    public data class Respawned(
+        public val dimension: String,
+        public val gameMode: String,
+    ) : ProtocolEvent
+
+    /**
      * 一个区块批次已接收并确认。[chunks] 是本批数量，[total] 是本次会话累计。
      *
      * 批次确认必须及时回送，否则服务端会停止继续发送区块；确认本身由适配层完成，

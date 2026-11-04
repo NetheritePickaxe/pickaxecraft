@@ -25,6 +25,7 @@ import org.geysermc.mcprotocollib.protocol.data.status.handler.ServerPingTimeHan
 import org.geysermc.mcprotocollib.protocol.packet.common.serverbound.ServerboundClientInformationPacket
 import org.geysermc.mcprotocollib.protocol.packet.configuration.clientbound.ClientboundRegistryDataPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundLoginPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundRespawnPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundAddEntityPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundEntityPositionSyncPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundMoveEntityPosPacket
@@ -221,11 +222,8 @@ internal class McplConnection(
             }
 
             is ClientboundLoginPacket -> {
-                currentDimension = dimensions.getOrNull(packet.commonPlayerSpawnInfo.dimension)
-                    ?: throw IllegalStateException(
-                        "Login 指向维度 id ${packet.commonPlayerSpawnInfo.dimension}，" +
-                            "但 dimension_type 注册表只有 ${dimensions.size} 项",
-                    )
+                // 注册表条目顺序即维度 id，必须在 Login 之前读出来：区块解码依赖维度高度。
+                currentDimension = dimensionOf(packet.commonPlayerSpawnInfo.dimension, "Login")
                 emit(
                     ProtocolEvent.JoinedWorld(
                         entityId = packet.entityId,
@@ -239,6 +237,8 @@ internal class McplConnection(
             }
 
             is ClientboundPlayerPositionPacket -> acceptTeleport(packet)
+
+            is ClientboundRespawnPacket -> respawn(packet)
 
             is ClientboundLevelChunkWithLightPacket -> {
                 chunkTotal++
@@ -326,6 +326,36 @@ internal class McplConnection(
         send(ServerboundAcceptTeleportationPacket(packet.id))
         emit(ProtocolEvent.PositionUpdated(positionX, positionY, positionZ, yaw, pitch))
     }
+
+    /**
+     * 重生与维度切换。
+     *
+     * 服务端在 `ClientboundRespawnPacket` 里换维度，而新维度的最低 Y 与高度可能完全不同；
+     * 区块会因为高度对不上而整列丢弃，实体也不再属于这个世界。因此这里换掉维度形状、
+     * 清空实体表、把区块计数与 player_loaded 复位——服务端会重发全部区块，首批到达后
+     * 本端需要再回一次 player_loaded。
+     *
+     * 玩家的实体 id 不变；位置由紧随其后的位置同步包给出，在那之前没有可信坐标。
+     */
+    private fun respawn(packet: ClientboundRespawnPacket) {
+        val info = packet.commonPlayerSpawnInfo
+        currentDimension = dimensionOf(info.dimension, "Respawn")
+        chunkTotal = 0
+        playerLoadedSent = false
+        entities.clear()
+        emit(
+            ProtocolEvent.Respawned(
+                dimension = info.worldName.asString(),
+                gameMode = info.gameMode.name,
+            ),
+        )
+    }
+
+    /** 维度 id 是注册表下标；越界说明本端没有正确的注册表，只能失败而不是猜默认高度。 */
+    private fun dimensionOf(id: Int, context: String): DimensionShape =
+        dimensions.getOrNull(id) ?: throw IllegalStateException(
+            "$context 指向维度 id $id，但 dimension_type 注册表只有 ${dimensions.size} 项",
+        )
 
     /**
      * 区块批次确认。

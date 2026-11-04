@@ -112,6 +112,8 @@ private fun runConnect(args: List<String>): Int {
             var chunkReported = false
             session.events.collect { event ->
                 println(describe(event))
+                // 重生换维度后重新打印一次摘要：同一行输出在新旧维度之间应当明显不同。
+                if (event is ClientEvent.Respawned) chunkReported = false
                 // 首批区块到齐后打印一次世界摘要：这是“区块真的解出来了”的现场证据。
                 if (!chunkReported && event is ClientEvent.ChunksReceived && session.world.value?.position != null) {
                     chunkReported = true
@@ -137,6 +139,7 @@ private fun describe(event: ClientEvent): String = when (event) {
     is ClientEvent.PositionUpdated -> with(event.position) {
         "event=position x=$x y=$y z=$z yaw=$yaw pitch=$pitch"
     }
+    is ClientEvent.Respawned -> "event=respawned dimension=${event.dimension} mode=${event.gameMode}"
     is ClientEvent.ChunksReceived -> "event=chunks batch=${event.chunks} total=${event.total}"
     is ClientEvent.EntitySpawned -> with(event.entity) {
         "event=entity.spawned id=$id type=$type x=$x y=$y z=$z"

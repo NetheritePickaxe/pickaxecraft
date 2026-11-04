@@ -32,6 +32,14 @@ public sealed interface ClientEvent {
     /** 位置同步已完成（确认包已自动回送）。 */
     public data class PositionUpdated(public val position: Position) : ClientEvent
 
+    /**
+     * 服务端完成重生或维度切换。
+     *
+     * 旧维度的区块与实体已作废，随后会重发；此事件到达时缓存已清空，位置等待新的
+     * [PositionUpdated]。
+     */
+    public data class Respawned(public val dimension: String, public val gameMode: String) : ClientEvent
+
     /** 一个区块批次已接收并确认。[total] 是本次会话累计区块数。 */
     public data class ChunksReceived(public val chunks: Int, public val total: Int) : ClientEvent
 

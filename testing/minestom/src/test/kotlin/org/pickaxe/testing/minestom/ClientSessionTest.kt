@@ -16,6 +16,8 @@ import net.minestom.server.entity.EntityType
 import net.minestom.server.event.player.AsyncPlayerConfigurationEvent
 import net.minestom.server.instance.InstanceContainer
 import net.minestom.server.instance.block.Block
+import net.minestom.server.instance.generator.Generator
+import net.minestom.server.world.DimensionType
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
@@ -34,6 +36,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.abs
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -272,6 +275,68 @@ class ClientSessionTest {
     }
 
     @Test
+    fun `重生切换维度后世界状态与缓存一起更新`() = runBlocking {
+        // 下界：minY=0、256 格高，与主世界的 -64/384 完全不同，能直接暴露“仍按旧维度解码”。
+        val nether = MinecraftServer.getInstanceManager().createInstanceContainer(DimensionType.THE_NETHER)
+        nether.setGenerator(Generator { unit -> unit.modifier().fillHeight(0, GROUND_LEVEL.toInt(), Block.NETHERRACK) })
+
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, "RespawnBot")
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.chunk(0, 0) != null }
+                assertEquals(OVERWORLD_MIN_Y, session.chunk(0, 0)?.minY, "出生维度应是主世界")
+
+                // 旧维度的实体不应跨越重生。
+                val zombie = EntityCreature(EntityType.ZOMBIE)
+                zombie.setNoGravity(true)
+                zombie.setInstance(instance, Pos(2.5, GROUND_LEVEL, 2.5)).join()
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.entity(zombie.entityId) != null }
+
+                val player = assertNotNull(
+                    MinecraftServer.getConnectionManager().getOnlinePlayerByUsername("RespawnBot"),
+                    "服务端应已保存该玩家",
+                )
+                player.setInstance(nether, Pos(0.5, GROUND_LEVEL, 0.5)).join()
+
+                log.await { it is ClientEvent.Respawned }
+                val respawned = log.snapshot().filterIsInstance<ClientEvent.Respawned>().first()
+                assertEquals(NETHER_DIMENSION, respawned.dimension, "事件应报告新维度")
+                assertEquals(NETHER_DIMENSION, session.world.value?.dimension, "世界快照应换到新维度")
+
+                // 新维度用下界高度重新解码：minY=0、16 个 section，方块也换成下界岩。
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.chunk(0, 0)?.minY == NETHER_MIN_Y }
+                assertEquals(NETHER_SECTIONS, session.chunk(0, 0)?.sectionCount, "256 格高应拆成 $NETHER_SECTIONS 个 section")
+                assertEquals(
+                    nether.getBlock(0, 39, 0).stateId(),
+                    session.blockStateAt(0, 39, 0),
+                    "新维度的方块应与该维度服务端一致",
+                )
+                assertNotEquals(
+                    instance.getBlock(0, 39, 0).stateId(),
+                    session.blockStateAt(0, 39, 0),
+                    "同一坐标在主世界是石头：地板方块确实换了",
+                )
+
+                // 实体与位置都要跟着新维度重置：旧实体不再存在，位置由新的同步包给出。
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.entity(zombie.entityId) == null }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    val position = session.world.value?.position
+                    position != null && abs(position.y - GROUND_LEVEL) < 1.0
+                }
+                zombie.remove()
+            } finally {
+                log.close()
+                session.close()
+            }
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `两个客户端互不影响`() = runBlocking {
         val first = MinecraftClient()
         val second = MinecraftClient()
@@ -415,6 +480,11 @@ class ClientSessionTest {
         const val OVERWORLD_MIN_Y: Int = -64
         const val OVERWORLD_HEIGHT: Int = 384
         const val OVERWORLD_SECTIONS: Int = OVERWORLD_HEIGHT / 16
+
+        /** 重生用例切到的维度：高度 256、最低层 0，与主世界完全不同。 */
+        const val NETHER_DIMENSION: String = "minecraft:the_nether"
+        const val NETHER_MIN_Y: Int = 0
+        const val NETHER_SECTIONS: Int = 256 / 16
 
         /** 石头平台的顶面高度，玩家与实体都站在这一层。 */
         const val GROUND_LEVEL: Double = 40.0

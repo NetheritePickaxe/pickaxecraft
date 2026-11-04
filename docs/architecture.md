@@ -177,8 +177,8 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
   未加载返回 `null`，已加载但 Y 越界抛错——“没有数据”和“数据不合法”是两件事。
 - **方块 id 是协议的全局状态 id**。翻译成 `minecraft:stone` 需要版本数据表，那属于下游客户端的
   资产，不进入核心库。
-- **未解码**：光照、高度图、方块实体（NBT）与群系增量更新。重生/维度切换尚未处理，
-  此时解码会因 section 数量不符而失败——这是 fail-fast，但在支持重生前必须补上。
+- **未解码**：光照、高度图、方块实体（NBT）与群系增量更新。重生/维度切换见 5.5：
+  换维度会换掉 section 数量，旧维度缓存必须整体作废。
 
 实现记录与格式细节见 [M4a 实施记录](plans/m4a-chunk-model.md)。
 
@@ -200,6 +200,20 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 - **未处理**：实体元数据、装备、状态效果、属性、生命值，以及 UUID → 玩家名的映射。
 
 实现记录见 [M4b 实施记录](plans/m4b-entity-tracking.md)。
+
+### 5.5 M4c 已落地的具体形态：重生与维度切换
+
+`ClientboundRespawnPacket` 携带与 Login 相同的 `PlayerSpawnInfo`，因此换维度是一次“重新开始”：
+
+- **维度重新解析**：用新的维度下标查 `dimension_type`，换掉 `minY` 与 section 数量；
+  查不到即失败，不猜默认高度。
+- **缓存整体作废**：区块与实体都属于旧世界，全部清空；区块计数归零、`player_loaded` 复位，
+  服务端重发首批区块后本端会再回一次 `player_loaded`。
+- **清理发生在网络线程**：若放到 Actor 里，新维度的区块可能先写入、再被迟到的事件抹掉。
+- **位置置空**：旧坐标属于另一个维度，保留它等于给调用方错误数据；新的同步包紧随其后。
+- **事件**：`ClientEvent.Respawned(dimension, gameMode)`，世界快照同时换维度。
+
+实现记录见 [M4c 实施记录](plans/m4c-respawn.md)。
 
 ## 6. libGDX 与平台约束
 

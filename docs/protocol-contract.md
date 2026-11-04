@@ -156,6 +156,7 @@ Minestom 在玩家设置为空时会在出生流程里读取失败。
 | 区块缓存 | `client-core` | 按坐标保存不可变区块列，关闭时清空；查询 API 区分“未加载”与“越界” |
 | 实体累积 | `McplConnection` | 移动包是 `short / 4096` 的相对量，叠加后以完整快照上报；未知 id 的增量丢弃 |
 | 实体缓存 | `client-core` | 按 id 保存不可变快照；位置增量只写缓存，增删走事件流 |
+| 重生换维度 | `McplConnection` | 重新解析维度、清空实体与区块计数、复位 `player_loaded`；上层只看到 `Respawned` |
 
 ## 4. 明确不依赖的行为
 
@@ -176,6 +177,7 @@ Minestom 在玩家设置为空时会在出生流程里读取失败。
 | 关闭后网络线程回收、重复关闭安全 | `ClientSessionTest.重复关闭无副作用且网络线程被回收` |
 | 会话隔离 | `ClientSessionTest.两个客户端互不影响` |
 | 实体生成/移动/移除与坐标对账 | `ClientSessionTest.实体的生成、移动与移除对客户端可见` |
+| 重生换维度后按新维度解码 | `ClientSessionTest.重生切换维度后世界状态与缓存一起更新` |
 | 事件溢出终止而非丢弃 | `ClientSessionTest.事件缓冲写满时终止会话而不是静默丢弃` |
 | 出生：自动应答传送到位并收到区块 | `ClientSessionTest.登录后完成出生并进入世界`（客户端事件） |
 | 出生：服务端确认 `PlayerSpawnEvent` 与 `PlayerLoadedEvent` | 同上（harness 的 `awaitMilestone`） |

@@ -1,6 +1,6 @@
 # 项目结构
 
-状态：M0–M2 已完成（连接链路与出生），M4a/M4b 已完成（区块内容与实体跟踪）；Headless 为第一阶段，独立 libGDX 客户端为长期下游
+状态：M0–M2 已完成（连接链路与出生），M4a–M4c 已完成（区块内容、实体跟踪、重生换维度）；Headless 为第一阶段，独立 libGDX 客户端为长期下游
 日期：2026-11-04
 
 ## 1. 结构原则
@@ -119,7 +119,7 @@ testing:minestom ──► client-core + protocol-core（版本对账）+ Minest
   （会话级只读快照）、区块查询（`chunk` / `blockStateAt` / `biomeAt` / `loadedChunks`）、
   实体查询（`entity` / `entities` / `entityCount`）与幂等 `close`。
 - `ClientEvent` / `ClientException`：有序事件（含 `JoinedWorld` / `PositionUpdated` /
-  `ChunksReceived` / `EntitySpawned` / `EntityRemoved`）与可分类的失败。
+  `ChunksReceived` / `EntitySpawned` / `EntityRemoved` / `Respawned`）与可分类的失败。
 - `WorldSnapshot` / `Position`：出生过程的只读状态。方块内容走 `Session` 的区块查询，
   不塞进每次更新都要复制的快照。
 

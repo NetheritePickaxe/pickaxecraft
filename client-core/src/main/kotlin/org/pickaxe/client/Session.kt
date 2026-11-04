@@ -194,6 +194,15 @@ public class Session internal constructor(
                 return
             }
 
+            // 重生会换维度：旧维度的区块与实体全部作废。清理必须发生在网络线程上，
+            // 否则新维度的区块可能先写入、再被 Actor 里迟到的清理抹掉。
+            is ProtocolEvent.Respawned -> {
+                if (!closing.get()) {
+                    chunks.clear()
+                    entities.clear()
+                }
+            }
+
             // 位置增量只更新缓存：它每秒可达上百条，且每条都带完整快照，投递出去只会
             // 把消费者的缓冲填满，却不带来任何新信息。
             is ProtocolEvent.EntityUpdated -> {
@@ -278,6 +287,21 @@ public class Session internal constructor(
             // 位置可能先于 Login 到达（协议没有强制顺序）；此时快照只有位置，其余字段留空。
             mutableWorld.update { it.orEmpty().copy(position = position) }
             emit(ClientEvent.PositionUpdated(position))
+            true
+        }
+
+        is ProtocolEvent.Respawned -> {
+            // 旧维度的区块在 onProtocolEvent 里已清空；这里把快照里依赖维度的字段一起复位，
+            // 位置要等新的同步包——保留旧坐标等于给调用方一个来自另一个世界的答案。
+            mutableWorld.update {
+                it.orEmpty().copy(
+                    dimension = event.dimension,
+                    gameMode = event.gameMode,
+                    position = null,
+                    chunksLoaded = 0,
+                )
+            }
+            emit(ClientEvent.Respawned(event.dimension, event.gameMode))
             true
         }
 

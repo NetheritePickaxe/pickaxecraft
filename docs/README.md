@@ -12,6 +12,7 @@
 - [M2 实施记录](plans/m2-implementation-plan.md)：出生链路、协议应答归属，以及“harness 从未 tick”这个根因。
 - [M4a 实施记录](plans/m4a-chunk-model.md)：区块格式与维度高度、区块缓存，以及 long 数组长度前缀的踩坑。
 - [M4b 实施记录](plans/m4b-entity-tracking.md)：实体跟踪的相对位移累积、事件与状态的分工。
+- [M4c 实施记录](plans/m4c-respawn.md)：重生换维度时缓存、维度高度与 `player_loaded` 的复位。
 - [M1 实施计划](plans/m1-implementation-plan.md)：自有客户端 API、连接生命周期、联调迁移、CLI 与提前 Android 探针；末尾附实施记录与偏差。
 - [协议适配契约](protocol-contract.md)：`protocol-core` 与协议库之间哪些行为由库保证、哪些由本项目实现，以及升级检查清单。
 - [Android 反糖探针](android-dex-probe.md)：D8 实测结论（minSdk 26、重复类、`HexFormat`）与仍未验证的运行时项。
@@ -33,6 +34,7 @@ PickaxeCraft 是一个 **Minecraft Java 版客户端核心库**，首要联调�
 M0 完成工程基线与协议后端切换；M1 补齐自有客户端 API；M2 打通出生链路：调用方只依赖 `client-core` 就能查询状态、离线登录、完成出生，并按事件流观察会话。
 M4a 让客户端读到区块内容：`Session.blockStateAt` / `biomeAt` / `chunk` 返回解码后的方块状态与生物群系，并与服务端 `stateId` 对账。
 M4b 让客户端看到实体：`Session.entity` / `entities` 返回位置与朝向（相对位移已在适配层叠加），增删通过事件流可见。
+M4c 让换维度可用：重生后按新维度重新解码区块，旧维度的区块与实体一并作废。
 `protocol-core` 负责协议事实转换、区块解码与资源回收，`client-core` 负责会话 Actor、有界缓冲、区块缓存与错误分类；协议库的隐含行为已写入[协议适配契约](protocol-contract.md)。
 
 Android 只完成了构建链探针（D8 可产出 dex，`minSdk` 下限 26），运行时仍属 M3 门控；实体、背包与光照仍属 M4 的后续增量。
