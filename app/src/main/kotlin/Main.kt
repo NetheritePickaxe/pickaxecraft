@@ -19,10 +19,12 @@ private val usage = """
       status <host> [port] [--timeout <秒>]
           查询服务端状态并打印版本、人数与延迟
 
-      connect <host> [port] [--username <名称>] [--timeout <秒>] [--say <文本>]... [--walk <格数>]
+      connect <host> [port] [--username <名称>] [--timeout <秒>] [--say <文本>]...
+              [--walk <格数>] [--hold <0-8>]
           离线登录并持续打印会话事件，Ctrl+C 关闭会话后退出
           --say 在出生完成后再发送一条聊天消息，可重复；服务端会把它广播回来
           --walk 在出生后沿 +X 方向走指定格数（每步 0.5 格），打印每一步的坐标
+          --hold 在出生后切换到指定快捷栏格，并打印该格上的物品
 
       --version   打印客户端版本与锁定的游戏/协议/服务端版本
       --help      打印本帮助
@@ -135,6 +137,10 @@ private fun runConnect(args: List<String>): Int {
                         }
                     }
                     pendingSays.clear()
+                    parsed.holdSlot?.let { slot ->
+                        session.selectHotbarSlot(slot)
+                        println("event=held.sent slot=$slot item=${session.heldItem()}")
+                    }
                     parsed.walkDistance?.let { distance -> walkForward(session, distance) }
                 }
             }
@@ -174,6 +180,11 @@ private fun describe(event: ClientEvent): String = when (event) {
         "event=chat kind=$where$who fmt=${format?.key} text=$text"
     }
     is ClientEvent.ChatDeleted -> "event=chat.deleted id=${event.signatureId}"
+    is ClientEvent.InventoryChanged -> "event=inventory window=${event.windowId}"
+    is ClientEvent.ContainerOpened ->
+        "event=container.opened window=${event.windowId} type=${event.type} title=${event.title}"
+    is ClientEvent.ContainerClosed -> "event=container.closed window=${event.windowId}"
+    is ClientEvent.HeldSlotChanged -> "event=held slot=${event.slot}"
     ClientEvent.Closed -> "event=closed"
     is ClientEvent.Failed -> "event=failed kind=${event.error::class.simpleName} message=${event.error.message}"
 }
@@ -218,9 +229,11 @@ private fun describeChunk(session: Session): String {
     val below = if (column.sectionAt(y - 1) == null) "越界" else session.blockStateAt(x, y - 1, z).toString()
     // 玩家列表与实体表分开统计：前者是“谁在线”，后者是“视野里有什么”。
     val players = session.players().values.map { it.name ?: it.uuid.toString() }
+    val inventory = session.inventory()?.let { "slots=${it.slots.size} used=${it.usedSlots}" } ?: "未知"
     return "chunk x=${column.x} z=${column.z} minY=${column.minY} sections=${column.sectionCount} " +
         "cached=${session.loadedChunks} entities=${session.entityCount} chat=${session.chatCount} players=$players " +
-        "block=($x, $y, $z):${session.blockStateAt(x, y, z)} below=$below"
+        "block=($x, $y, $z):${session.blockStateAt(x, y, z)} below=$below " +
+        "held=${session.heldSlot} inventory=$inventory"
 }
 
 /** 解析后的命令行参数。 */
@@ -232,6 +245,8 @@ private class ParsedArgs(
     val says: List<String> = emptyList(),
     /** 出生后沿 +X 方向走的格数；null 表示不走。 */
     val walkDistance: Double? = null,
+    /** 出生后要切换到的快捷栏格；null 表示不切。 */
+    val holdSlot: Int? = null,
 ) {
     fun options(): ClientOptions = ClientOptions(
         connectTimeoutMillis = timeoutSeconds * 1000,
@@ -253,6 +268,7 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
     var timeoutSeconds = DEFAULT_TIMEOUT_SECONDS
     val says = ArrayList<String>()
     var walkDistance: Double? = null
+    var holdSlot: Int? = null
 
     var index = 1
     // 第二个位置参数若是纯数字则视为端口。
@@ -290,6 +306,15 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
                 says += value
                 index += 2
             }
+            "--hold" -> {
+                val slot = value?.toIntOrNull()
+                if (slot == null || slot < 0 || slot > 8) {
+                    System.err.println("--hold 需要 0-8 之间的快捷栏格号")
+                    return null
+                }
+                holdSlot = slot
+                index += 2
+            }
             "--walk" -> {
                 val distance = value?.toDoubleOrNull()
                 if (distance == null || distance <= 0.0 || !distance.isFinite()) {
@@ -307,7 +332,7 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
     }
 
     return try {
-        ParsedArgs(ServerAddress(host, port), username, timeoutSeconds, says, walkDistance)
+        ParsedArgs(ServerAddress(host, port), username, timeoutSeconds, says, walkDistance, holdSlot)
     } catch (e: IllegalArgumentException) {
         System.err.println("参数不合法: ${e.message}")
         null

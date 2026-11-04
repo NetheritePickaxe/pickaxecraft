@@ -84,6 +84,32 @@ public sealed interface ClientEvent {
     /** 服务端要求删除一条已签名消息；对应条目已从 [Session.chat] 移除。 */
     public data class ChatDeleted(public val signatureId: Int) : ClientEvent
 
+    /**
+     * 一个窗口的内容发生变化。窗口 0 是玩家背包。
+     *
+     * 事件只带窗口 id：内容可能一次改一格、也可能整包替换，逐槽通知既慢又没必要。
+     * 事件到达时缓存已更新，用 [Session.inventory] / [Session.container] 取同一份快照。
+     */
+    public data class InventoryChanged(public val windowId: Int) : ClientEvent
+
+    /** 服务端打开了新窗口（箱子、工作台……）；会话缓存里已可查到它，内容随后下发。 */
+    public data class ContainerOpened(
+        public val windowId: Int,
+        public val type: String,
+        public val title: String,
+    ) : ClientEvent
+
+    /** 服务端关闭了某个窗口；缓存里已移除，窗口 0（玩家背包）不会出现这个事件。 */
+    public data class ContainerClosed(public val windowId: Int) : ClientEvent
+
+    /**
+     * 快捷栏选中格发生变化。
+     *
+     * 服务端接受切换时不回包，因此本端上行成功后立即触发；服务端拒绝或改写时以它的值为准
+     * （`set_held_slot`），同样触发这个事件。
+     */
+    public data class HeldSlotChanged(public val slot: Int) : ClientEvent
+
     /** 正常关闭：调用方主动关闭，或服务端按协议收尾。 */
     public data object Closed : ClientEvent
 

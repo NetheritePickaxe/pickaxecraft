@@ -1,6 +1,7 @@
 package org.pickaxe.protocol
 
 import org.pickaxe.protocol.chat.ChatMessage
+import org.pickaxe.protocol.inventory.Container
 import org.pickaxe.protocol.world.ChunkColumn
 import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
@@ -171,6 +172,32 @@ public sealed interface ProtocolEvent {
         public val updated: List<RemotePlayer>,
         public val removed: List<UUID>,
     ) : ProtocolEvent
+
+    /**
+     * 一个窗口的内容更新（整包内容或单槽）。
+     *
+     * 属于**世界数据**：箱子 27 格、玩家背包 46 格，一次打开会连着来几包；把快照放进缓存、
+     * 只报“哪个窗口变了”而不是逐槽发事件，才不会让慢消费者被打满。
+     */
+    public data class ContainerUpdated(public val container: Container) : ProtocolEvent
+
+    /**
+     * 服务端打开了新窗口（箱子、工作台、熔炉……）。
+     *
+     * 窗口 0 是玩家自己的背包，永远存在，不会产生这个事件；这里只报服务端新分配的窗口。
+     */
+    public data class ContainerOpened(public val container: Container) : ProtocolEvent
+
+    /** 服务端关闭了某个窗口。窗口 0 不会被关闭。 */
+    public data class ContainerClosed(public val windowId: Int) : ProtocolEvent
+
+    /**
+     * 当前快捷栏选中格变成了 [slot]（0–8）。
+     *
+     * 来源有两种：本端上行切换（服务端接受时不回包，只能由本端推进），以及服务端纠正
+     * （拒绝或改写时下发 `set_held_slot`）。两者都归到同一个事实——“现在选中的是哪一格”。
+     */
+    public data class HeldSlotChanged(public val slot: Int) : ProtocolEvent
 
     /** 会话终止，且这是本次连接唯一一次终止通知。 */
     public data class Closed(public val reason: ProtocolCloseReason) : ProtocolEvent

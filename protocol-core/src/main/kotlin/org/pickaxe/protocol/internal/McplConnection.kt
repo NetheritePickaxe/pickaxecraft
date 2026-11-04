@@ -17,6 +17,7 @@ import org.geysermc.mcprotocollib.protocol.data.ProtocolState
 import org.geysermc.mcprotocollib.protocol.data.game.PlayerListEntryAction
 import org.geysermc.mcprotocollib.protocol.data.game.entity.player.HandPreference
 import org.geysermc.mcprotocollib.protocol.data.game.entity.player.PositionElement
+import org.geysermc.mcprotocollib.protocol.data.game.item.ItemStack
 import org.geysermc.mcprotocollib.protocol.data.game.setting.ChatVisibility
 import org.geysermc.mcprotocollib.protocol.data.game.setting.ParticleStatus
 import org.geysermc.mcprotocollib.protocol.data.game.setting.SkinPart
@@ -43,6 +44,13 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.Clie
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundSetEntityDataPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundTeleportEntityPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundPlayerPositionPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundSetHeldSlotPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundContainerClosePacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundContainerSetContentPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundContainerSetSlotPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundOpenScreenPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundSetCursorItemPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundSetPlayerInventoryPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundChunkBatchFinishedPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundForgetLevelChunkPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundLevelChunkWithLightPacket
@@ -51,6 +59,7 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.Serverbound
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundPlayerLoadedPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.level.ServerboundAcceptTeleportationPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.player.ServerboundSetCarriedItemPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.level.ServerboundChunkBatchReceivedPacket
 import org.pickaxe.protocol.ProtocolCloseReason
 import org.pickaxe.protocol.ProtocolEvent
@@ -62,6 +71,8 @@ import org.pickaxe.protocol.ServerStatus
 import org.pickaxe.protocol.chat.ChatFormat
 import org.pickaxe.protocol.chat.ChatKind
 import org.pickaxe.protocol.chat.ChatMessage
+import org.pickaxe.protocol.inventory.Container
+import org.pickaxe.protocol.inventory.InventoryItem
 import org.pickaxe.protocol.world.ChunkColumn
 import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
@@ -158,6 +169,24 @@ internal class McplConnection(
      * 没有这一步，上层每次都要自己判断“这个包带了哪些字段”。
      */
     private val players = LinkedHashMap<UUID, RemotePlayer>()
+
+    /**
+     * 窗口内容，只在网络线程上读写。
+     *
+     * 窗口 0 是玩家背包，服务端在出生时就会下发整包内容；其余窗口由打开屏幕包创建、
+     * 关闭包移除。保留可变状态是因为服务端大量使用单槽更新（`container_set_slot`），
+     * 每次都要在上一份内容上改一格，向上只交不可变快照。
+     */
+    private val containers = HashMap<Int, MutableContainer>()
+
+    /**
+     * 当前选中的快捷栏格。
+     *
+     * 与姿态同理：服务端**接受**切换时不回包（它只在拒绝或改写时下发 `set_held_slot`），
+     * 所以发送后立即推进本地值，服务端纠正时再覆盖。
+     */
+    @Volatile
+    private var heldSlot: Int = 0
 
     /** 配置阶段收到的维度类型表；下标即 Login 包里的维度 id。 */
     private var dimensions: List<DimensionShape> = emptyList()
@@ -359,6 +388,31 @@ internal class McplConnection(
 
             is ClientboundDeleteChatPacket ->
                 emit(ProtocolEvent.ChatDeleted(packet.messageSignature.id))
+
+            is ClientboundOpenScreenPacket -> openScreen(packet)
+
+            is ClientboundContainerClosePacket -> closeContainer(packet.containerId)
+
+            is ClientboundContainerSetContentPacket -> setContainerContent(packet)
+
+            is ClientboundContainerSetSlotPacket ->
+                updateContainerSlot(packet.containerId, packet.stateId, packet.slot, packet.item)
+
+            is ClientboundSetPlayerInventoryPacket -> {
+                // 这个包不带窗口 id，只能用来改玩家自己的背包；槽位编号与窗口 0 不同，须换算。
+                val windowSlot = PlayerSlotMapping.toWindowSlot(packet.slot)
+                if (windowSlot != null) {
+                    updateContainerSlot(Container.PLAYER_WINDOW_ID, 0, windowSlot, packet.contents)
+                }
+            }
+
+            is ClientboundSetCursorItemPacket -> {
+                val container = containerFor(Container.PLAYER_WINDOW_ID)
+                container.cursor = packet.contents?.toInventoryItem()
+                emit(ProtocolEvent.ContainerUpdated(container.snapshot()))
+            }
+
+            is ClientboundSetHeldSlotPacket -> setHeldSlot(packet.slot)
 
             else -> Unit
         }
@@ -629,6 +683,56 @@ internal class McplConnection(
         format = ChatTypeRegistry.formatOf(packet.chatType, chatTypes),
     )
 
+    /**
+     * 打开窗口。
+     *
+     * 内容随后由 `container_set_content` 下发；这里先建一个空容器，让“窗口已经打开”
+     * 与“内容还没到”成为两个可区分的事实——直接等整包内容，会让打开的箱子看起来不存在。
+     */
+    private fun openScreen(packet: ClientboundOpenScreenPacket) {
+        val container = MutableContainer(packet.containerId)
+        container.type = packet.type.name
+        container.title = ComponentText.text(packet.title)
+        containers[packet.containerId] = container
+        emit(ProtocolEvent.ContainerOpened(container.snapshot()))
+    }
+
+    /**
+     * 关闭窗口。
+     *
+     * 窗口 0 是玩家背包，服务端不会关闭它；收到就忽略——把背包当成“已关闭”会让
+     * 后续查询凭空失败。
+     */
+    private fun closeContainer(windowId: Int) {
+        if (windowId == Container.PLAYER_WINDOW_ID) return
+        if (containers.remove(windowId) == null) return
+        emit(ProtocolEvent.ContainerClosed(windowId))
+    }
+
+    /** 整包内容：一次性替换全部槽位与鼠标物品。 */
+    private fun setContainerContent(packet: ClientboundContainerSetContentPacket) {
+        val container = containerFor(packet.containerId)
+        container.setContent(
+            stateId = packet.stateId,
+            items = packet.items.map { it?.toInventoryItem() },
+            cursor = packet.carriedItem?.toInventoryItem(),
+        )
+        emit(ProtocolEvent.ContainerUpdated(container.snapshot()))
+    }
+
+    /** 单槽更新；未知窗口按需建容器（出生时的背包就可能先来单槽、后到整包）。 */
+    private fun updateContainerSlot(windowId: Int, stateId: Int, slot: Int, item: ItemStack?) {
+        val container = containerFor(windowId)
+        container.stateId = stateId
+        container.setSlot(slot, item?.toInventoryItem())
+        emit(ProtocolEvent.ContainerUpdated(container.snapshot()))
+    }
+
+    private fun containerFor(windowId: Int): MutableContainer =
+        containers.getOrPut(windowId) { MutableContainer(windowId) }
+
+    private fun ItemStack.toInventoryItem(): InventoryItem = InventoryItem(itemId = id, count = amount)
+
     private fun reportPhase() {
         val phase = when (packetProtocol.inboundState) {
             ProtocolState.LOGIN -> ProtocolPhase.LOGIN
@@ -743,6 +847,24 @@ internal class McplConnection(
                 onGround = target.onGround,
             ),
         )
+    }
+
+    /**
+     * 切换快捷栏选中格（0–8）。
+     *
+     * 这个包同样没有成功回执：服务端只在**拒绝或改写**时下发 `set_held_slot`，接受时什么都不发。
+     * 因此发送后立即推进本地值并上报，否则“切了但本地还是旧格子”，服务端纠正时再覆盖回来。
+     */
+    fun selectHotbarSlot(slot: Int) {
+        sendInPlay("切换快捷栏") { ServerboundSetCarriedItemPacket(slot) }
+        setHeldSlot(slot)
+    }
+
+    /** 记录选中格；只有真的变了才上报，避免重复包变成事件噪音。 */
+    private fun setHeldSlot(slot: Int) {
+        if (heldSlot == slot) return
+        heldSlot = slot
+        emit(ProtocolEvent.HeldSlotChanged(slot))
     }
 
     /**

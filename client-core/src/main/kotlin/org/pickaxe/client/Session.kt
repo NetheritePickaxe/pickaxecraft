@@ -21,6 +21,9 @@ import org.pickaxe.protocol.ProtocolListener
 import org.pickaxe.protocol.ProtocolPhase
 import org.pickaxe.protocol.ServerAddress
 import org.pickaxe.protocol.chat.ChatMessage
+import org.pickaxe.protocol.inventory.Container
+import org.pickaxe.protocol.inventory.InventoryItem
+import org.pickaxe.protocol.inventory.PlayerInventoryLayout
 import org.pickaxe.protocol.world.ChunkColumn
 import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
@@ -102,6 +105,23 @@ public class Session internal constructor(
     private val players = ConcurrentHashMap<UUID, RemotePlayer>()
 
     /**
+     * 会话私有的窗口内容，键是协议窗口 id；0 恒为玩家背包。
+     *
+     * 与区块、实体同样走缓存：一次打开箱子会连着下发整包内容与若干单槽更新，
+     * 放在与信用量绑定的队列里会让玩家背包的 46 个槽把缓冲占满。
+     */
+    private val containers = ConcurrentHashMap<Int, Container>()
+
+    /**
+     * 当前快捷栏选中格（0–8）。
+     *
+     * 服务端接受切换时不回包，所以本端 [selectHotbarSlot] 成功后立即更新；服务端拒绝或改写时
+     * 会下发 `set_held_slot`，以它的值为准。
+     */
+    @Volatile
+    private var heldSlotIndex: Int = 0
+
+    /**
      * 会话私有的聊天记录，保留最近的 [ClientOptions.chatHistorySize] 条。
      *
      * 只在 Actor 里写入，读取可能来自任意线程，所以用一把小锁保护。聊天不走
@@ -148,6 +168,8 @@ public class Session internal constructor(
             chunks.clear()
             entities.clear()
             players.clear()
+            containers.clear()
+            heldSlotIndex = 0
             clearChat()
             mutableState.value = SessionState.CLOSED
             outbox.close()
@@ -227,6 +249,39 @@ public class Session internal constructor(
     public val chatCount: Int get() = synchronized(chatLock) { chatLog.size }
 
     /**
+     * 玩家自己的背包（窗口 0）；出生前或会话关闭后为 null。
+     *
+     * 槽位编号见 [PlayerInventoryLayout]：9–35 主背包、36–44 快捷栏、45 副手。
+     * 空槽是 null，物品只带协议 id 与数量，不带组件。
+     */
+    public fun inventory(): Container? = containers[Container.PLAYER_WINDOW_ID]
+
+    /**
+     * 当前打开的非玩家容器（箱子、工作台……）；没有打开或会话关闭后为 null。
+     *
+     * 同一时刻最多一个：服务端打开新容器时会先关掉旧的。
+     */
+    public fun container(): Container? =
+        containers.values.firstOrNull { it.windowId != Container.PLAYER_WINDOW_ID }
+
+    /** 按窗口 id 取容器快照；窗口 0 与当前打开的容器都在其中。 */
+    public fun container(windowId: Int): Container? = containers[windowId]
+
+    /** 所有窗口的快照；每次调用都会复制一份映射。 */
+    public fun containers(): Map<Int, Container> = HashMap(containers)
+
+    /** 服务端认为本端选中的快捷栏格（0–8）。 */
+    public val heldSlot: Int get() = heldSlotIndex
+
+    /**
+     * 当前手持物品（快捷栏 [heldSlot] 格）；背包未知或该格为空时返回 null。
+     *
+     * 这是 [inventory] 与 [heldSlot] 的组合查询，不做缓存：两者都可能随时变化，
+     * 存一份副本只会让人忘记它已经过期。
+     */
+    public fun heldItem(): InventoryItem? = inventory()?.slot(PlayerInventoryLayout.hotbar(heldSlot))
+
+    /**
      * 发送一条聊天消息。只有 [SessionState.PLAY] 阶段可用。
      *
      * 消息会被服务端广播回来（包括自己发的那条），因此成功发送后事件流里会出现同一条
@@ -288,6 +343,20 @@ public class Session internal constructor(
     }
 
     /**
+     * 切换快捷栏选中格（0–8）。只有 [SessionState.PLAY] 阶段可用。
+     *
+     * 与移动同理：服务端接受时不回包，因此 [heldSlot] 在调用后立即改变，并触发
+     * [ClientEvent.HeldSlotChanged]；被拒绝或改写时，服务端的 `set_held_slot` 以同样的事件
+     * 把值改回来。
+     *
+     * @throws IllegalArgumentException 下标不在 0..8 之间
+     * @throws IllegalStateException 会话尚未进入 play，或已经关闭
+     */
+    public fun selectHotbarSlot(slot: Int) {
+        playConnection("切换快捷栏").selectHotbarSlot(slot)
+    }
+
+    /**
      * 取可用于上行的连接。
      *
      * 用状态而不是连接是否存活来判断：连接存活但仍在 configuration 阶段时发送会被服务端
@@ -316,10 +385,12 @@ public class Session internal constructor(
 
             // 重生会换维度：旧维度的区块与实体全部作废。清理必须发生在网络线程上，
             // 否则新维度的区块可能先写入、再被 Actor 里迟到的清理抹掉。
+            // 玩家背包不清（换维度不会丢东西），打开的容器随服务端关闭包一起消失。
             is ProtocolEvent.Respawned -> {
                 if (!closing.get()) {
                     chunks.clear()
                     entities.clear()
+                    containers.keys.removeIf { it != Container.PLAYER_WINDOW_ID }
                 }
             }
 
@@ -347,6 +418,23 @@ public class Session internal constructor(
                 }
             }
 
+            // 窗口内容与玩家列表同理：先写缓存，消费者收到事件时一定查得到同一份快照。
+            is ProtocolEvent.ContainerUpdated -> {
+                if (!closing.get()) containers[event.container.windowId] = event.container
+            }
+
+            is ProtocolEvent.ContainerOpened -> {
+                if (!closing.get()) containers[event.container.windowId] = event.container
+            }
+
+            is ProtocolEvent.ContainerClosed -> {
+                if (!closing.get()) containers.remove(event.windowId)
+            }
+
+            is ProtocolEvent.HeldSlotChanged -> {
+                if (!closing.get()) heldSlotIndex = event.slot
+            }
+
             else -> Unit
         }
 
@@ -372,6 +460,8 @@ public class Session internal constructor(
         chunks.clear()
         entities.clear()
         players.clear()
+        containers.clear()
+        heldSlotIndex = 0
         clearChat()
         mutableState.value = SessionState.CLOSED
         outbox.close()
@@ -486,6 +576,32 @@ public class Session internal constructor(
             true
         }
 
+        is ProtocolEvent.ContainerUpdated -> {
+            emit(ClientEvent.InventoryChanged(event.container.windowId))
+            true
+        }
+
+        is ProtocolEvent.ContainerOpened -> {
+            emit(
+                ClientEvent.ContainerOpened(
+                    windowId = event.container.windowId,
+                    type = event.container.type.orEmpty(),
+                    title = event.container.title.orEmpty(),
+                ),
+            )
+            true
+        }
+
+        is ProtocolEvent.ContainerClosed -> {
+            emit(ClientEvent.ContainerClosed(event.windowId))
+            true
+        }
+
+        is ProtocolEvent.HeldSlotChanged -> {
+            emit(ClientEvent.HeldSlotChanged(event.slot))
+            true
+        }
+
         // 登录会话不会收到状态查询结果。
         is ProtocolEvent.StatusReceived -> true
 
@@ -546,6 +662,8 @@ public class Session internal constructor(
         chunks.clear()
         entities.clear()
         players.clear()
+        containers.clear()
+        heldSlotIndex = 0
         clearChat()
         mutableState.value = SessionState.CLOSED
         try {

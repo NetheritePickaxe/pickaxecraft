@@ -23,6 +23,10 @@ import net.minestom.server.event.player.AsyncPlayerConfigurationEvent
 import net.minestom.server.instance.InstanceContainer
 import net.minestom.server.instance.block.Block
 import net.minestom.server.instance.generator.Generator
+import net.minestom.server.inventory.Inventory
+import net.minestom.server.inventory.InventoryType
+import net.minestom.server.item.ItemStack
+import net.minestom.server.item.Material
 import net.minestom.server.network.packet.server.play.DeleteChatPacket
 import net.minestom.server.network.packet.server.play.DisguisedChatPacket
 import net.minestom.server.network.packet.server.play.PlayerChatMessagePacket
@@ -43,6 +47,7 @@ import org.pickaxe.protocol.ProtocolVersion
 import org.pickaxe.protocol.chat.ChatKind
 import org.pickaxe.protocol.chat.ChatMessage
 import org.pickaxe.protocol.chat.ChatParameter
+import org.pickaxe.protocol.inventory.PlayerInventoryLayout
 import org.pickaxe.protocol.ServerAddress
 import java.net.ServerSocket
 import java.time.Duration
@@ -787,6 +792,99 @@ class ClientSessionTest {
     }
 
     @Test
+    fun `背包与容器内容可从会话读到`() = runBlocking {
+        // 背包有两套编号（窗口槽位与背包槽位），容器窗口又在自己内容后面接上玩家背包。
+        // 这里按“服务端放的物品应出现在哪个槽位”逐格对账，而不是只看列表非空。
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, BAG_USERNAME)
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                // 出生时服务端就下发窗口 0 的整包内容：背包不是“打开才有”。
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.inventory() != null }
+                assertTrue(assertNotNull(session.inventory()).isPlayerInventory, "窗口 0 就是玩家背包")
+
+                val player = assertNotNull(
+                    MinecraftServer.getConnectionManager().getOnlinePlayerByUsername(BAG_USERNAME),
+                    "服务端应已保存该玩家",
+                )
+
+                // Minestom 的槽位 0 是快捷栏第一格，协议窗口里是 36：中间那次换算是本层的责任。
+                player.inventory.setItemStack(0, ItemStack.of(Material.DIAMOND, 3))
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    val item = session.inventory()?.slot(PlayerInventoryLayout.HOTBAR_FIRST)
+                    item?.itemId == Material.DIAMOND.id() && item.count == 3
+                }
+
+                // 打开箱子：类型与标题来自打开屏幕包，内容随后整包下发。
+                val chest = Inventory(InventoryType.CHEST_3_ROW, Component.text(CHEST_TITLE))
+                chest.setItemStack(0, ItemStack.of(Material.GOLD_INGOT, 2))
+                player.openInventory(chest)
+
+                log.await { it is ClientEvent.ContainerOpened }
+                val opened = log.snapshot().filterIsInstance<ClientEvent.ContainerOpened>().first()
+                assertEquals(CHEST_TYPE, opened.type, "箱子的容器类型应原样来自服务端")
+                assertEquals(CHEST_TITLE, opened.title, "标题应渲染成纯文本")
+
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    session.container()?.slot(0)?.itemId == Material.GOLD_INGOT.id()
+                }
+                // 打开容器期间，玩家背包仍然从窗口 0 读：Minestom 的容器整包只带容器自己的
+                // 27 格（原版会把后面的背包段一起发），因此把背包当成“容器窗口的一部分”
+                // 在两种服务端上都不成立——窗口 0 才是玩家背包的权威来源。
+                assertEquals(
+                    Material.DIAMOND.id(),
+                    session.inventory()?.slot(PlayerInventoryLayout.HOTBAR_FIRST)?.itemId,
+                    "打开容器不应影响玩家背包",
+                )
+
+                // 单槽更新：箱子第 6 格放一个苹果，其他槽位必须保持不变。
+                chest.setItemStack(5, ItemStack.of(Material.APPLE, 1))
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    session.container()?.slot(5)?.itemId == Material.APPLE.id()
+                }
+                assertEquals(Material.GOLD_INGOT.id(), session.container()?.slot(0)?.itemId, "单槽更新不应清掉别的格子")
+
+                player.closeInventory()
+                log.await { it is ClientEvent.ContainerClosed }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.container() == null }
+                assertNotNull(session.inventory(), "关掉箱子不影响玩家自己的背包")
+
+                // 手持槽位：服务端接受时不回包，本地立即推进；服务端字段是这次上行的证据。
+                session.selectHotbarSlot(HELD_SLOT)
+                log.await { it is ClientEvent.HeldSlotChanged && it.slot == HELD_SLOT }
+                assertEquals(HELD_SLOT, session.heldSlot, "接受无回执，本地在发送后立即推进")
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { player.heldSlot.toInt() == HELD_SLOT }
+                assertNull(session.heldItem(), "第 $HELD_SLOT 格此时是空的")
+
+                player.inventory.setItemStack(HELD_SLOT, ItemStack.of(Material.STONE, 7))
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    val held = session.heldItem()
+                    held?.itemId == Material.STONE.id() && held.count == 7
+                }
+
+                assertFailsWith<IllegalArgumentException> {
+                    session.selectHotbarSlot(PlayerInventoryLayout.HOTBAR_SIZE)
+                }
+                assertEquals(SessionState.PLAY, session.state.value, "校验失败后会话应仍在 play")
+            } finally {
+                log.close()
+                session.close()
+            }
+
+            assertNull(session.inventory(), "关闭后不应继续持有背包")
+            val rejected = assertFailsWith<IllegalStateException> { session.selectHotbarSlot(0) }
+            assertTrue(
+                "CLOSED" in rejected.message.orEmpty() && "快捷栏" in rejected.message.orEmpty(),
+                "拒绝原因应说明当前状态与操作，实际为 ${rejected.message}",
+            )
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `事件缓冲写满时终止会话而不是静默丢弃`() = runBlocking {
         val client = MinecraftClient(ClientOptions(eventBufferCapacity = 1))
         try {
@@ -898,6 +996,12 @@ class ClientSessionTest {
         /** 服务端强制传送的目标：与出生点同区块，避开“移动进未加载区块”的分支。 */
         const val CORRECTION_X: Double = 5.5
         const val CORRECTION_Z: Double = 1.5
+
+        /** 背包用例：容器类型与标题由服务端给出，槽位换算由客户端负责。 */
+        const val BAG_USERNAME: String = "BagBot"
+        const val CHEST_TITLE: String = "测试箱子"
+        const val CHEST_TYPE: String = "GENERIC_9X3"
+        const val HELD_SLOT: Int = 3
 
         const val EVENT_TIMEOUT_MILLIS: Long = 10_000
         val MILESTONE_TIMEOUT: Duration = Duration.ofSeconds(10)

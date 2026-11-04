@@ -3,6 +3,7 @@ package org.pickaxe.protocol
 import org.geysermc.mcprotocollib.protocol.MinecraftProtocol
 import org.pickaxe.protocol.internal.ChatInput
 import org.pickaxe.protocol.internal.McplConnection
+import org.pickaxe.protocol.inventory.PlayerInventoryLayout
 
 /**
  * 一条协议连接的句柄。
@@ -99,6 +100,22 @@ public class ProtocolConnection private constructor(
      */
     public fun look(yaw: Float, pitch: Float, onGround: Boolean = false) {
         connection.look(yaw, pitch, onGround)
+    }
+
+    /**
+     * 切换快捷栏选中格（0–8）。
+     *
+     * 本端不预设结果：服务端会用 `set_held_slot` 回一条，表现为
+     * [ProtocolEvent.HeldSlotChanged]；被插件取消时回的是旧值。
+     *
+     * @throws IllegalArgumentException 下标不在 0..8 之间
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    public fun selectHotbarSlot(slot: Int) {
+        require(slot in 0 until PlayerInventoryLayout.HOTBAR_SIZE) {
+            "快捷栏下标应在 0..${PlayerInventoryLayout.HOTBAR_SIZE - 1} 之间，实际为 $slot"
+        }
+        connection.selectHotbarSlot(slot)
     }
 
     public companion object {
