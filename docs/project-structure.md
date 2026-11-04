@@ -1,6 +1,6 @@
 # 项目结构
 
-状态：M0–M2 已完成（连接链路与出生），M4a–M4c 已完成（区块内容、实体跟踪、重生换维度）；Headless 为第一阶段，独立 libGDX 客户端为长期下游
+状态：M0–M2 已完成（连接链路与出生），M4a–M4d 已完成（区块内容、实体跟踪、重生换维度、玩家身份）；Headless 为第一阶段，独立 libGDX 客户端为长期下游
 日期：2026-11-04
 
 ## 1. 结构原则
@@ -29,7 +29,8 @@ pickaxecraft/
 │       │       ├── ProtocolConnection.kt   # 对上层暴露的唯一入口
 │       │       ├── world/
 │       │       │   ├── ChunkColumn.kt      # 不可变区块列与 section（按坐标读方块/群系）
-│       │       │   └── TrackedEntity.kt    # 不可变实体快照（位置、朝向、类型）
+│       │       │   ├── TrackedEntity.kt    # 不可变实体快照（位置、朝向、类型、自定义名称）
+│       │       │   └── RemotePlayer.kt     # 玩家列表条目（UUID、用户名、模式、延迟）
 │       │       └── internal/               # McplConnection、ComponentText、
 │       │                                   # ChunkDecoder、DimensionRegistry
 │       └── test/kotlin/
@@ -40,7 +41,7 @@ pickaxecraft/
 ├── client-core/                    # Java 21 字节码：公共客户端 API、会话、事件
 │   └── src/main/kotlin/org/pickaxe/client/
 │       ├── MinecraftClient.kt      # 入口：status / connect / close
-│       ├── Session.kt              # 会话 Actor、有界缓冲、区块与实体缓存、关闭语义
+│       ├── Session.kt              # 会话 Actor、有界缓冲、区块/实体/玩家缓存、关闭语义
 │       ├── SessionState.kt
 │       ├── ClientEvent.kt
 │       ├── ClientException.kt
@@ -117,14 +118,17 @@ testing:minestom ──► client-core + protocol-core（版本对账）+ Minest
 - `ClientOptions`：连接、登录、状态查询超时与事件缓冲容量。
 - `Session`：`state`（StateFlow）、`events`（单消费者 Flow）、`world` / `registries`
   （会话级只读快照）、区块查询（`chunk` / `blockStateAt` / `biomeAt` / `loadedChunks`）、
-  实体查询（`entity` / `entities` / `entityCount`）与幂等 `close`。
+  实体查询（`entity` / `entities` / `entityCount`）、玩家查询（`players` / `player` /
+  `playerCount` / `nameOf`）与幂等 `close`。
 - `ClientEvent` / `ClientException`：有序事件（含 `JoinedWorld` / `PositionUpdated` /
-  `ChunksReceived` / `EntitySpawned` / `EntityRemoved` / `Respawned`）与可分类的失败。
+  `ChunksReceived` / `EntitySpawned` / `EntityRemoved` / `PlayerListChanged` / `Respawned`）
+  与可分类的失败。
 - `WorldSnapshot` / `Position`：出生过程的只读状态。方块内容走 `Session` 的区块查询，
   不塞进每次更新都要复制的快照。
 
 `protocol-core` 只提供适配层事实（`ServerAddress`、`ServerStatus`、`ProtocolEvent`、
-`ProtocolConnection`，以及 `ChunkColumn` / `ChunkSection` / `TrackedEntity` 这类中立数据），
+`ProtocolConnection`，以及 `ChunkColumn` / `ChunkSection` / `TrackedEntity` / `RemotePlayer`
+这类中立数据），
 作为 `client-core`
 的 `api` 依赖；它的内部实现（协议库类型、Netty 会话）不是公共 API，调用方不应也无法看到
 数据包对象。

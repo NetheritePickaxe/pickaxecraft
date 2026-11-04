@@ -1,6 +1,8 @@
 package org.pickaxe.client
 
+import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
+import java.util.UUID
 
 /**
  * 会话事件。
@@ -53,6 +55,17 @@ public sealed interface ClientEvent {
 
     /** 这些实体离开了视野，或已死亡/消失。 */
     public data class EntityRemoved(public val ids: List<Int>) : ClientEvent
+
+    /**
+     * 玩家列表发生变化。
+     *
+     * 一个服务端包对应一个事件：[updated] 是新增或有字段变化的条目，[removed] 是被移出
+     * 列表的 UUID。事件到达时缓存已更新，[Session.players] 能查到同一份数据。
+     */
+    public data class PlayerListChanged(
+        public val updated: List<RemotePlayer>,
+        public val removed: List<UUID>,
+    ) : ClientEvent
 
     /** 正常关闭：调用方主动关闭，或服务端按协议收尾。 */
     public data object Closed : ClientEvent

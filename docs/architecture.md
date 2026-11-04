@@ -124,6 +124,7 @@ Netty 网络线程（每连接一个，线程名前缀 pickaxe-mcpl）
   └─ McplConnection：协议库回调 → 语义事件 → trySend 到有界 Channel
   └─ 区块列（已解码、不可变）→ Session 的区块缓存：按坐标覆盖，不经过 Channel
   └─ 实体快照（不可变）→ Session 的实体缓存：按 id 覆盖，不经过 Channel
+  └─ 玩家列表条目（不可变）→ Session 的玩家缓存：按 UUID 覆盖，事件按包合并
 会话 Actor（client-core，单个协程）
   └─ 状态迁移、事件分发、终止处理；按到达顺序执行
 调用方
@@ -136,10 +137,11 @@ Netty 网络线程（每连接一个，线程名前缀 pickaxe-mcpl）
   协议库默认会再引入一个静态共享的包处理线程池，那会让同一会话的回调出现在两个线程上。
 - 网络线程到 Actor 之间是**有界** Channel；写满即终止该会话并报告 `ClientException.EventOverflow`。
   M1 选择“终止并报告”，而不是静默丢弃或无限缓冲；按事件类别细分留到有真实需求时再做。
-- 世界数据（区块与实体）是这条规则的唯一例外：它们高频、天然按坐标或 id 覆盖，走会话私有的
-  `ConcurrentHashMap`；缓存的是不可变对象，因此不需要跨线程同步，也不会挤掉控制事件。
-  两者的区别只在增删是否需要通知：区块增删由批次计数覆盖，实体增删（`EntitySpawned` /
-  `EntityRemoved`）仍走事件流，位置增量只写缓存。
+- 世界数据（区块、实体、玩家列表）是这条规则的唯一例外：它们高频或按人数增长、天然按坐标
+  或 id 覆盖，走会话私有的 `ConcurrentHashMap`；缓存的是不可变对象，因此不需要跨线程同步，
+  也不会挤掉控制事件。三者的区别只在增删是否需要通知：区块增删由批次计数覆盖；实体增删
+  （`EntitySpawned` / `EntityRemoved`）走事件流，位置增量只写缓存；玩家列表由适配层把一个包
+  合并成一条 `PlayerListChanged`，条目再多也不会退化成按条投递。
 - 事件流是单消费者；终止事件（`Closed`/`Failed`）恰好一次，之后流结束。
 - 失败在适配层归层（`CONNECT`/`NETWORK`/`PROTOCOL`），上层按层选择处理策略，
   不需要识别协议库或 Netty 的异常类。
@@ -197,7 +199,7 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
   只填满缓冲，不带来新信息。
 - **读取 API**：`Session.entity(id)`、`entities()`、`entityCount`。本端玩家不在实体表中，
   自己的位置由 `WorldSnapshot.position` 表达。
-- **未处理**：实体元数据、装备、状态效果、属性、生命值，以及 UUID → 玩家名的映射。
+- **未处理**：装备、状态效果、属性、生命值。实体元数据只读自定义名称，UUID → 玩家名见 5.6。
 
 实现记录见 [M4b 实施记录](plans/m4b-entity-tracking.md)。
 
@@ -214,6 +216,24 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 - **事件**：`ClientEvent.Respawned(dimension, gameMode)`，世界快照同时换维度。
 
 实现记录见 [M4c 实施记录](plans/m4c-respawn.md)。
+
+### 5.6 M4d 已落地的具体形态：玩家身份
+
+实体包只带 UUID，用户名在玩家列表里。两者由**查询时关联**连起来，而不是在快照里存副本：
+
+- **玩家列表按 UUID 合并**：服务端把同一个人拆成多次更新（档案、延迟、游戏模式各一次），
+  `McplConnection` 只更新本包 `actions` 声明的列，其余沿用上一状态。缺失即清空会让
+  “先到延迟、后到档案”的常见顺序把用户名抹掉。
+- **一个包一个事件**：`PlayerListChanged(updated, removed)`。按条目发事件会让大服的一次登录
+  打满有界缓冲，而缓冲写满在本项目里等于终止会话。
+- **读取 API**：`Session.players()`、`player(uuid)`、`playerCount`、`nameOf(entityId)`。
+  `nameOf` 在查询时把实体 UUID 映射到列表条目，因此两个包的到达顺序不影响结果。
+- **元数据只读下标 2**（自定义名称）：下标 0–7 是所有实体共有的字段，生物层的字段从这个基址
+  往后排（例如生命值 9）。协议不携带层级信息，本层也没有实体类型表，读其余下标会得到
+  另一个字段的值——那不是数据缺失，是错误数据。
+- **玩家列表是会话级事实**：换维度不清空，与区块、实体不同。
+
+实现记录见 [M4d 实施记录](plans/m4d-player-identity.md)。
 
 ## 6. libGDX 与平台约束
 

@@ -14,6 +14,7 @@ import org.geysermc.mcprotocollib.network.session.ClientNetworkSession
 import org.geysermc.mcprotocollib.protocol.MinecraftConstants
 import org.geysermc.mcprotocollib.protocol.MinecraftProtocol
 import org.geysermc.mcprotocollib.protocol.data.ProtocolState
+import org.geysermc.mcprotocollib.protocol.data.game.PlayerListEntryAction
 import org.geysermc.mcprotocollib.protocol.data.game.entity.player.HandPreference
 import org.geysermc.mcprotocollib.protocol.data.game.entity.player.PositionElement
 import org.geysermc.mcprotocollib.protocol.data.game.setting.ChatVisibility
@@ -25,6 +26,8 @@ import org.geysermc.mcprotocollib.protocol.data.status.handler.ServerPingTimeHan
 import org.geysermc.mcprotocollib.protocol.packet.common.serverbound.ServerboundClientInformationPacket
 import org.geysermc.mcprotocollib.protocol.packet.configuration.clientbound.ClientboundRegistryDataPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundLoginPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundPlayerInfoRemovePacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundPlayerInfoUpdatePacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundRespawnPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundAddEntityPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundEntityPositionSyncPacket
@@ -33,6 +36,7 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.Clie
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundMoveEntityRotPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundRemoveEntitiesPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundRotateHeadPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundSetEntityDataPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundTeleportEntityPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundPlayerPositionPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundChunkBatchFinishedPacket
@@ -49,9 +53,12 @@ import org.pickaxe.protocol.ProtocolPhase
 import org.pickaxe.protocol.ServerAddress
 import org.pickaxe.protocol.ServerStatus
 import org.pickaxe.protocol.world.ChunkColumn
+import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
 import java.io.IOException
 import java.net.InetSocketAddress
+import java.util.Optional
+import java.util.UUID
 import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -126,6 +133,15 @@ internal class McplConnection(
      * 不需要自己重放增量。
      */
     private val entities = HashMap<Int, TrackedEntity>()
+
+    /**
+     * 玩家列表，只在网络线程上读写。
+     *
+     * 服务端把同一条目拆成多次更新：ADD_PLAYER 给档案，UPDATE_LATENCY 给延迟，
+     * UPDATE_GAME_MODE 给模式。这里按 UUID 合并成完整快照，向上只报合并后的结果；
+     * 没有这一步，上层每次都要自己判断“这个包带了哪些字段”。
+     */
+    private val players = LinkedHashMap<UUID, RemotePlayer>()
 
     /** 配置阶段收到的维度类型表；下标即 Login 包里的维度 id。 */
     private var dimensions: List<DimensionShape> = emptyList()
@@ -301,6 +317,12 @@ internal class McplConnection(
 
             is ClientboundChunkBatchFinishedPacket -> acknowledgeChunkBatch(packet)
 
+            is ClientboundSetEntityDataPacket -> applyEntityMetadata(packet)
+
+            is ClientboundPlayerInfoUpdatePacket -> applyPlayerInfo(packet)
+
+            is ClientboundPlayerInfoRemovePacket -> removePlayers(packet.profileIds)
+
             else -> Unit
         }
 
@@ -343,6 +365,7 @@ internal class McplConnection(
         chunkTotal = 0
         playerLoadedSent = false
         entities.clear()
+        // 玩家列表不清：它是会话级事实，换维度不会让人从 Tab 列表里消失。
         emit(
             ProtocolEvent.Respawned(
                 dimension = info.worldName.asString(),
@@ -436,6 +459,74 @@ internal class McplConnection(
         val updated = change(current)
         entities[id] = updated
         emit(ProtocolEvent.EntityUpdated(updated))
+    }
+
+    /**
+     * 实体元数据里的自定义名称。
+     *
+     * 元数据是一张“下标 → 值”的表，下标由协议版本固定，但**含义取决于实体层级**：
+     * 下标 2 是所有实体共有的自定义名称，而下标 9 之类的字段只在生物层级里才成立。
+     * 协议包不携带层级信息，因此本层只读下标 2；其余字段要么需要本地实体类型表，
+     * 要么属于别的子系统（装备、状态效果）。
+     *
+     * 未知实体的元数据直接忽略，理由与移动增量相同：没有可更新的状态。
+     */
+    private fun applyEntityMetadata(packet: ClientboundSetEntityDataPacket) {
+        val current = entities[packet.entityId] ?: return
+        var customName = current.customName
+        for (metadata in packet.metadata) {
+            if (metadata.id != CUSTOM_NAME_INDEX) continue
+            // 字段存在但为空表示服务端要求清掉名牌；字段不出现才表示“本包没提这件事”。
+            val component = (metadata.value as? Optional<*>)?.orElse(null) as? Component
+            customName = component?.let(ComponentText::render)
+        }
+        if (customName == current.customName) return
+        updateEntity(packet.entityId) { it.copy(customName = customName) }
+    }
+
+    /**
+     * 玩家列表更新。
+     *
+     * 一个包只带 `actions` 声明的那几列：可能只有延迟，也可能只有档案。缺失字段沿用
+     * 上一状态——否则“先到延迟、后到档案”的常见顺序会把刚拿到的用户名抹成 null。
+     * 合并后没有任何变化（例如只更新了列表排序）就不上报，避免把无关字段变成事件。
+     */
+    private fun applyPlayerInfo(packet: ClientboundPlayerInfoUpdatePacket) {
+        val actions = packet.actions
+        val updated = ArrayList<RemotePlayer>(packet.entries.size)
+        for (entry in packet.entries) {
+            val existing = players[entry.profileId]
+            val merged = RemotePlayer(
+                uuid = entry.profileId,
+                name = if (PlayerListEntryAction.ADD_PLAYER in actions) {
+                    entry.profile?.name ?: existing?.name
+                } else {
+                    existing?.name
+                },
+                gameMode = if (PlayerListEntryAction.UPDATE_GAME_MODE in actions) {
+                    entry.gameMode.name
+                } else {
+                    existing?.gameMode ?: entry.gameMode.name
+                },
+                latencyMillis = if (PlayerListEntryAction.UPDATE_LATENCY in actions) {
+                    entry.latency
+                } else {
+                    existing?.latencyMillis ?: entry.latency
+                },
+            )
+            if (merged == existing) continue
+            players[entry.profileId] = merged
+            updated += merged
+        }
+        if (updated.isEmpty()) return
+        emit(ProtocolEvent.PlayerListChanged(updated, emptyList()))
+    }
+
+    /** 玩家离开。列表里没有的 UUID 静默跳过——没有可撤销的状态。 */
+    private fun removePlayers(ids: List<UUID>) {
+        val removed = ids.filter { players.remove(it) != null }
+        if (removed.isEmpty()) return
+        emit(ProtocolEvent.PlayerListChanged(emptyList(), removed))
     }
 
     private fun reportPhase() {
@@ -540,5 +631,14 @@ internal class McplConnection(
 
         /** 客户端声明的视野距离（区块半径）。出生点的初始加载量随它线性增长。 */
         const val CLIENT_VIEW_DISTANCE: Int = 8
+
+        /**
+         * 自定义名称在实体元数据表里的下标。
+         *
+         * 取 0–7 是 `Entity` 层共有的字段，下标 2 是其中唯一与显示相关的文本字段。
+         * 生物层的字段从这个基址往后排（例如生命值是 9），而协议不告诉本端某个实体
+         * 属于哪一层，所以本层只读所有实体都成立的下标 2。
+         */
+        const val CUSTOM_NAME_INDEX: Int = 2
     }
 }

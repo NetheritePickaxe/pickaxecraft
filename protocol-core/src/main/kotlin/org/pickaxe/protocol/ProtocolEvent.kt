@@ -1,7 +1,9 @@
 package org.pickaxe.protocol
 
 import org.pickaxe.protocol.world.ChunkColumn
+import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
+import java.util.UUID
 
 /**
  * 客户端视角的协议阶段。
@@ -111,15 +113,32 @@ public sealed interface ProtocolEvent {
     public data class EntitySpawned(public val entity: TrackedEntity) : ProtocolEvent
 
     /**
-     * 已跟踪实体的位置或朝向发生变化。[entity] 是叠加增量之后的完整状态。
+     * 已跟踪实体的位置、朝向或自定义名称发生变化。[entity] 是叠加增量之后的完整状态。
      *
      * 服务端的移动包大多是相对量（1/4096 格），适配层负责叠加；上层永远看到绝对坐标。
      * 未知 id 的增量包会被丢弃：增量只有叠加到已知状态上才有意义。
+     *
+     * 元数据包只在**本层关心的字段真的变了**时才上报（目前只有自定义名称）：
+     * 服务端每秒会为实体下发与位置无关的状态字节，原样转发只是噪音。
      */
     public data class EntityUpdated(public val entity: TrackedEntity) : ProtocolEvent
 
     /** 服务端要求丢弃这些实体：离开视野、死亡或消失。未跟踪的 id 直接忽略。 */
     public data class EntityRemoved(public val ids: List<Int>) : ProtocolEvent
+
+    /**
+     * 玩家列表发生变化。
+     *
+     * 一个包对应一个事件，无论包里有多少条目：条目数量由服务端的人数决定，按条发事件
+     * 会让大服的一次登录把事件缓冲打满。因此 [updated] 是“新增或字段有变化的条目”，
+     * [removed] 是被移出列表的 UUID；两者都可能为空（例如只更新了本层不关心的字段）。
+     *
+     * 玩家列表是会话级事实：换维度不会清空它。
+     */
+    public data class PlayerListChanged(
+        public val updated: List<RemotePlayer>,
+        public val removed: List<UUID>,
+    ) : ProtocolEvent
 
     /** 会话终止，且这是本次连接唯一一次终止通知。 */
     public data class Closed(public val reason: ProtocolCloseReason) : ProtocolEvent

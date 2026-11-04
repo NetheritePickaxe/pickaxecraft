@@ -142,9 +142,12 @@ private fun describe(event: ClientEvent): String = when (event) {
     is ClientEvent.Respawned -> "event=respawned dimension=${event.dimension} mode=${event.gameMode}"
     is ClientEvent.ChunksReceived -> "event=chunks batch=${event.chunks} total=${event.total}"
     is ClientEvent.EntitySpawned -> with(event.entity) {
-        "event=entity.spawned id=$id type=$type x=$x y=$y z=$z"
+        val who = customName?.let { " name=$it" }.orEmpty()
+        "event=entity.spawned id=$id type=$type$who x=$x y=$y z=$z"
     }
     is ClientEvent.EntityRemoved -> "event=entity.removed ids=${event.ids}"
+    is ClientEvent.PlayerListChanged -> "event=players updated=${event.updated.map { it.name ?: it.uuid }}" +
+        " removed=${event.removed}"
     ClientEvent.Closed -> "event=closed"
     is ClientEvent.Failed -> "event=failed kind=${event.error::class.simpleName} message=${event.error.message}"
 }
@@ -158,8 +161,10 @@ private fun describeChunk(session: Session): String {
     val column = session.chunk(x shr 4, z shr 4) ?: return "chunk=unloaded at (${x shr 4}, ${z shr 4})"
 
     val below = if (column.sectionAt(y - 1) == null) "越界" else session.blockStateAt(x, y - 1, z).toString()
+    // 玩家列表与实体表分开统计：前者是“谁在线”，后者是“视野里有什么”。
+    val players = session.players().values.map { it.name ?: it.uuid.toString() }
     return "chunk x=${column.x} z=${column.z} minY=${column.minY} sections=${column.sectionCount} " +
-        "cached=${session.loadedChunks} entities=${session.entityCount} " +
+        "cached=${session.loadedChunks} entities=${session.entityCount} players=$players " +
         "block=($x, $y, $z):${session.blockStateAt(x, y, z)} below=$below"
 }
 

@@ -21,7 +21,9 @@ import org.pickaxe.protocol.ProtocolListener
 import org.pickaxe.protocol.ProtocolPhase
 import org.pickaxe.protocol.ServerAddress
 import org.pickaxe.protocol.world.ChunkColumn
+import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -90,6 +92,14 @@ public class Session internal constructor(
      */
     private val entities = ConcurrentHashMap<Int, TrackedEntity>()
 
+    /**
+     * 会话私有的玩家列表，键是玩家档案 UUID。
+     *
+     * 与区块、实体同样走缓存：登录时服务端会一次性下发全服玩家，逐个发事件会把
+     * 有界缓冲打满。适配层已经把同一个人的多次更新合并成一条，这里只需要覆盖。
+     */
+    private val players = ConcurrentHashMap<UUID, RemotePlayer>()
+
     /** 有序事件流，单消费者；会话终止后正常结束。 */
     public val events: Flow<ClientEvent> = outbox.consumeAsFlow()
 
@@ -127,6 +137,7 @@ public class Session internal constructor(
             // 区块与实体都属于本次会话；不清理会让已关闭的会话继续持有整个出生点视野。
             chunks.clear()
             entities.clear()
+            players.clear()
             mutableState.value = SessionState.CLOSED
             outbox.close()
         }
@@ -181,6 +192,23 @@ public class Session internal constructor(
      */
     public fun entities(): Map<Int, TrackedEntity> = HashMap(entities)
 
+    /** 玩家列表中的条目数，含本端玩家自己。 */
+    public val playerCount: Int get() = players.size
+
+    /** 按玩家档案 UUID 取列表条目；不在列表里或会话已关闭时返回 null。 */
+    public fun player(uuid: UUID): RemotePlayer? = players[uuid]
+
+    /** 玩家列表的当前快照；每次调用都会复制一份映射。 */
+    public fun players(): Map<UUID, RemotePlayer> = HashMap(players)
+
+    /**
+     * 实体 id 对应的玩家名；实体不是玩家、或玩家列表里还没有这个人时返回 null。
+     *
+     * 这是 [entity] 与 [player] 的关联：实体生成包只带 UUID，名字来自玩家列表，
+     * 两者到达顺序不固定，因此这里按查询时刻关联，而不是在实体快照里存一份副本。
+     */
+    public fun nameOf(entityId: Int): String? = entity(entityId)?.uuid?.let { player(it)?.name }
+
     /** 协议回调：网络线程上只允许缓存写入或一次入队，溢出即终止会话。 */
     private fun onProtocolEvent(event: ProtocolEvent) {
         when (event) {
@@ -219,6 +247,14 @@ public class Session internal constructor(
                 if (!closing.get()) event.ids.forEach(entities::remove)
             }
 
+            // 玩家列表的变化已经由适配层按包合并，一个包最多一个事件；缓存仍然先写。
+            is ProtocolEvent.PlayerListChanged -> {
+                if (!closing.get()) {
+                    event.updated.forEach { players[it.uuid] = it }
+                    event.removed.forEach(players::remove)
+                }
+            }
+
             else -> Unit
         }
 
@@ -243,6 +279,7 @@ public class Session internal constructor(
         actor?.cancel()
         chunks.clear()
         entities.clear()
+        players.clear()
         mutableState.value = SessionState.CLOSED
         outbox.close()
         // 网络线程上不能做阻塞关闭；交回调度器。
@@ -328,6 +365,11 @@ public class Session internal constructor(
         // 位置增量已在 onProtocolEvent 里写入缓存，不进事件流。
         is ProtocolEvent.EntityUpdated -> true
 
+        is ProtocolEvent.PlayerListChanged -> {
+            emit(ClientEvent.PlayerListChanged(event.updated, event.removed))
+            true
+        }
+
         // 登录会话不会收到状态查询结果。
         is ProtocolEvent.StatusReceived -> true
 
@@ -368,6 +410,7 @@ public class Session internal constructor(
         if (!finished.compareAndSet(false, true)) return
         chunks.clear()
         entities.clear()
+        players.clear()
         mutableState.value = SessionState.CLOSED
         try {
             // 服务端或协议先断开时也要回收连接资源；本方法幂等。

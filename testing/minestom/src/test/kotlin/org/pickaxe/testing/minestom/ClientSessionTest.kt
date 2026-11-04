@@ -9,10 +9,12 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import net.kyori.adventure.text.Component
 import net.minestom.server.MinecraftServer
+import net.minestom.server.component.DataComponents
 import net.minestom.server.coordinate.Pos
 import net.minestom.server.coordinate.Vec
 import net.minestom.server.entity.EntityCreature
 import net.minestom.server.entity.EntityType
+import net.minestom.server.entity.Player
 import net.minestom.server.event.player.AsyncPlayerConfigurationEvent
 import net.minestom.server.instance.InstanceContainer
 import net.minestom.server.instance.block.Block
@@ -337,6 +339,89 @@ class ClientSessionTest {
     }
 
     @Test
+    fun `玩家列表与自定义名称可从会话查到`() = runBlocking {
+        // 玩家列表回答“谁是谁”：实体包只带 UUID，名字必须从列表里关联出来。
+        // 因此这里要两个会话——被观察者自己不会收到自己的实体生成包。
+        val observer = MinecraftClient()
+        val subject = MinecraftClient()
+        try {
+            val watcherSession = observer.connect(address, WATCHER_USERNAME)
+            val log = EventLog(this, watcherSession)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                // 自己的条目也会下发：玩家列表是“服务器上都有谁”，不只是别人。
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    watcherSession.players().values.any { entry -> entry.name == WATCHER_USERNAME }
+                }
+
+                val subjectSession = subject.connect(address, SUBJECT_USERNAME)
+                try {
+                    assertTrue(
+                        withContext(Dispatchers.IO) {
+                            awaitMilestone(SUBJECT_USERNAME, PlayerMilestone.SPAWNED, MILESTONE_TIMEOUT)
+                        },
+                        "服务端应先完成 $SUBJECT_USERNAME 的出生",
+                    )
+                    var online: Player? = null
+                    awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                        online = MinecraftServer.getConnectionManager().getOnlinePlayerByUsername(SUBJECT_USERNAME)
+                        online != null
+                    }
+                    val serverPlayer = assertNotNull(online, "服务端应已保存该玩家")
+
+                    log.await {
+                        it is ClientEvent.PlayerListChanged && it.updated.any { entry -> entry.name == SUBJECT_USERNAME }
+                    }
+                    awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                        watcherSession.player(serverPlayer.uuid)?.name == SUBJECT_USERNAME
+                    }
+
+                    // 关联的核心：实体 id → UUID → 名字。
+                    awaitCondition(EVENT_TIMEOUT_MILLIS) { watcherSession.entity(serverPlayer.entityId) != null }
+                    assertEquals(
+                        SUBJECT_USERNAME,
+                        watcherSession.nameOf(serverPlayer.entityId),
+                        "玩家实体的名字应从玩家列表关联出来",
+                    )
+                    assertEquals(
+                        serverPlayer.uuid,
+                        watcherSession.entity(serverPlayer.entityId)?.uuid,
+                        "实体快照里的 UUID 应与玩家列表一致",
+                    )
+
+                    // 非玩家实体没有名字可关联，自定义名称才是它的名字来源。
+                    val zombie = EntityCreature(EntityType.ZOMBIE)
+                    zombie.setNoGravity(true)
+                    zombie.set(DataComponents.CUSTOM_NAME, Component.text(ZOMBIE_NAME))
+                    zombie.setInstance(instance, Pos(4.5, GROUND_LEVEL, 4.5)).join()
+
+                    awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                        watcherSession.entity(zombie.entityId)?.customName == ZOMBIE_NAME
+                    }
+                    assertNull(watcherSession.nameOf(zombie.entityId), "非玩家实体不应解析出玩家名")
+
+                    // 改名走的是元数据增量包，与本层关心的字段不一致时不该产生事件。
+                    zombie.set(DataComponents.CUSTOM_NAME, Component.text(RENAMED_ZOMBIE_NAME))
+                    awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                        watcherSession.entity(zombie.entityId)?.customName == RENAMED_ZOMBIE_NAME
+                    }
+                    zombie.remove()
+                } finally {
+                    subjectSession.close()
+                }
+            } finally {
+                log.close()
+                watcherSession.close()
+            }
+
+            assertEquals(0, watcherSession.playerCount, "关闭后不应继续持有玩家列表")
+        } finally {
+            observer.close()
+            subject.close()
+        }
+    }
+
+    @Test
     fun `两个客户端互不影响`() = runBlocking {
         val first = MinecraftClient()
         val second = MinecraftClient()
@@ -469,6 +554,10 @@ class ClientSessionTest {
 
     private companion object {
         const val KICKED_USERNAME: String = "Kicked"
+        const val WATCHER_USERNAME: String = "Watcher"
+        const val SUBJECT_USERNAME: String = "Subject"
+        const val ZOMBIE_NAME: String = "名牌僵尸"
+        const val RENAMED_ZOMBIE_NAME: String = "改名僵尸"
         const val KICK_MESSAGE: String = "测试踢出"
         const val EVENT_TIMEOUT_MILLIS: Long = 10_000
         val MILESTONE_TIMEOUT: Duration = Duration.ofSeconds(10)
