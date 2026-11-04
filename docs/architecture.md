@@ -123,6 +123,7 @@ Java 21 字节码不代表完整 JDK 21 API 在 Android 上可用：`protocol-co
 Netty 网络线程（每连接一个，线程名前缀 pickaxe-mcpl）
   └─ McplConnection：协议库回调 → 语义事件 → trySend 到有界 Channel
   └─ 区块列（已解码、不可变）→ Session 的区块缓存：按坐标覆盖，不经过 Channel
+  └─ 实体快照（不可变）→ Session 的实体缓存：按 id 覆盖，不经过 Channel
 会话 Actor（client-core，单个协程）
   └─ 状态迁移、事件分发、终止处理；按到达顺序执行
 调用方
@@ -135,8 +136,10 @@ Netty 网络线程（每连接一个，线程名前缀 pickaxe-mcpl）
   协议库默认会再引入一个静态共享的包处理线程池，那会让同一会话的回调出现在两个线程上。
 - 网络线程到 Actor 之间是**有界** Channel；写满即终止该会话并报告 `ClientException.EventOverflow`。
   M1 选择“终止并报告”，而不是静默丢弃或无限缓冲；按事件类别细分留到有真实需求时再做。
-- 世界数据（区块）是这条规则的唯一例外：它高频、体积大、天然按坐标覆盖，走会话私有的
+- 世界数据（区块与实体）是这条规则的唯一例外：它们高频、天然按坐标或 id 覆盖，走会话私有的
   `ConcurrentHashMap`；缓存的是不可变对象，因此不需要跨线程同步，也不会挤掉控制事件。
+  两者的区别只在增删是否需要通知：区块增删由批次计数覆盖，实体增删（`EntitySpawned` /
+  `EntityRemoved`）仍走事件流，位置增量只写缓存。
 - 事件流是单消费者；终止事件（`Closed`/`Failed`）恰好一次，之后流结束。
 - 失败在适配层归层（`CONNECT`/`NETWORK`/`PROTOCOL`），上层按层选择处理策略，
   不需要识别协议库或 Netty 的异常类。
@@ -178,6 +181,25 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
   此时解码会因 section 数量不符而失败——这是 fail-fast，但在支持重生前必须补上。
 
 实现记录与格式细节见 [M4a 实施记录](plans/m4a-chunk-model.md)。
+
+### 5.4 M4b 已落地的具体形态：实体跟踪
+
+协议库已经把实体包拆成完整对象，本层补的是它不做的事：**累积相对量**并给出中立模型。
+
+- **增量叠加在适配层完成**：移动包的坐标是 `short / 4096` 的增量，只有叠加到上一状态才有意义。
+  `McplConnection` 保留一份网络线程私有的实体表，发出的每个事件都带**叠加后的完整快照**，
+  上层不需要重放增量。`ClientboundTeleportEntityPacket` 的坐标与朝向可按位标记为相对，
+  与玩家传送用同一套叠加规则。
+- **未知 id 的增量包被丢弃**：增量叠加不到已知状态上就没有语义，而“尚未收到过该实体”是合法状态。
+  解析失败仍会在解码阶段抛错，不会被这里吞掉。
+- **增删是事件，位置是状态**：`EntitySpawned` / `EntityRemoved` 走事件流（缓存先写、事件后发，
+  消费者收到事件时一定查得到）；`EntityUpdated` 只写缓存——每秒上百条完整快照投递出去
+  只填满缓冲，不带来新信息。
+- **读取 API**：`Session.entity(id)`、`entities()`、`entityCount`。本端玩家不在实体表中，
+  自己的位置由 `WorldSnapshot.position` 表达。
+- **未处理**：实体元数据、装备、状态效果、属性、生命值，以及 UUID → 玩家名的映射。
+
+实现记录见 [M4b 实施记录](plans/m4b-entity-tracking.md)。
 
 ## 6. libGDX 与平台约束
 

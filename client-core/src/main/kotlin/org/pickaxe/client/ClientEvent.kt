@@ -1,5 +1,7 @@
 package org.pickaxe.client
 
+import org.pickaxe.protocol.world.TrackedEntity
+
 /**
  * 会话事件。
  *
@@ -32,6 +34,17 @@ public sealed interface ClientEvent {
 
     /** 一个区块批次已接收并确认。[total] 是本次会话累计区块数。 */
     public data class ChunksReceived(public val chunks: Int, public val total: Int) : ClientEvent
+
+    /**
+     * 一个实体进入视野。
+     *
+     * 事件到达时实体已写入会话缓存，可以直接用 [Session.entity] 取到同一份快照。
+     * 后续位置变化不逐条投递，按需读取即可——位置是高频状态，不是里程碑。
+     */
+    public data class EntitySpawned(public val entity: TrackedEntity) : ClientEvent
+
+    /** 这些实体离开了视野，或已死亡/消失。 */
+    public data class EntityRemoved(public val ids: List<Int>) : ClientEvent
 
     /** 正常关闭：调用方主动关闭，或服务端按协议收尾。 */
     public data object Closed : ClientEvent

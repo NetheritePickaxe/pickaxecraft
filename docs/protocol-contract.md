@@ -154,12 +154,14 @@ Minestom 在玩家设置为空时会在出生流程里读取失败。
 | 维度高度 | `DimensionRegistry` | 从 `dimension_type` 注册表读 `min_y` / `height`；顺序即 Login 的维度 id |
 | 世界快照 | `client-core` | `Session.world` 汇总维度、实体 id、位置与区块数；不向上暴露包对象 |
 | 区块缓存 | `client-core` | 按坐标保存不可变区块列，关闭时清空；查询 API 区分“未加载”与“越界” |
+| 实体累积 | `McplConnection` | 移动包是 `short / 4096` 的相对量，叠加后以完整快照上报；未知 id 的增量丢弃 |
+| 实体缓存 | `client-core` | 按 id 保存不可变快照；位置增量只写缓存，增删走事件流 |
 
 ## 4. 明确不依赖的行为
 
 - 上游 API 的稳定性：库方不承诺，升级必须重跑联调用例。
-- 具体包类型清单：目前只识别注册表、Login、位置同步、区块、区块批次与区块卸载这六类；
-  其余包一律不解释，也不假设其字段。
+- 具体包类型清单：目前只识别注册表、Login、位置同步、区块（含批次与卸载）与实体（生成、
+  移除、相对/绝对移动、头部朝向）这几类；其余包一律不解释，也不假设其字段。
 - 库内部的线程数量、线程名、事件循环实现：只依赖“同一连接的回调在单一网络线程上”。
 - `Session.getChannel()` 之外的底层干预能力：M1 不需要；若将来需要，先评审 fork 策略。
 
@@ -173,6 +175,7 @@ Minestom 在玩家设置为空时会在出生流程里读取失败。
 | 连接失败被归类且不留残留会话 | `ClientSessionTest.连接失败给出可区分的错误并允许再次连接` |
 | 关闭后网络线程回收、重复关闭安全 | `ClientSessionTest.重复关闭无副作用且网络线程被回收` |
 | 会话隔离 | `ClientSessionTest.两个客户端互不影响` |
+| 实体生成/移动/移除与坐标对账 | `ClientSessionTest.实体的生成、移动与移除对客户端可见` |
 | 事件溢出终止而非丢弃 | `ClientSessionTest.事件缓冲写满时终止会话而不是静默丢弃` |
 | 出生：自动应答传送到位并收到区块 | `ClientSessionTest.登录后完成出生并进入世界`（客户端事件） |
 | 出生：服务端确认 `PlayerSpawnEvent` 与 `PlayerLoadedEvent` | 同上（harness 的 `awaitMilestone`） |

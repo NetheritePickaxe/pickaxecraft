@@ -138,6 +138,10 @@ private fun describe(event: ClientEvent): String = when (event) {
         "event=position x=$x y=$y z=$z yaw=$yaw pitch=$pitch"
     }
     is ClientEvent.ChunksReceived -> "event=chunks batch=${event.chunks} total=${event.total}"
+    is ClientEvent.EntitySpawned -> with(event.entity) {
+        "event=entity.spawned id=$id type=$type x=$x y=$y z=$z"
+    }
+    is ClientEvent.EntityRemoved -> "event=entity.removed ids=${event.ids}"
     ClientEvent.Closed -> "event=closed"
     is ClientEvent.Failed -> "event=failed kind=${event.error::class.simpleName} message=${event.error.message}"
 }
@@ -152,7 +156,8 @@ private fun describeChunk(session: Session): String {
 
     val below = if (column.sectionAt(y - 1) == null) "越界" else session.blockStateAt(x, y - 1, z).toString()
     return "chunk x=${column.x} z=${column.z} minY=${column.minY} sections=${column.sectionCount} " +
-        "cached=${session.loadedChunks} block=($x, $y, $z):${session.blockStateAt(x, y, z)} below=$below"
+        "cached=${session.loadedChunks} entities=${session.entityCount} " +
+        "block=($x, $y, $z):${session.blockStateAt(x, y, z)} below=$below"
 }
 
 /** 解析后的命令行参数。 */

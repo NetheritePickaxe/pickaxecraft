@@ -21,6 +21,7 @@ import org.pickaxe.protocol.ProtocolListener
 import org.pickaxe.protocol.ProtocolPhase
 import org.pickaxe.protocol.ServerAddress
 import org.pickaxe.protocol.world.ChunkColumn
+import org.pickaxe.protocol.world.TrackedEntity
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -80,6 +81,15 @@ public class Session internal constructor(
      */
     private val chunks = ConcurrentHashMap<Long, ChunkColumn>()
 
+    /**
+     * 会话私有的实体缓存，键是协议内的实体 id。
+     *
+     * 与区块同属**世界数据**：移动包每秒可达上百条，放进与信用量绑定的队列会让
+     * 慢消费者的缓冲被位置增量填满。实体状态本身是可重建的（每次更新都带完整快照），
+     * 因此按 id 缓存、按需查询比逐条投递更合适；实体增删仍通过事件流可见。
+     */
+    private val entities = ConcurrentHashMap<Int, TrackedEntity>()
+
     /** 有序事件流，单消费者；会话终止后正常结束。 */
     public val events: Flow<ClientEvent> = outbox.consumeAsFlow()
 
@@ -114,8 +124,9 @@ public class Session internal constructor(
         } finally {
             inbox.close()
             actor?.cancel()
-            // 区块属于本次会话；不清理会让已关闭的会话继续持有整个出生点视野。
+            // 区块与实体都属于本次会话；不清理会让已关闭的会话继续持有整个出生点视野。
             chunks.clear()
+            entities.clear()
             mutableState.value = SessionState.CLOSED
             outbox.close()
         }
@@ -153,6 +164,23 @@ public class Session internal constructor(
     public fun biomeAt(x: Int, y: Int, z: Int): Int? =
         chunk(x shr 4, z shr 4)?.biomeAt(x, y, z)
 
+    /** 当前跟踪的实体数量。 */
+    public val entityCount: Int get() = entities.size
+
+    /** 按实体 id 取最新快照；未跟踪或会话已关闭时返回 null。 */
+    public fun entity(entityId: Int): TrackedEntity? = entities[entityId]
+
+    /**
+     * 当前所有已跟踪实体的快照。
+     *
+     * 每次调用都会复制一份映射，成本与实体数成正比；高频渲染路径应当按 id 查询
+     * （[entity]），或者自行在事件流上维护视图。
+     *
+     * 本端玩家不在其中：服务端不会为玩家自己发实体生成包，自己的位置见
+     * [WorldSnapshot.position]。
+     */
+    public fun entities(): Map<Int, TrackedEntity> = HashMap(entities)
+
     /** 协议回调：网络线程上只允许缓存写入或一次入队，溢出即终止会话。 */
     private fun onProtocolEvent(event: ProtocolEvent) {
         when (event) {
@@ -164,6 +192,22 @@ public class Session internal constructor(
             is ProtocolEvent.ChunkUnloaded -> {
                 if (!closing.get()) chunks.remove(chunkKey(event.x, event.z))
                 return
+            }
+
+            // 位置增量只更新缓存：它每秒可达上百条，且每条都带完整快照，投递出去只会
+            // 把消费者的缓冲填满，却不带来任何新信息。
+            is ProtocolEvent.EntityUpdated -> {
+                if (!closing.get()) entities[event.entity.id] = event.entity
+                return
+            }
+
+            // 增删是里程碑，走事件流；缓存先写，保证消费者收到事件时一定能查到。
+            is ProtocolEvent.EntitySpawned -> {
+                if (!closing.get()) entities[event.entity.id] = event.entity
+            }
+
+            is ProtocolEvent.EntityRemoved -> {
+                if (!closing.get()) event.ids.forEach(entities::remove)
             }
 
             else -> Unit
@@ -189,6 +233,7 @@ public class Session internal constructor(
         inbox.close()
         actor?.cancel()
         chunks.clear()
+        entities.clear()
         mutableState.value = SessionState.CLOSED
         outbox.close()
         // 网络线程上不能做阻塞关闭；交回调度器。
@@ -246,6 +291,19 @@ public class Session internal constructor(
         // 这里的穷尽分支跟上协议事件的增长——新增事件没有处理策略时应当编译失败。
         is ProtocolEvent.ChunkLoaded, is ProtocolEvent.ChunkUnloaded -> true
 
+        is ProtocolEvent.EntitySpawned -> {
+            emit(ClientEvent.EntitySpawned(event.entity))
+            true
+        }
+
+        is ProtocolEvent.EntityRemoved -> {
+            emit(ClientEvent.EntityRemoved(event.ids))
+            true
+        }
+
+        // 位置增量已在 onProtocolEvent 里写入缓存，不进事件流。
+        is ProtocolEvent.EntityUpdated -> true
+
         // 登录会话不会收到状态查询结果。
         is ProtocolEvent.StatusReceived -> true
 
@@ -285,6 +343,7 @@ public class Session internal constructor(
     private suspend fun finish() {
         if (!finished.compareAndSet(false, true)) return
         chunks.clear()
+        entities.clear()
         mutableState.value = SessionState.CLOSED
         try {
             // 服务端或协议先断开时也要回收连接资源；本方法幂等。

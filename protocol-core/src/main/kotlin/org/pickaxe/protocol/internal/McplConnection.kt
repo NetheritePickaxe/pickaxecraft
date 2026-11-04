@@ -25,6 +25,14 @@ import org.geysermc.mcprotocollib.protocol.data.status.handler.ServerPingTimeHan
 import org.geysermc.mcprotocollib.protocol.packet.common.serverbound.ServerboundClientInformationPacket
 import org.geysermc.mcprotocollib.protocol.packet.configuration.clientbound.ClientboundRegistryDataPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundLoginPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundAddEntityPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundEntityPositionSyncPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundMoveEntityPosPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundMoveEntityPosRotPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundMoveEntityRotPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundRemoveEntitiesPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundRotateHeadPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundTeleportEntityPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundPlayerPositionPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundChunkBatchFinishedPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundForgetLevelChunkPacket
@@ -40,6 +48,7 @@ import org.pickaxe.protocol.ProtocolPhase
 import org.pickaxe.protocol.ServerAddress
 import org.pickaxe.protocol.ServerStatus
 import org.pickaxe.protocol.world.ChunkColumn
+import org.pickaxe.protocol.world.TrackedEntity
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.util.concurrent.Executor
@@ -107,6 +116,15 @@ internal class McplConnection(
     private var pitch: Float = 0f
     private var chunkTotal: Int = 0
     private var playerLoadedSent: Boolean = false
+
+    /**
+     * 已跟踪的实体，只在网络线程上读写。
+     *
+     * 之所以在适配层留一份：移动包大多是**相对量**，只有叠加到上一状态才有意义，
+     * 而“上一状态”正是本层累积出来的事实。上层拿到的是叠加后的完整快照，
+     * 不需要自己重放增量。
+     */
+    private val entities = HashMap<Int, TrackedEntity>()
 
     /** 配置阶段收到的维度类型表；下标即 Login 包里的维度 id。 */
     private var dimensions: List<DimensionShape> = emptyList()
@@ -230,6 +248,57 @@ internal class McplConnection(
             is ClientboundForgetLevelChunkPacket ->
                 emit(ProtocolEvent.ChunkUnloaded(packet.x, packet.z))
 
+            is ClientboundAddEntityPacket -> spawnEntity(packet)
+
+            is ClientboundRemoveEntitiesPacket -> removeEntities(packet.entityIds)
+
+            is ClientboundMoveEntityPosPacket -> updateEntity(packet.entityId) { entity ->
+                entity.copy(
+                    x = entity.x + packet.moveX,
+                    y = entity.y + packet.moveY,
+                    z = entity.z + packet.moveZ,
+                )
+            }
+
+            is ClientboundMoveEntityRotPacket -> updateEntity(packet.entityId) { entity ->
+                entity.copy(yaw = packet.yaw, pitch = packet.pitch)
+            }
+
+            is ClientboundMoveEntityPosRotPacket -> updateEntity(packet.entityId) { entity ->
+                entity.copy(
+                    x = entity.x + packet.moveX,
+                    y = entity.y + packet.moveY,
+                    z = entity.z + packet.moveZ,
+                    yaw = packet.yaw,
+                    pitch = packet.pitch,
+                )
+            }
+
+            is ClientboundRotateHeadPacket -> updateEntity(packet.entityId) { entity ->
+                entity.copy(headYaw = packet.headYaw)
+            }
+
+            is ClientboundEntityPositionSyncPacket -> updateEntity(packet.id) { entity ->
+                entity.copy(
+                    x = packet.position.x,
+                    y = packet.position.y,
+                    z = packet.position.z,
+                    yaw = packet.yRot,
+                    pitch = packet.xRot,
+                )
+            }
+
+            is ClientboundTeleportEntityPacket -> updateEntity(packet.id) { entity ->
+                val relative = packet.relatives
+                entity.copy(
+                    x = if (PositionElement.X in relative) entity.x + packet.position.x else packet.position.x,
+                    y = if (PositionElement.Y in relative) entity.y + packet.position.y else packet.position.y,
+                    z = if (PositionElement.Z in relative) entity.z + packet.position.z else packet.position.z,
+                    yaw = if (PositionElement.Y_ROT in relative) entity.yaw + packet.yRot else packet.yRot,
+                    pitch = if (PositionElement.X_ROT in relative) entity.pitch + packet.xRot else packet.xRot,
+                )
+            }
+
             is ClientboundChunkBatchFinishedPacket -> acknowledgeChunkBatch(packet)
 
             else -> Unit
@@ -294,6 +363,49 @@ internal class McplConnection(
                 e,
             )
         }
+    }
+
+    /**
+     * 实体生成。
+     *
+     * 同一 id 再次出现时直接覆盖：服务端在视野切换后可能整段重发，语义是
+     * “以最新一次为准”，不是错误。
+     */
+    private fun spawnEntity(packet: ClientboundAddEntityPacket) {
+        val entity = TrackedEntity(
+            id = packet.entityId,
+            uuid = packet.uuid,
+            type = packet.type.name,
+            x = packet.x,
+            y = packet.y,
+            z = packet.z,
+            yaw = packet.yaw,
+            pitch = packet.pitch,
+            headYaw = packet.headYaw,
+        )
+        entities[packet.entityId] = entity
+        emit(ProtocolEvent.EntitySpawned(entity))
+    }
+
+    /** 移除实体；未跟踪的 id 静默跳过——没有可撤销的状态。 */
+    private fun removeEntities(ids: IntArray) {
+        val removed = ids.filter { entities.remove(it) != null }
+        if (removed.isEmpty()) return
+        emit(ProtocolEvent.EntityRemoved(removed))
+    }
+
+    /**
+     * 实体状态更新。
+     *
+     * 未知 id 的增量包被丢弃而不是报错：增量只有叠加到已知状态上才有意义，
+     * 而“尚未收到过该实体”本身是合法状态。真正的解析失败仍会在解码阶段抛出，
+     * 不会在这里被吞掉。
+     */
+    private fun updateEntity(id: Int, change: (TrackedEntity) -> TrackedEntity) {
+        val current = entities[id] ?: return
+        val updated = change(current)
+        entities[id] = updated
+        emit(ProtocolEvent.EntityUpdated(updated))
     }
 
     private fun reportPhase() {

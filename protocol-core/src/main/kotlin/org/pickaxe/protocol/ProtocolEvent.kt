@@ -1,6 +1,7 @@
 package org.pickaxe.protocol
 
 import org.pickaxe.protocol.world.ChunkColumn
+import org.pickaxe.protocol.world.TrackedEntity
 
 /**
  * 客户端视角的协议阶段。
@@ -88,6 +89,25 @@ public sealed interface ProtocolEvent {
         public val x: Int,
         public val z: Int,
     ) : ProtocolEvent
+
+    /**
+     * 一个实体进入视野。[entity] 是首次观测到的完整状态。
+     *
+     * 与区块一样属于**世界数据**：出生与传送时会成批出现，单项很小但频率远高于控制事件。
+     * 监听者应当按 id 写入缓存并立即返回。
+     */
+    public data class EntitySpawned(public val entity: TrackedEntity) : ProtocolEvent
+
+    /**
+     * 已跟踪实体的位置或朝向发生变化。[entity] 是叠加增量之后的完整状态。
+     *
+     * 服务端的移动包大多是相对量（1/4096 格），适配层负责叠加；上层永远看到绝对坐标。
+     * 未知 id 的增量包会被丢弃：增量只有叠加到已知状态上才有意义。
+     */
+    public data class EntityUpdated(public val entity: TrackedEntity) : ProtocolEvent
+
+    /** 服务端要求丢弃这些实体：离开视野、死亡或消失。未跟踪的 id 直接忽略。 */
+    public data class EntityRemoved(public val ids: List<Int>) : ProtocolEvent
 
     /** 会话终止，且这是本次连接唯一一次终止通知。 */
     public data class Closed(public val reason: ProtocolCloseReason) : ProtocolEvent

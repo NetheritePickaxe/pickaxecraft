@@ -9,6 +9,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import net.kyori.adventure.text.Component
 import net.minestom.server.MinecraftServer
+import net.minestom.server.coordinate.Pos
+import net.minestom.server.coordinate.Vec
+import net.minestom.server.entity.EntityCreature
+import net.minestom.server.entity.EntityType
 import net.minestom.server.event.player.AsyncPlayerConfigurationEvent
 import net.minestom.server.instance.InstanceContainer
 import net.minestom.server.instance.block.Block
@@ -27,6 +31,7 @@ import org.pickaxe.protocol.ServerAddress
 import java.net.ServerSocket
 import java.time.Duration
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.math.abs
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
@@ -206,6 +211,67 @@ class ClientSessionTest {
     }
 
     @Test
+    fun `实体的生成、移动与移除对客户端可见`() = runBlocking {
+        val client = MinecraftClient()
+        var removedId = 0
+        try {
+            val session = client.connect(address, "EntityBot")
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+
+                // 静止的僵尸：位置与朝向都由构造参数决定，便于逐项对账。
+                val zombie = EntityCreature(EntityType.ZOMBIE)
+                zombie.setNoGravity(true)
+                zombie.setInstance(instance, Pos(ZOMBIE_START_X, GROUND_LEVEL, 3.5)).join()
+                removedId = zombie.entityId
+
+                log.await { it is ClientEvent.EntitySpawned && it.entity.id == removedId }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.entity(removedId) != null }
+
+                val spawned = assertNotNull(session.entity(removedId), "实体生成后应可在会话中查到")
+                assertEquals("ZOMBIE", spawned.type, "实体类型应来自协议枚举")
+                assertEquals(zombie.uuid, spawned.uuid, "UUID 应与服务端一致")
+                assertEquals(zombie.position.x, spawned.x, POSITION_TOLERANCE, "生成位置 x 应一致")
+                assertEquals(zombie.position.y, spawned.y, POSITION_TOLERANCE, "生成位置 y 应一致")
+                assertEquals(zombie.position.z, spawned.z, POSITION_TOLERANCE, "生成位置 z 应一致")
+                assertTrue(removedId in session.entities().keys, "快照应包含该实体")
+
+                // 绝对位移：服务端的传送带完整坐标，客户端直接替换。
+                zombie.teleport(Pos(TELEPORT_X, GROUND_LEVEL, 3.5, 90f, 20f)).join()
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    val current = session.entity(removedId)
+                    current != null && current.x == TELEPORT_X && current.yaw == 90f && current.pitch == 20f
+                }
+
+                // 相对位移：服务端每 tick 只发 1/4096 格的增量（short 编码），
+                // 客户端必须自己叠加。漏加或重复叠加都会在下面的对账里暴露。
+                zombie.setVelocity(Vec(MOVE_SPEED, 0.0, 0.0))
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { zombie.position.x > TELEPORT_X + 1.0 }
+                zombie.setVelocity(Vec.ZERO)
+
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    val current = session.entity(removedId)
+                    current != null && abs(current.x - zombie.position.x) < POSITION_TOLERANCE
+                }
+
+                // 移除：事件与缓存都要跟上。
+                zombie.remove()
+                log.await { it is ClientEvent.EntityRemoved && removedId in it.ids }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.entity(removedId) == null }
+                assertTrue(removedId !in session.entities().keys, "移除后快照里不应再有该实体")
+            } finally {
+                log.close()
+                session.close()
+            }
+
+            assertEquals(0, session.entityCount, "关闭后不应继续持有实体")
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `两个客户端互不影响`() = runBlocking {
         val first = MinecraftClient()
         val second = MinecraftClient()
@@ -349,5 +415,23 @@ class ClientSessionTest {
         const val OVERWORLD_MIN_Y: Int = -64
         const val OVERWORLD_HEIGHT: Int = 384
         const val OVERWORLD_SECTIONS: Int = OVERWORLD_HEIGHT / 16
+
+        /** 石头平台的顶面高度，玩家与实体都站在这一层。 */
+        const val GROUND_LEVEL: Double = 40.0
+
+        /** 僵尸的生成位置与传送目标；都在出生点所在区块内，不触发额外区块加载。 */
+        const val ZOMBIE_START_X: Double = 3.5
+        const val TELEPORT_X: Double = 6.5
+
+        /** 水平速度（格/秒），足以在几百毫秒内跨过一整格。 */
+        const val MOVE_SPEED: Double = 4.0
+
+        /**
+         * 位置对账容差。
+         *
+         * 相对移动以 1/4096 格编码，叠加多步后会留下少量量化误差；这个量级远小于
+         * 一格，足够区分“真的对上了”和“漏加/重复加了一次增量”。
+         */
+        const val POSITION_TOLERANCE: Double = 0.02
     }
 }
