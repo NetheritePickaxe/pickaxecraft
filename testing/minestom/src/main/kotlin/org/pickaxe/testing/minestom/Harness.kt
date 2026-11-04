@@ -8,6 +8,7 @@ import net.minestom.server.command.builder.Command
 import net.minestom.server.command.builder.CommandContext
 import net.minestom.server.command.builder.arguments.ArgumentType
 import net.minestom.server.coordinate.Pos
+import net.minestom.server.component.DataComponents
 import net.minestom.server.entity.EntityCreature
 import net.minestom.server.entity.EntityType
 import net.minestom.server.entity.Player
@@ -23,6 +24,8 @@ import net.minestom.server.event.player.PlayerLoadedEvent
 import net.minestom.server.event.player.PlayerMoveEvent
 import net.minestom.server.event.player.PlayerSpawnEvent
 import net.minestom.server.instance.InstanceContainer
+import net.minestom.server.item.ItemStack
+import net.minestom.server.item.Material
 import net.minestom.server.instance.block.Block
 import net.minestom.server.instance.generator.Generator
 import org.pickaxe.protocol.ProtocolVersion
@@ -210,6 +213,23 @@ public fun spawnZombie(instance: InstanceContainer, x: Double, y: Double, z: Dou
     EntityCreature(EntityType.ZOMBIE).apply {
         setInstance(instance, Pos(x, y, z))
     }
+
+/**
+ * 把一个带自定义名称的物品塞进玩家背包，返回是否成功。
+ *
+ * 背包更新会随 `set_player_inventory` 下发给客户端——这是「物品键名与自定义名
+ * 能穿过协议」的服务端侧入口。
+ */
+public fun giveNamedItem(username: String, material: Material, count: Int, name: String?): Boolean {
+    val player = MinecraftServer.getConnectionManager().getOnlinePlayerByUsername(username) ?: return false
+    val builder = ItemStack.builder(material).amount(count)
+    // null 表示不设组件（区别于“设一个空名字”——那是真实存在的组件值）。
+    val stack = if (name != null) builder.set(DataComponents.CUSTOM_NAME, Component.text(name)).build()
+    else builder.build()
+    val added = player.inventory.addItemStack(stack)
+    println("event=server.give name=$username item=${material.key()} count=$count named=$name added=$added")
+    return added
+}
 
 /**
  * 修改玩家的属性基值（服务端侧），并把新值打印出来。

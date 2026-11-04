@@ -19,6 +19,7 @@ import org.geysermc.mcprotocollib.protocol.data.game.PlayerListEntryAction
 import org.geysermc.mcprotocollib.protocol.data.game.entity.player.HandPreference
 import org.geysermc.mcprotocollib.protocol.data.game.entity.player.PositionElement
 import org.geysermc.mcprotocollib.protocol.data.game.item.ItemStack
+import org.geysermc.mcprotocollib.protocol.data.game.item.component.DataComponentTypes
 import org.geysermc.mcprotocollib.protocol.data.game.level.block.BlockChangeEntry
 import org.geysermc.mcprotocollib.protocol.data.game.setting.ChatVisibility
 import org.geysermc.mcprotocollib.protocol.data.game.setting.ParticleStatus
@@ -89,6 +90,7 @@ import org.pickaxe.protocol.entity.EntityAttributeModifier
 import org.pickaxe.protocol.chat.ChatKind
 import org.pickaxe.protocol.chat.ChatMessage
 import org.pickaxe.protocol.inventory.Container
+import org.pickaxe.protocol.item.ItemKeys
 import org.pickaxe.protocol.inventory.Hand
 import org.pickaxe.protocol.inventory.InventoryItem
 import org.pickaxe.protocol.inventory.SlotClick
@@ -887,7 +889,20 @@ internal class McplConnection(
     private fun containerFor(windowId: Int): MutableContainer =
         containers.getOrPut(windowId) { MutableContainer(windowId) }
 
-    private fun ItemStack.toInventoryItem(): InventoryItem = InventoryItem(itemId = id, count = amount)
+    /**
+     * 物品堆转公共快照。
+     *
+     * 键名从本仓库的注册表还原；自定义名称从组件补丁里取——组件可能显式删除该键
+     * （补丁语义），取不到就是 null，与「没有设置过」不可区分，两者对外的含义一致。
+     */
+    private fun ItemStack.toInventoryItem(): InventoryItem = InventoryItem(
+        itemId = id,
+        count = amount,
+        key = ItemKeys.key(id),
+        customName = dataComponentsPatch
+            ?.get(DataComponentTypes.CUSTOM_NAME)
+            ?.let(ComponentText::text),
+    )
 
     private fun reportPhase() {
         val phase = when (packetProtocol.inboundState) {

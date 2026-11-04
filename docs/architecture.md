@@ -380,6 +380,17 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 
 实现记录见 [M4l 实施记录](plans/m4l-attributes.md) 与 [M4n 实施记录](plans/m4n-entity-interaction.md)。
 
+### 5.15 M4m 已落地的具体形态：物品键名与自定义名
+
+- **键名表是版本资产**：`minecraft:item` 注册表不随登录下发，协议库的 `ItemStack` 只有数字
+  id。`ItemKeys` 由 Minestom 注册表导出（1537 项、id 连续 0..1536，按下标直查），升级
+  协议库时必须重新导出——表错了就是“所有物品都叫错名字”。
+- `InventoryItem` 新增 `key` 与 `customName`；`custom_name` 组件的空文本是合法值，
+  与 null（没有组件）语义不同，两者都不做归一。
+- 联调用例：带名石头 + 无名钻石，断言一个 `customName` 有值、另一个是 null。
+
+实现记录见 [M4m 实施记录](plans/m4m-item-names.md)。
+
 ## 6. libGDX 与平台约束
 
 共享发布产物使用 Java 21 字节码，由 `verifyBytecode`（major 65）自动断言；构建、CLI 与测试仍使用 Java 25。libGDX 官方当前推荐 JDK 17/21，因此下游图形客户端不被迫使用 Java 25；启用 Minestom 单人模式的 Desktop 组合根除外。

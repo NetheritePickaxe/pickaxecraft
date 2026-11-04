@@ -388,7 +388,12 @@ private fun describeChunk(session: Session): String {
     val below = if (column.sectionAt(y - 1) == null) "越界" else session.blockStateAt(x, y - 1, z).toString()
     // 玩家列表与实体表分开统计：前者是“谁在线”，后者是“视野里有什么”。
     val players = session.players().values.map { it.name ?: it.uuid.toString() }
-    val inventory = session.inventory()?.let { "slots=${it.slots.size} used=${it.usedSlots}" } ?: "未知"
+    val inventory = session.inventory()?.let {
+        val named = it.usedSlots.takeIf { n -> n > 0 }
+            ?.let { n -> " items=" + it.slots.filterNotNull().joinToString(",") { item -> item.key ?: "#${item.itemId}" } }
+            .orEmpty()
+        "slots=${it.slots.size} used=${it.usedSlots}$named"
+    } ?: "未知"
     return "chunk x=${column.x} z=${column.z} minY=${column.minY} sections=${column.sectionCount} " +
         "cached=${session.loadedChunks} entities=${session.entityCount} chat=${session.chatCount} players=$players " +
         "block=($x, $y, $z):${session.blockStateAt(x, y, z)} below=$below " +

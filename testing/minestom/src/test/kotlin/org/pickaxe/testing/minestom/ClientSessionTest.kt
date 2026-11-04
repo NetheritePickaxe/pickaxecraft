@@ -1060,6 +1060,49 @@ class ClientSessionTest {
     }
 
     @Test
+    fun `物品键名与自定义名可读`() = runBlocking {
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, ITEM_USERNAME)
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+                assertTrue(
+                    session.inventory()?.slots?.all { it == null } == true,
+                    "测试开始时背包应为空",
+                )
+
+                // 服务端塞物品：Minestom 会把背包槽更新下发给客户端。
+                assertTrue(
+                    withContext(Dispatchers.IO) {
+                        giveNamedItem(ITEM_USERNAME, Material.STONE, 16, NAMED_ITEM_NAME) &&
+                            giveNamedItem(ITEM_USERNAME, Material.DIAMOND, 1, null)
+                    },
+                    "服务端应能塞进物品",
+                )
+
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    val slots = session.inventory()?.slots.orEmpty()
+                    slots.any { it?.key == "minecraft:stone" && it.count == 16 && it.customName == NAMED_ITEM_NAME } &&
+                        slots.any { it?.key == "minecraft:diamond" && it.customName == null }
+                }
+                val stone = session.inventory()?.slots.orEmpty()
+                    .first { it?.key == "minecraft:stone" }
+                assertEquals(NAMED_ITEM_NAME, stone?.customName, "custom_name 组件应穿过协议")
+                val diamond = session.inventory()?.slots.orEmpty()
+                    .first { it?.key == "minecraft:diamond" }
+                assertNull(diamond?.customName, "没有组件就没有名字，不应伪造空串")
+            } finally {
+                log.close()
+                session.close()
+            }
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `实体属性可读且变化会推给本人`() = runBlocking {
         val client = MinecraftClient()
         try {
@@ -1448,6 +1491,10 @@ class ClientSessionTest {
         const val MOB_USERNAME: String = "MobBot"
         const val MOB_ZOMBIE_X: Double = 2.5
         const val ATTACK_DAMAGE: Double = 3.0
+
+        /** 物品键名用例：服务端塞一块带名字的石头与一颗无名钻石。 */
+        const val ITEM_USERNAME: String = "ItemBot"
+        const val NAMED_ITEM_NAME: String = "试金石"
 
         const val EVENT_TIMEOUT_MILLIS: Long = 10_000
         val MILESTONE_TIMEOUT: Duration = Duration.ofSeconds(10)

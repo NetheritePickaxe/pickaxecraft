@@ -3,16 +3,21 @@ package org.pickaxe.protocol.inventory
 /**
  * 容器里的一个物品堆。
  *
- * [itemId] 是协议里的全局物品 id（`minecraft:item` 注册表下标），不是可读名字：
- * 名字与图标来自下游客户端的版本数据表，本库不持有。数量是服务端下发的堆叠数，
- * 空槽用 `null` 表示，而不是 `count = 0` 的物品。
+ * [itemId] 是协议里的全局物品 id（`minecraft:item` 注册表下标）；[key] 是本仓库按当前协议号
+ * 还原的键名（如 `minecraft:stone`）。数量是服务端下发的堆叠数，空槽用 `null` 表示，
+ * 而不是 `count = 0` 的物品。
  *
- * 物品组件（附魔、自定义名称、耐久）不在本层建模：它们是一张“组件 id → 值”的补丁表，
+ * 物品组件只取一个最有用的：[customName] 是服务端显式设置的显示名（已渲染成纯文本）。
+ * 附魔、耐久之类的组件仍不在本层建模——那是一张“组件 id → 值”的补丁表，
  * 解析它需要另一套注册表与类型系统，属于下游渲染与逻辑层。
  */
 public data class InventoryItem(
     public val itemId: Int,
     public val count: Int,
+    /** 物品键名（如 `minecraft:stone`）；id 超出注册表时为 null。 */
+    public val key: String? = null,
+    /** 服务端设置的显示名（组件 `custom_name`，已渲染成纯文本）；没有就是 null。 */
+    public val customName: String? = null,
 )
 
 /**
