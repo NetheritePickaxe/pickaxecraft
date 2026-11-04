@@ -75,6 +75,6 @@ CI 在 Ubuntu 上以同样的命令执行（`.github/workflows/ci.yml`）。
 - 发布产物已用独立最小工程验证：mavenLocal 解析、协议库作为传递依赖进入运行时类路径、下游编译通过。
 - **0.x 阶段不承诺源码或二进制兼容**：公共 API 可能随版本变更且不提前通告，请锁定精确版本。首个下游消费者出现后冻结 API 基线并接入二进制兼容校验，1.0 起遵循语义化版本。
 - 通过 Gradle 消费时，`protocol-core` 的运行时依赖（协议库等）经模块元数据（`.module`）传递；纯 Maven 消费者的 POM 只含 `api` 依赖，当前仅支持 Gradle 消费。
-- 仓库尚未声明许可证；发布到公共仓库前必须补齐。
+- 本项目以 [MIT](LICENSE) 开源，发布 POM 中的许可证字段同步声明；第三方依赖的许可证清单见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)，升级或新增依赖时必须同步更新。
 
 核心技术基线：Kotlin/JVM、MCProtocolLib 26.2（协议 776）、构建与 CLI 使用 Java 25、共享发布产物使用 Java 21 字节码、Gradle Daemon JDK 25。目标宿主为 libGDX Desktop、Android 与 iOS（移动平台待验证）；Web/HTML5 不在目标内。
