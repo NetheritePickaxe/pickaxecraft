@@ -8,7 +8,7 @@ Minestom 在本仓库只用于 `testing:minestom` 联调。最终客户端若需
 
 下游渲染以 libGDX GL20/GLES 2.0 + ANGLE 为基线，验证 ANGLE Vulkan 并保留回退路径，跟踪 MC 原版的 Vulkan 演进；所有图形依赖仍只存在于外部客户端仓库。
 
-> 当前进度：M2 出生链路已完成，M4a 区块内容已可查询（`Session.blockStateAt` / `biomeAt` / `chunk`，与服务端 `stateId` 对账），M4b 实体已可跟踪（`Session.entity` / `entities`，坐标与服务端对账），M4c 重生换维度可用，M4d 玩家列表与实体名字可解析（`Session.players` / `nameOf`），M4e 聊天可读（`Session.chat`，含格式与删除），M4f 聊天可发（`Session.sendChat` / `sendCommand`），M4g 移动可发（`Session.moveTo` / `look`，只发变化的分量），M4h 背包可读（`Session.inventory` / `container` / `heldItem`，`selectHotbarSlot` 切换选中格），M4i 自身状态与装备可读（`Session.status`、`TrackedEntity.equipment`），M4j 容器可操作（`Session.clickSlot` / `closeContainer` / `cursorItem`，不做本地预测），M4k 方块可交互（`Session.digBlock` / `useOnBlock`，服务端方块变更写回缓存，交互序号作回执），M4l 属性可读（`Session.attributes(entityId)`），M4n 实体可交互（`Session.attack` / `interactWith` / `swing`，伤害包转事件）；M4m 物品可读名（`InventoryItem.key` / `customName`）；其余物品组件、状态效果与 Android 运行时验证（M3）尚未开始。
+> 当前进度：M2 出生链路已完成，M4a 区块内容已可查询（`Session.blockStateAt` / `biomeAt` / `chunk`，与服务端 `stateId` 对账），M4b 实体已可跟踪（`Session.entity` / `entities`，坐标与服务端对账），M4c 重生换维度可用，M4d 玩家列表与实体名字可解析（`Session.players` / `nameOf`），M4e 聊天可读（`Session.chat`，含格式与删除），M4f 聊天可发（`Session.sendChat` / `sendCommand`），M4g 移动可发（`Session.moveTo` / `look`，只发变化的分量），M4h 背包可读（`Session.inventory` / `container` / `heldItem`，`selectHotbarSlot` 切换选中格），M4i 自身状态与装备可读（`Session.status`、`TrackedEntity.equipment`），M4j 容器可操作（`Session.clickSlot` / `closeContainer` / `cursorItem`，不做本地预测），M4k 方块可交互（`Session.digBlock` / `useOnBlock`，服务端方块变更写回缓存，交互序号作回执），M4l 属性可读（`Session.attributes(entityId)`），M4m 物品可读名（`InventoryItem.key` / `customName`），M4n 实体可交互（`Session.attack` / `interactWith` / `interactAt` / `swing`，伤害包转 `EntityDamaged` 事件）；其余物品组件、状态效果与 Android 运行时验证（M3）尚未开始。
 
 ## 规划文档
 
@@ -67,5 +67,14 @@ CI 在 Ubuntu 上以同样的命令执行（`.github/workflows/ci.yml`）。
 
 - 依赖版本唯一来源：`gradle/libs.versions.toml`
 - 协议版本唯一来源：`protocol-core` 的 `ProtocolVersion` 常量，由 `ProtocolVersionTest` 与 MCProtocolLib 内的 codec 常量对账
+
+## 发布与兼容
+
+- 坐标：`org.pickaxe:protocol-core` 与 `org.pickaxe:client-core`，当前版本 `0.1.0-SNAPSHOT`。
+- 本地安装：`./gradlew publishToMavenLocal`（`protocol-core`、`client-core` 及源码 jar）。发布目标仓库在首个外部消费者出现后再定。
+- 发布产物已用独立最小工程验证：mavenLocal 解析、协议库作为传递依赖进入运行时类路径、下游编译通过。
+- **0.x 阶段不承诺源码或二进制兼容**：公共 API 可能随版本变更且不提前通告，请锁定精确版本。首个下游消费者出现后冻结 API 基线并接入二进制兼容校验，1.0 起遵循语义化版本。
+- 通过 Gradle 消费时，`protocol-core` 的运行时依赖（协议库等）经模块元数据（`.module`）传递；纯 Maven 消费者的 POM 只含 `api` 依赖，当前仅支持 Gradle 消费。
+- 仓库尚未声明许可证；发布到公共仓库前必须补齐。
 
 核心技术基线：Kotlin/JVM、MCProtocolLib 26.2（协议 776）、构建与 CLI 使用 Java 25、共享发布产物使用 Java 21 字节码、Gradle Daemon JDK 25。目标宿主为 libGDX Desktop、Android 与 iOS（移动平台待验证）；Web/HTML5 不在目标内。
