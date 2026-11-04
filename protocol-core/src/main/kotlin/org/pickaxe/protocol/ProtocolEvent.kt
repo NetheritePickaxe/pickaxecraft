@@ -160,6 +160,24 @@ public sealed interface ProtocolEvent {
     public data class ChatDeleted(public val signatureId: Int) : ProtocolEvent
 
     /**
+     * 本端生命值、饥饿值与饱和度更新。
+     *
+     * 三者走同一个包，语义上是一体的：伤害会同时改动生命与饥饿带来的恢复。
+     */
+    public data class HealthUpdated(
+        public val health: Float,
+        public val food: Int,
+        public val saturation: Float,
+    ) : ProtocolEvent
+
+    /** 本端经验条、等级与总经验更新。等级与进度由服务端各自下发，可能分别变化。 */
+    public data class ExperienceUpdated(
+        public val bar: Float,
+        public val level: Int,
+        public val total: Int,
+    ) : ProtocolEvent
+
+    /**
      * 玩家列表发生变化。
      *
      * 一个包对应一个事件，无论包里有多少条目：条目数量由服务端的人数决定，按条发事件

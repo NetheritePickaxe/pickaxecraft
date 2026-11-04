@@ -1,6 +1,6 @@
 # 项目结构
 
-状态：M0–M2 已完成（连接链路与出生），M4a–M4h 已完成（区块内容、实体跟踪、重生换维度、玩家身份、聊天读写、移动上行、背包只读）；Headless 为第一阶段，独立 libGDX 客户端为长期下游
+状态：M0–M2 已完成（连接链路与出生），M4a–M4i 已完成（区块内容、实体跟踪、重生换维度、玩家身份、聊天读写、移动上行、背包只读、自身状态与装备）；Headless 为第一阶段，独立 libGDX 客户端为长期下游
 日期：2026-11-04
 
 ## 1. 结构原则
@@ -51,6 +51,7 @@ pickaxecraft/
 │       ├── SessionState.kt
 │       ├── ClientEvent.kt
 │       ├── ClientException.kt
+│       ├── PlayerStatus.kt         # 生命、饥饿、经验快照（字段可空）
 │       ├── ClientOptions.kt
 │       └── WorldSnapshot.kt        # 维度、本端实体 id、位置与区块数
 │
@@ -127,7 +128,7 @@ testing:minestom ──► client-core + protocol-core（版本对账）+ Minest
   实体查询（`entity` / `entities` / `entityCount`）、玩家查询（`players` / `player` /
   `playerCount` / `nameOf`）、聊天（`chat` / `chatCount` 回看，`sendChat` / `sendCommand` 上行）、
   移动（`moveTo` 声明位置与朝向，`look` 只改朝向）、背包（`inventory` / `container` / `heldItem`
-  读取，`selectHotbarSlot` 上行）
+  读取，`selectHotbarSlot` 上行）、自身状态（`status` 快照，实体快照带 `equipment`）
   与幂等 `close`。
 - `ClientEvent` / `ClientException`：有序事件（含 `JoinedWorld` / `PositionUpdated` /
   `ChunksReceived` / `EntitySpawned` / `EntityRemoved` / `PlayerListChanged` /

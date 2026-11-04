@@ -18,6 +18,7 @@ import net.minestom.server.crypto.MessageSignature
 import net.minestom.server.crypto.SignedMessageBody
 import net.minestom.server.entity.EntityCreature
 import net.minestom.server.entity.EntityType
+import net.minestom.server.entity.EquipmentSlot
 import net.minestom.server.entity.Player
 import net.minestom.server.event.player.AsyncPlayerConfigurationEvent
 import net.minestom.server.instance.InstanceContainer
@@ -885,6 +886,76 @@ class ClientSessionTest {
     }
 
     @Test
+    fun `生命、饥饿、经验与装备对客户端可见`() = runBlocking {
+        // 三件事各走独立的路：生命/饥饿一个包、经验一个包、装备一个包。
+        // 装备能读到，靠的是它是独立包——不像实体元数据那样依赖实体层级。
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, STATE_USERNAME)
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                val player = assertNotNull(
+                    MinecraftServer.getConnectionManager().getOnlinePlayerByUsername(STATE_USERNAME),
+                    "服务端应已保存该玩家",
+                )
+
+                player.setHealth(STATE_HEALTH)
+                player.setFood(STATE_FOOD)
+                player.setFoodSaturation(STATE_SATURATION)
+
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    val status = session.status.value
+                    status.health == STATE_HEALTH &&
+                        status.food == STATE_FOOD &&
+                        status.foodSaturation == STATE_SATURATION
+                }
+                log.await { it is ClientEvent.StatusChanged && it.status.health == STATE_HEALTH }
+
+                player.setLevel(STATE_LEVEL)
+                player.setExp(STATE_EXPERIENCE_BAR)
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    val status = session.status.value
+                    status.level == STATE_LEVEL && status.experienceBar == STATE_EXPERIENCE_BAR
+                }
+                // 经验包里的总量由服务端决定；Minestom 恒发 0，这里只断言“读得到”，不假设数值。
+                assertNotNull(session.status.value.totalExperience, "经验包应带总量字段")
+                assertEquals(STATE_HEALTH, session.status.value.health, "经验包不应影响生命值")
+
+                // 装备：独立包，进实体快照；清空时槽位应当消失而不是留下“数量 0 的物品”。
+                val zombie = EntityCreature(EntityType.ZOMBIE)
+                zombie.setNoGravity(true)
+                zombie.setInstance(instance, Pos(6.5, GROUND_LEVEL, 6.5)).join()
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.entity(zombie.entityId) != null }
+
+                zombie.setEquipment(EquipmentSlot.HELMET, ItemStack.of(Material.GOLDEN_HELMET))
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    session.entity(zombie.entityId)?.equipment?.get(EQUIPMENT_HELMET)?.itemId ==
+                        Material.GOLDEN_HELMET.id()
+                }
+                assertEquals(
+                    1,
+                    session.entity(zombie.entityId)?.equipment?.get(EQUIPMENT_HELMET)?.count,
+                    "装备的物品堆数量应为 1",
+                )
+
+                zombie.setEquipment(EquipmentSlot.HELMET, ItemStack.AIR)
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    session.entity(zombie.entityId)?.equipment?.containsKey(EQUIPMENT_HELMET) == false
+                }
+                zombie.remove()
+            } finally {
+                log.close()
+                session.close()
+            }
+
+            assertNull(session.status.value.health, "关闭后不应继续持有生命状态")
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `事件缓冲写满时终止会话而不是静默丢弃`() = runBlocking {
         val client = MinecraftClient(ClientOptions(eventBufferCapacity = 1))
         try {
@@ -1002,6 +1073,15 @@ class ClientSessionTest {
         const val CHEST_TITLE: String = "测试箱子"
         const val CHEST_TYPE: String = "GENERIC_9X3"
         const val HELD_SLOT: Int = 3
+
+        /** 自身状态用例：数值由服务端设置，客户端只负责读出来。 */
+        const val STATE_USERNAME: String = "StateBot"
+        const val STATE_HEALTH: Float = 7.5f
+        const val STATE_FOOD: Int = 12
+        const val STATE_SATURATION: Float = 3.5f
+        const val STATE_LEVEL: Int = 5
+        const val STATE_EXPERIENCE_BAR: Float = 0.5f
+        const val EQUIPMENT_HELMET: String = "HELMET"
 
         const val EVENT_TIMEOUT_MILLIS: Long = 10_000
         val MILESTONE_TIMEOUT: Duration = Duration.ofSeconds(10)

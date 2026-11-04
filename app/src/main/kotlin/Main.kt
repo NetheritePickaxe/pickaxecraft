@@ -185,6 +185,10 @@ private fun describe(event: ClientEvent): String = when (event) {
         "event=container.opened window=${event.windowId} type=${event.type} title=${event.title}"
     is ClientEvent.ContainerClosed -> "event=container.closed window=${event.windowId}"
     is ClientEvent.HeldSlotChanged -> "event=held slot=${event.slot}"
+    is ClientEvent.StatusChanged -> with(event.status) {
+        "event=status hp=$health food=$food saturation=$foodSaturation " +
+            "xp=$experienceBar level=$level total=$totalExperience"
+    }
     ClientEvent.Closed -> "event=closed"
     is ClientEvent.Failed -> "event=failed kind=${event.error::class.simpleName} message=${event.error.message}"
 }
@@ -233,7 +237,8 @@ private fun describeChunk(session: Session): String {
     return "chunk x=${column.x} z=${column.z} minY=${column.minY} sections=${column.sectionCount} " +
         "cached=${session.loadedChunks} entities=${session.entityCount} chat=${session.chatCount} players=$players " +
         "block=($x, $y, $z):${session.blockStateAt(x, y, z)} below=$below " +
-        "held=${session.heldSlot} inventory=$inventory"
+        "held=${session.heldSlot} inventory=$inventory " +
+        "hp=${session.status.value.health} level=${session.status.value.level}"
 }
 
 /** 解析后的命令行参数。 */

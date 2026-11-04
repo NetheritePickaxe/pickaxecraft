@@ -8,7 +8,7 @@ Minestom 在本仓库只用于 `testing:minestom` 联调。最终客户端若需
 
 下游渲染以 libGDX GL20/GLES 2.0 + ANGLE 为基线，验证 ANGLE Vulkan 并保留回退路径，跟踪 MC 原版的 Vulkan 演进；所有图形依赖仍只存在于外部客户端仓库。
 
-> 当前进度：M2 出生链路已完成，M4a 区块内容已可查询（`Session.blockStateAt` / `biomeAt` / `chunk`，与服务端 `stateId` 对账），M4b 实体已可跟踪（`Session.entity` / `entities`，坐标与服务端对账），M4c 重生换维度可用，M4d 玩家列表与实体名字可解析（`Session.players` / `nameOf`），M4e 聊天可读（`Session.chat`，含格式与删除），M4f 聊天可发（`Session.sendChat` / `sendCommand`），M4g 移动可发（`Session.moveTo` / `look`，只发变化的分量），M4h 背包可读（`Session.inventory` / `container` / `heldItem`，`selectHotbarSlot` 切换选中格）；容器点击、物品组件、方块交互与 Android 运行时验证（M3）尚未开始。
+> 当前进度：M2 出生链路已完成，M4a 区块内容已可查询（`Session.blockStateAt` / `biomeAt` / `chunk`，与服务端 `stateId` 对账），M4b 实体已可跟踪（`Session.entity` / `entities`，坐标与服务端对账），M4c 重生换维度可用，M4d 玩家列表与实体名字可解析（`Session.players` / `nameOf`），M4e 聊天可读（`Session.chat`，含格式与删除），M4f 聊天可发（`Session.sendChat` / `sendCommand`），M4g 移动可发（`Session.moveTo` / `look`，只发变化的分量），M4h 背包可读（`Session.inventory` / `container` / `heldItem`，`selectHotbarSlot` 切换选中格），M4i 自身状态与装备可读（`Session.status`、`TrackedEntity.equipment`）；容器点击、物品组件、方块交互与 Android 运行时验证（M3）尚未开始。
 
 ## 规划文档
 

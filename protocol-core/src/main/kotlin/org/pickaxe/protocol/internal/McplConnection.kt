@@ -41,10 +41,13 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.Clie
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundMoveEntityRotPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundRemoveEntitiesPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundRotateHeadPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundSetEquipmentPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundSetEntityDataPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundTeleportEntityPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundPlayerPositionPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundSetHeldSlotPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundSetHealthPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundSetExperiencePacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundContainerClosePacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundContainerSetContentPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundContainerSetSlotPacket
@@ -414,6 +417,14 @@ internal class McplConnection(
 
             is ClientboundSetHeldSlotPacket -> setHeldSlot(packet.slot)
 
+            is ClientboundSetHealthPacket ->
+                emit(ProtocolEvent.HealthUpdated(packet.health, packet.food, packet.saturation))
+
+            is ClientboundSetExperiencePacket ->
+                emit(ProtocolEvent.ExperienceUpdated(packet.experience, packet.level, packet.totalExperience))
+
+            is ClientboundSetEquipmentPacket -> applyEquipment(packet)
+
             else -> Unit
         }
 
@@ -579,6 +590,33 @@ internal class McplConnection(
         }
         if (customName == current.customName) return
         updateEntity(packet.entityId) { it.copy(customName = customName) }
+    }
+
+    /**
+     * 实体装备。
+     *
+     * 装备是**独立的包**，不靠元数据下标，因此这里对所有实体都成立——与只读下标 2 的自定义
+     * 名称不同，不需要实体层级表。
+     *
+     * 包里的物品为空表示“把这个槽清空”，不是“本包没提这个槽”，因此要删键而不是保留旧值。
+     * 未知实体的装备直接忽略：没有可更新的状态。
+     */
+    private fun applyEquipment(packet: ClientboundSetEquipmentPacket) {
+        val current = entities[packet.entityId] ?: return
+        val equipment = HashMap(current.equipment)
+        var changed = false
+        for (entry in packet.equipment) {
+            val key = entry.slot.name
+            val item = entry.item?.toInventoryItem()
+            if (item == null) {
+                if (equipment.remove(key) != null) changed = true
+            } else if (equipment[key] != item) {
+                equipment[key] = item
+                changed = true
+            }
+        }
+        if (!changed) return
+        updateEntity(packet.entityId) { it.copy(equipment = equipment) }
     }
 
     /**

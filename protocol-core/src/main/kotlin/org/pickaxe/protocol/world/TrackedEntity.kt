@@ -1,5 +1,6 @@
 package org.pickaxe.protocol.world
 
+import org.pickaxe.protocol.inventory.InventoryItem
 import java.util.UUID
 
 /**
@@ -39,4 +40,13 @@ public data class TrackedEntity(
      * 生物与掉落物上的名牌才走这里。
      */
     public val customName: String? = null,
+    /**
+     * 装备槽 → 物品；没有装备的槽位不出现。
+     *
+     * 装备走**独立的包**（`set_equipment`），不依赖实体元数据下标，因此这里能给出所有实体都
+     * 成立的装备信息——这与 [customName] 只能读下标 2 的处境不同。
+     * 键是协议的槽位名：`MAIN_HAND`、`OFF_HAND`、`HELMET`、`CHESTPLATE`、`LEGGINGS`、`BOOTS`，
+     * 以及 26.2 新增的 `BODY`、`SADDLE`。
+     */
+    public val equipment: Map<String, InventoryItem> = emptyMap(),
 )

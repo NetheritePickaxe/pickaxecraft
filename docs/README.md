@@ -18,6 +18,7 @@
 - [M4f 实施记录](plans/m4f-chat-upstream.md)：无签名上行与安全聊天的边界、last-seen 窗口、命令包与输入校验。
 - [M4g 实施记录](plans/m4g-movement-upstream.md)：四个移动包的选择规则、无回执下的本地姿态、状态位为何不能乱声明。
 - [M4h 实施记录](plans/m4h-inventory.md)：两套槽位编号（护甲段反序）、容器累积与快照、成功无回执的第三例。
+- [M4i 实施记录](plans/m4i-player-state.md)：两个包各写一半的状态快照、装备为何能读而生物血量不能。
 - [M1 实施计划](plans/m1-implementation-plan.md)：自有客户端 API、连接生命周期、联调迁移、CLI 与提前 Android 探针；末尾附实施记录与偏差。
 - [协议适配契约](protocol-contract.md)：`protocol-core` 与协议库之间哪些行为由库保证、哪些由本项目实现，以及升级检查清单。
 - [Android 反糖探针](android-dex-probe.md)：D8 实测结论（minSdk 26、重复类、`HexFormat`）与仍未验证的运行时项。
@@ -45,6 +46,7 @@ M4e 让客户端能读聊天：`Session.chat` 回看最近消息，格式来自 
 M4f 让客户端能发话：`Session.sendChat` / `sendCommand` 上行，服务端广播回来的消息才是回执，不做本地回显。
 M4g 让客户端能动：`Session.moveTo` / `look` 只发变化的分量，服务端接受时没有回执，快照由本端推进。
 M4h 让客户端能看一眼背包：`Session.inventory` / `container` / `heldItem` 读窗口槽位，`selectHotbarSlot` 切换选中格。
+M4i 让客户端知道自己什么状态：`Session.status` 给生命/饥饿/经验，实体快照带 `equipment`。
 `protocol-core` 负责协议事实转换、区块解码与资源回收，`client-core` 负责会话 Actor、有界缓冲、区块缓存与错误分类；协议库的隐含行为已写入[协议适配契约](protocol-contract.md)。
 
 Android 只完成了构建链探针（D8 可产出 dex，`minSdk` 下限 26），运行时仍属 M3 门控；实体、背包与光照仍属 M4 的后续增量。

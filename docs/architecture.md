@@ -312,6 +312,18 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 
 实现记录见 [M4h 实施记录](plans/m4h-inventory.md)。
 
+### 5.11 M4i 已落地的具体形态：自身状态与装备
+
+- **两个包各管一半**：`set_health` 给生命/饥饿/饱和度，`set_experience` 给进度/等级/总量。
+  两者独立到达，所以 `PlayerStatus` 六个字段全部可空；`Session.status` 是合并后的快照，
+  `StatusChanged` 一个包一个事件。用 0 当缺省会让“还没收到”和“真的是 0”混在一起。
+- **装备走独立包，不走元数据**：`set_equipment` 的槽位是显式枚举，因此所有实体都成立——
+  这正是它与只能读下标 2 的自定义名称的区别。空物品表示清空该槽，要删键。
+- **重生复位**：生命与经验属于上一个身体，`Respawned` 时把状态快照清空，等服务端重发。
+- **仍然读不到**：生物血量（只在元数据里，下标依赖实体层级）、属性表、状态效果。
+
+实现记录见 [M4i 实施记录](plans/m4i-player-state.md)。
+
 ## 6. libGDX 与平台约束
 
 共享发布产物使用 Java 21 字节码，由 `verifyBytecode`（major 65）自动断言；构建、CLI 与测试仍使用 Java 25。libGDX 官方当前推荐 JDK 17/21，因此下游图形客户端不被迫使用 Java 25；启用 Minestom 单人模式的 Desktop 组合根除外。

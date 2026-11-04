@@ -110,6 +110,14 @@ public sealed interface ClientEvent {
      */
     public data class HeldSlotChanged(public val slot: Int) : ClientEvent
 
+    /**
+     * 本端生命/饥饿或经验发生变化，[status] 是合并后的完整快照。
+     *
+     * 一个服务端包对应一个事件；两个包各管一半，因此事件里另一半可能还是旧值。
+     * 快照同时可从 [Session.status] 读取。
+     */
+    public data class StatusChanged(public val status: PlayerStatus) : ClientEvent
+
     /** 正常关闭：调用方主动关闭，或服务端按协议收尾。 */
     public data object Closed : ClientEvent
 

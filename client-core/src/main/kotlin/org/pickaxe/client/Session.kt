@@ -65,6 +65,15 @@ public class Session internal constructor(
     /** 会话级注册表快照：注册表 id 到条目数，随配置阶段累加。 */
     public val registries: StateFlow<Map<String, Int>> = mutableRegistries.asStateFlow()
 
+    private val mutableStatus = MutableStateFlow(PlayerStatus())
+
+    /**
+     * 本端生命、饥饿与经验；未收到任何相关包时各字段为 null。
+     *
+     * 与 [world] 分开：它不是世界状态，也不随维度切换而失效，重生时会被服务端重新下发。
+     */
+    public val status: StateFlow<PlayerStatus> = mutableStatus.asStateFlow()
+
     private val mutableWorld = MutableStateFlow<WorldSnapshot?>(null)
 
     /**
@@ -170,6 +179,7 @@ public class Session internal constructor(
             players.clear()
             containers.clear()
             heldSlotIndex = 0
+            mutableStatus.value = PlayerStatus()
             clearChat()
             mutableState.value = SessionState.CLOSED
             outbox.close()
@@ -462,6 +472,7 @@ public class Session internal constructor(
         players.clear()
         containers.clear()
         heldSlotIndex = 0
+        mutableStatus.value = PlayerStatus()
         clearChat()
         mutableState.value = SessionState.CLOSED
         outbox.close()
@@ -524,6 +535,8 @@ public class Session internal constructor(
         is ProtocolEvent.Respawned -> {
             // 旧维度的区块在 onProtocolEvent 里已清空；这里把快照里依赖维度的字段一起复位，
             // 位置要等新的同步包——保留旧坐标等于给调用方一个来自另一个世界的答案。
+            // 生命与经验同样属于“上一个身体”，服务端会重新下发。
+            mutableStatus.value = PlayerStatus()
             mutableWorld.update {
                 it.orEmpty().copy(
                     dimension = event.dimension,
@@ -561,6 +574,30 @@ public class Session internal constructor(
 
         is ProtocolEvent.PlayerListChanged -> {
             emit(ClientEvent.PlayerListChanged(event.updated, event.removed))
+            true
+        }
+
+        is ProtocolEvent.HealthUpdated -> {
+            mutableStatus.update {
+                it.copy(
+                    health = event.health,
+                    food = event.food,
+                    foodSaturation = event.saturation,
+                )
+            }
+            emit(ClientEvent.StatusChanged(mutableStatus.value))
+            true
+        }
+
+        is ProtocolEvent.ExperienceUpdated -> {
+            mutableStatus.update {
+                it.copy(
+                    experienceBar = event.bar,
+                    level = event.level,
+                    totalExperience = event.total,
+                )
+            }
+            emit(ClientEvent.StatusChanged(mutableStatus.value))
             true
         }
 
@@ -664,6 +701,7 @@ public class Session internal constructor(
         players.clear()
         containers.clear()
         heldSlotIndex = 0
+        mutableStatus.value = PlayerStatus()
         clearChat()
         mutableState.value = SessionState.CLOSED
         try {
