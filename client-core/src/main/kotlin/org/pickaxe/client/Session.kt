@@ -22,6 +22,9 @@ import org.pickaxe.protocol.ProtocolPhase
 import org.pickaxe.protocol.ServerAddress
 import org.pickaxe.protocol.chat.ChatMessage
 import org.pickaxe.protocol.entity.EntityAttribute
+import org.pickaxe.protocol.entity.MobEffect
+import org.pickaxe.protocol.entity.MovementInput
+import org.pickaxe.protocol.entity.PlayerAbilities
 import org.pickaxe.protocol.inventory.Container
 import org.pickaxe.protocol.inventory.Hand
 import org.pickaxe.protocol.inventory.InventoryItem
@@ -80,6 +83,21 @@ public class Session internal constructor(
      */
     public val status: StateFlow<PlayerStatus> = mutableStatus.asStateFlow()
 
+    private val mutableAbilities = MutableStateFlow(PlayerAbilities())
+
+    /**
+     * 服务端权威的本端能力（无敌、可飞、正在飞、创造模式与两个速度倍率）。
+     *
+     * 与 [movementInput] 的区别是**谁说的**：那个是本端声明的按键，这个是服务端认可的
+     * 能力。`setFlying(true)` 之后只有这里的 `flying` 变成 true 才算真的起飞。
+     */
+    public val abilities: StateFlow<PlayerAbilities> = mutableAbilities.asStateFlow()
+
+    private val mutableMovementInput = MutableStateFlow(MovementInput())
+
+    /** 本端最后一次声明的运动按键；发送后本地立即推进，服务端不回包。 */
+    public val movementInput: StateFlow<MovementInput> = mutableMovementInput.asStateFlow()
+
     private val mutableWorld = MutableStateFlow<WorldSnapshot?>(null)
 
     /**
@@ -133,6 +151,16 @@ public class Session internal constructor(
      * 服务端每次只下发改动的属性，这里按键合并；与区块/实体一样不占事件缓冲。
      */
     private val entityAttributes = ConcurrentHashMap<Int, Map<String, EntityAttribute>>()
+
+    /**
+     * 实体状态效果缓存：实体 id → 效果键名 → 效果。
+     *
+     * 协议每次只推一个效果的新增/替换或移除，因此按键合并；与区块/实体一样不占事件缓冲。
+     */
+    private val entityEffects = ConcurrentHashMap<Int, Map<String, MobEffect>>()
+
+    /** 窗口数值属性缓存：窗口 id → 原始下标 → 值。 */
+    private val containerPropertyValues = ConcurrentHashMap<Int, Map<Int, Int>>()
 
     /**
      * 当前快捷栏选中格（0–8）。
@@ -293,6 +321,76 @@ public class Session internal constructor(
     /** 按键查单个属性；从没收到过就是 null。 */
     public fun attribute(entityId: Int, key: String): EntityAttribute? =
         entityAttributes[entityId]?.get(key)
+
+    /** 本端玩家在服务端里的实体 id；还没进入世界时为 null。 */
+    public val selfEntityId: Int? get() = mutableWorld.value?.entityId
+
+    /**
+     * 某实体当前的状态效果表（键名如 `minecraft:speed` → 效果）。
+     *
+     * 服务端每次只推一个效果的新增/替换或移除，这里返回按键合并后的累积结果。
+     * 查本端自己用 [selfEntityId]。
+     */
+    public fun effects(entityId: Int): Map<String, MobEffect> =
+        entityEffects[entityId] ?: emptyMap()
+
+    /** 本端玩家身上的状态效果；还没进入世界时是空表。 */
+    public fun ownEffects(): Map<String, MobEffect> = selfEntityId?.let(::effects) ?: emptyMap()
+
+    /** 按键查单个状态效果；从没收到过就是 null。 */
+    public fun effect(entityId: Int, key: String): MobEffect? = entityEffects[entityId]?.get(key)
+
+    /**
+     * 某窗口当前的数值属性（原始下标 → 值）。
+     *
+     * 下标含义取决于窗口类型：熔炉的 0/1/2/3 分别是燃烧剩余、燃烧总量、熔炼进度与总时长，
+     * 酿造台则完全不同。本库不内置翻译表，拿到窗口类型后由调用方解释。
+     */
+    public fun containerProperties(windowId: Int): Map<Int, Int> =
+        containerPropertyValues[windowId] ?: emptyMap()
+
+    /**
+     * 整份声明运动按键（前进/后退/左右/跳跃/潜行/冲刺）。
+     *
+     * `player_input` 是状态包：服务端按最后一次收到的字节为准，本方法每次重发全部七位。
+     * 成功没有回执，发送后 [movementInput] 立即推进。
+     *
+     * @throws IllegalStateException 会话尚未进入 play，或已经关闭
+     */
+    public fun setMovementInput(input: MovementInput) {
+        playConnection("移动输入").setMovementInput(input)
+        mutableMovementInput.value = input
+    }
+
+    /** 切换潜行（shift 位）。 */
+    public fun setSneaking(enabled: Boolean) {
+        playConnection("潜行").setSneaking(enabled)
+        mutableMovementInput.value = mutableMovementInput.value.copy(sneaking = enabled)
+    }
+
+    /**
+     * 切换冲刺：同时声明 `player_input` 的 sprint 位与独立的 `player_command`。
+     *
+     * 开启时会清掉潜行位（原版客户端两者互斥）；关闭时保留当前潜行状态。
+     */
+    public fun setSprinting(enabled: Boolean) {
+        playConnection("冲刺").setSprinting(enabled)
+        val current = mutableMovementInput.value
+        mutableMovementInput.value = current.copy(
+            sprinting = enabled,
+            sneaking = if (enabled) false else current.sneaking,
+        )
+    }
+
+    /**
+     * 请求开始/停止飞行。
+     *
+     * 只是请求，服务端可能拒绝：真正的结果看 [abilities] 与
+     * [ClientEvent.AbilitiesChanged]。本机不做本地预测，因此 [movementInput] 不含飞行位。
+     */
+    public fun setFlying(enabled: Boolean) {
+        playConnection("飞行").setFlying(enabled)
+    }
 
     /**
      * 攻击一个实体。
@@ -657,6 +755,11 @@ public class Session internal constructor(
                     chunks.clear()
                     entities.clear()
                     containers.keys.removeIf { it != Container.PLAYER_WINDOW_ID }
+                    entityAttributes.clear()
+                    entityEffects.clear()
+                    containerPropertyValues.clear()
+                    mutableAbilities.value = PlayerAbilities()
+                    mutableMovementInput.value = MovementInput()
                 }
             }
 
@@ -676,6 +779,7 @@ public class Session internal constructor(
                 if (!closing.get()) {
                     event.ids.forEach(entities::remove)
                     event.ids.forEach(entityAttributes::remove)
+                    event.ids.forEach(entityEffects::remove)
                 }
             }
 
@@ -685,6 +789,29 @@ public class Session internal constructor(
                     val table = HashMap(entityAttributes[event.entityId] ?: emptyMap())
                     for (attribute in event.changed) table[attribute.key] = attribute
                     entityAttributes[event.entityId] = table
+                }
+            }
+
+            // 状态效果按键合并：新增/替换与移除都在同一个事件里表达。
+            is ProtocolEvent.EffectsUpdated -> {
+                if (!closing.get()) {
+                    val table = HashMap(entityEffects[event.entityId] ?: emptyMap())
+                    for (effect in event.changed) table[effect.key] = effect
+                    event.removed.forEach(table::remove)
+                    entityEffects[event.entityId] = table
+                }
+            }
+
+            // 能力是服务端权威状态：网络线程直接写入 StateFlow，事件流里再报告一次。
+            is ProtocolEvent.AbilitiesUpdated -> {
+                if (!closing.get()) mutableAbilities.value = event.abilities
+            }
+
+            is ProtocolEvent.ContainerPropertyChanged -> {
+                if (!closing.get()) {
+                    val table = HashMap(containerPropertyValues[event.windowId] ?: emptyMap())
+                    table[event.property] = event.value
+                    containerPropertyValues[event.windowId] = table
                 }
             }
 
@@ -706,7 +833,10 @@ public class Session internal constructor(
             }
 
             is ProtocolEvent.ContainerClosed -> {
-                if (!closing.get()) containers.remove(event.windowId)
+                if (!closing.get()) {
+                    containers.remove(event.windowId)
+                    containerPropertyValues.remove(event.windowId)
+                }
             }
 
             is ProtocolEvent.HeldSlotChanged -> {
@@ -742,7 +872,11 @@ public class Session internal constructor(
         heldSlotIndex = 0
         lastAcknowledgedSequenceValue = 0
         entityAttributes.clear()
+        entityEffects.clear()
+        containerPropertyValues.clear()
         mutableStatus.value = PlayerStatus()
+        mutableAbilities.value = PlayerAbilities()
+        mutableMovementInput.value = MovementInput()
         clearChat()
         mutableState.value = SessionState.CLOSED
         outbox.close()
@@ -851,6 +985,33 @@ public class Session internal constructor(
 
         is ProtocolEvent.AttributesUpdated -> {
             emit(ClientEvent.EntityAttributesUpdated(event.entityId, event.changed))
+            true
+        }
+
+        is ProtocolEvent.EffectsUpdated -> {
+            emit(
+                ClientEvent.EntityEffectsChanged(
+                    entityId = event.entityId,
+                    changed = event.changed,
+                    removed = event.removed,
+                ),
+            )
+            true
+        }
+
+        is ProtocolEvent.AbilitiesUpdated -> {
+            emit(ClientEvent.AbilitiesChanged(event.abilities))
+            true
+        }
+
+        is ProtocolEvent.ContainerPropertyChanged -> {
+            emit(
+                ClientEvent.ContainerPropertyChanged(
+                    windowId = event.windowId,
+                    property = event.property,
+                    value = event.value,
+                ),
+            )
             true
         }
 
@@ -1000,7 +1161,11 @@ public class Session internal constructor(
         heldSlotIndex = 0
         lastAcknowledgedSequenceValue = 0
         entityAttributes.clear()
+        entityEffects.clear()
+        containerPropertyValues.clear()
         mutableStatus.value = PlayerStatus()
+        mutableAbilities.value = PlayerAbilities()
+        mutableMovementInput.value = MovementInput()
         clearChat()
         mutableState.value = SessionState.CLOSED
         try {

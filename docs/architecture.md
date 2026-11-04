@@ -391,6 +391,21 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 
 实现记录见 [M4m 实施记录](plans/m4m-item-names.md)。
 
+### 5.16 M4o/M4p/M4q 已落地的具体形态：运动状态、状态效果与容器属性
+
+- **两套状态分开**：`Session.movementInput` 是本端声明的七位按键（发送后立即推进），
+  `Session.abilities` 是服务端下发的权威能力。`setFlying(true)` 不预置结果，只有
+  `ClientEvent.AbilitiesChanged` 里的 `flying=true` 才算真的起飞——这是「成功没有回执」
+  的又一处体现，harness 用 `PlayerPacketEvent` 提供服务端侧证据。
+- 冲刺要同时发 `player_input` 的 sprint 位与带实体 id 的 `player_command`；
+  适配层记住 Login 包里的 `selfEntityId`，调用方不需要接触它。
+- 状态效果与容器属性都走「协议一次只推一项 → 按键/下标合并 → 无锁缓存」这条既有路径：
+  `EffectKeys` 是版本资产（协议不带效果注册表），容器属性下标刻意不翻译（含义取决于窗口类型）。
+- 三个方向的新状态在重生、关闭与溢出时统一复位，不把上一条命的事实带到下一次连接。
+
+实现记录见 [M4o](plans/m4o-movement-state.md)、[M4p](plans/m4p-mob-effects.md)、
+[M4q](plans/m4q-container-properties.md)。
+
 ## 6. libGDX 与平台约束
 
 共享发布产物使用 Java 21 字节码，由 `verifyBytecode`（major 65）自动断言；构建、CLI 与测试仍使用 Java 25。libGDX 官方当前推荐 JDK 17/21，因此下游图形客户端不被迫使用 Java 25；启用 Minestom 单人模式的 Desktop 组合根除外。

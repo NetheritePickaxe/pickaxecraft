@@ -26,7 +26,7 @@ private val usage = """
 
       connect <host> [port] [--username <名称>] [--timeout <秒>] [--say <文本>]...
               [--walk <格数>] [--hold <0-8>] [--click <槽位>[:动作]]... [--close-window]
-              [--dig] [--place]
+              [--dig] [--place] [--sneak] [--sprint] [--fly]
           离线登录并持续打印会话事件，Ctrl+C 关闭会话后退出
           --say 在出生完成后再发送一条聊天消息，可重复；服务端会把它广播回来
           --walk 在出生后沿 +X 方向走指定格数（每步 0.5 格），打印每一步的坐标
@@ -36,6 +36,8 @@ private val usage = """
           --dig 在出生后挖掉脚下那一格，等待服务端的方块变更回包
           --place 在出生后把手中物品放到脚旁东侧一格的上面；不能放进玩家自己
                占据的格子（服务端做碰撞检查，见 plan 文档），所以偏东一格
+          --sneak / --sprint / --fly 在出生后声明潜行、冲刺或请求飞行；
+               飞行是否被接受要看随后服务端的 player_abilities 包
 
           点击动作:
             pickup      左键拿起或放下整堆（默认）
@@ -166,6 +168,7 @@ private fun runConnect(args: List<String>): Int {
                     if (parsed.closeWindow) closeActiveWindow(session)
                     if (parsed.digBelow) digBelow(session)
                     if (parsed.placeBelow) placeBelow(session)
+                    applyMotionFlags(session, parsed)
                 }
             }
         }
@@ -202,6 +205,16 @@ private fun describe(event: ClientEvent): String = when (event) {
         "event=attributes id=${event.entityId} " +
             event.changed.joinToString(" ") { "${it.key}=${it.value}" }
     is ClientEvent.EntityDamaged -> "event=damaged id=${event.entityId} source=${event.sourceType}"
+    is ClientEvent.AbilitiesChanged -> with(event.abilities) {
+        "event=abilities invincible=$invincible canFly=$canFly flying=$flying " +
+            "creative=$creative flySpeed=$flySpeed walkSpeed=$walkSpeed"
+    }
+    is ClientEvent.EntityEffectsChanged ->
+        "event=effects id=${event.entityId} " +
+            "changed=${event.changed.map { "${it.key}x${it.amplifier}" }} removed=${event.removed}"
+    is ClientEvent.ContainerPropertyChanged ->
+        "event=container.property window=${event.windowId} " +
+            "property=${event.property} value=${event.value}"
     is ClientEvent.PlayerListChanged -> "event=players updated=${event.updated.map { it.name ?: it.uuid }}" +
         " removed=${event.removed}"
     is ClientEvent.ChatReceived -> with(event.message) {
@@ -223,6 +236,27 @@ private fun describe(event: ClientEvent): String = when (event) {
     }
     ClientEvent.Closed -> "event=closed"
     is ClientEvent.Failed -> "event=failed kind=${event.error::class.simpleName} message=${event.error.message}"
+}
+
+/**
+ * 出生后声明运动状态。
+ *
+ * 三个标志分别对应三条不同的上行路径；打印的都是「已发出」，飞行是否被接受
+ * 只能由随后的 `event=abilities` 证明——服务端可能因为 canFly=false 拒绝。
+ */
+private fun applyMotionFlags(session: Session, parsed: ParsedArgs) {
+    if (parsed.sneak) {
+        session.setSneaking(true)
+        println("event=sneak.sent input=${session.movementInput.value}")
+    }
+    if (parsed.sprint) {
+        session.setSprinting(true)
+        println("event=sprint.sent input=${session.movementInput.value}")
+    }
+    if (parsed.fly) {
+        session.setFlying(true)
+        println("event=fly.sent")
+    }
 }
 
 /** 每步移动的距离：半格，足够看出“人真的在走”，也不会让服务端的距离校验有意见。 */
@@ -420,6 +454,10 @@ private class ParsedArgs(
     val digBelow: Boolean = false,
     /** 出生后把手中物品放到脚下方块的上表面。 */
     val placeBelow: Boolean = false,
+    /** 出生后声明潜行、冲刺或请求飞行。 */
+    val sneak: Boolean = false,
+    val sprint: Boolean = false,
+    val fly: Boolean = false,
 ) {
     fun options(): ClientOptions = ClientOptions(
         connectTimeoutMillis = timeoutSeconds * 1000,
@@ -446,6 +484,9 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
     var closeWindow = false
     var digBelow = false
     var placeBelow = false
+    var sneak = false
+    var sprint = false
+    var fly = false
 
     var index = 1
     // 第二个位置参数若是纯数字则视为端口。
@@ -522,6 +563,18 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
                 placeBelow = true
                 index += 1
             }
+            "--sneak" -> {
+                sneak = true
+                index += 1
+            }
+            "--sprint" -> {
+                sprint = true
+                index += 1
+            }
+            "--fly" -> {
+                fly = true
+                index += 1
+            }
             else -> {
                 System.err.println("未知参数: $option")
                 return null
@@ -541,6 +594,9 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
             closeWindow = closeWindow,
             digBelow = digBelow,
             placeBelow = placeBelow,
+            sneak = sneak,
+            sprint = sprint,
+            fly = fly,
         )
     } catch (e: IllegalArgumentException) {
         System.err.println("参数不合法: ${e.message}")

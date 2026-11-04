@@ -24,6 +24,9 @@
 - [M4l 实施记录](plans/m4l-attributes.md)：协议库属性表错位的规避、按需创建的属性实例与空包。
 - [M4n 实施记录](plans/m4n-entity-interaction.md)：攻击拆包与第四例「成功没有回执」。
 - [M4m 实施记录](plans/m4m-item-names.md)：键名表是版本资产、空文本组件与 null 的区别。
+- [M4o 实施记录](plans/m4o-movement-state.md)：按键是状态包、冲刺要带实体 id、能力由服务端权威下发。
+- [M4p 实施记录](plans/m4p-mob-effects.md)：效果注册表不下发、一次只推一个效果、按键合并。
+- [M4q 实施记录](plans/m4q-container-properties.md)：容器属性下标不翻译、按下标累积。
 - [M1 实施计划](plans/m1-implementation-plan.md)：自有客户端 API、连接生命周期、联调迁移、CLI 与提前 Android 探针；末尾附实施记录与偏差。
 - [协议适配契约](protocol-contract.md)：`protocol-core` 与协议库之间哪些行为由库保证、哪些由本项目实现，以及升级检查清单。
 - [Android 反糖探针](android-dex-probe.md)：D8 实测结论（minSdk 26、重复类、`HexFormat`）与仍未验证的运行时项。
@@ -56,9 +59,12 @@ M4j 让客户端能动手：`Session.clickSlot` 拿起、放下、Shift 转移�
 M4k 让客户端能改世界：`Session.digBlock` 挖掘、`useOnBlock` 放置与交互，服务端下发的方块变更写回区块缓存（写时复制），交互序号作为回执。
 M4l/M4n 让客户端认识实体：`Session.attributes(entityId)` 读属性表（按键合并，键名由本仓库注册表还原——协议库内置表会错位），`attack` / `interactWith` / `swing` 上行，伤害包转成 `EntityDamaged` 事件。
 M4m 让物品可读名：`InventoryItem.key` 给出 `minecraft:stone` 这样的键名（注册表导出，协议不带这张表），`customName` 读 `custom_name` 组件。
+M4o 让本端能声明运动状态：`setSneaking` / `setSprinting` / `setFlying` 走三条不同的上行路径；`Session.abilities` 是服务端权威结果，飞行请求不本地预测。
+M4p 让药水效果可读：`Session.effects` 按键合并新增、替换与移除，`EffectKeys` 是版本资产。
+M4q 让容器数值可读：`Session.containerProperties` 按下标累积，下标含义留给知道窗口类型的调用方。
 `protocol-core` 负责协议事实转换、区块解码与资源回收，`client-core` 负责会话 Actor、有界缓冲、区块缓存与错误分类；协议库的隐含行为已写入[协议适配契约](protocol-contract.md)。
 
-Android 只完成了构建链探针（D8 可产出 dex，`minSdk` 下限 26），运行时仍属 M3 门控；物品组件、光照与实体交互仍属 M4 的后续增量。
+Android 只完成了构建链探针（D8 可产出 dex，`minSdk` 下限 26），运行时仍属 M3 门控；其余物品组件、生物血量、光照与 libGDX 消费工程仍属 M4 的后续增量。
 
 ## 参考文档
 

@@ -17,6 +17,7 @@ import org.geysermc.mcprotocollib.protocol.MinecraftProtocol
 import org.geysermc.mcprotocollib.protocol.data.ProtocolState
 import org.geysermc.mcprotocollib.protocol.data.game.PlayerListEntryAction
 import org.geysermc.mcprotocollib.protocol.data.game.entity.player.HandPreference
+import org.geysermc.mcprotocollib.protocol.data.game.entity.player.PlayerState
 import org.geysermc.mcprotocollib.protocol.data.game.entity.player.PositionElement
 import org.geysermc.mcprotocollib.protocol.data.game.item.ItemStack
 import org.geysermc.mcprotocollib.protocol.data.game.item.component.DataComponentTypes
@@ -39,6 +40,8 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.Clientbound
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundSystemChatPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundAddEntityPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundDamageEventPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundRemoveMobEffectPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundUpdateMobEffectPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundUpdateAttributesPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundEntityPositionSyncPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundMoveEntityPosPacket
@@ -49,12 +52,14 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.Clie
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundSetEquipmentPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundSetEntityDataPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundTeleportEntityPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundPlayerAbilitiesPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundPlayerPositionPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundSetHeldSlotPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundSetHealthPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundSetExperiencePacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundContainerClosePacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundContainerSetContentPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundContainerSetDataPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundContainerSetSlotPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundOpenScreenPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundSetCursorItemPacket
@@ -71,7 +76,10 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.Serverbound
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundPlayerLoadedPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.player.ServerboundAttackPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.player.ServerboundInteractPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.player.ServerboundPlayerAbilitiesPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.player.ServerboundPlayerCommandPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.player.ServerboundSwingPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.level.ServerboundPlayerInputPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.inventory.ServerboundContainerClosePacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.level.ServerboundAcceptTeleportationPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.player.ServerboundSetCarriedItemPacket
@@ -85,8 +93,12 @@ import org.pickaxe.protocol.ServerAddress
 import org.pickaxe.protocol.ServerStatus
 import org.pickaxe.protocol.chat.ChatFormat
 import org.pickaxe.protocol.entity.AttributeTable
+import org.pickaxe.protocol.entity.EffectKeys
 import org.pickaxe.protocol.entity.EntityAttribute
 import org.pickaxe.protocol.entity.EntityAttributeModifier
+import org.pickaxe.protocol.entity.MobEffect
+import org.pickaxe.protocol.entity.MovementInput
+import org.pickaxe.protocol.entity.PlayerAbilities
 import org.pickaxe.protocol.chat.ChatKind
 import org.pickaxe.protocol.chat.ChatMessage
 import org.pickaxe.protocol.inventory.Container
@@ -105,6 +117,7 @@ import java.net.InetSocketAddress
 import java.util.BitSet
 import java.util.Optional
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -225,6 +238,38 @@ internal class McplConnection(
     private val entityAttributes = HashMap<Int, HashMap<String, EntityAttribute>>()
 
     /**
+     * 本端的实体 id，Login 包下发。`player_command` 必须带上它，服务端据此确认
+     * “这次状态切换属于哪个玩家实体”。-1 表示还没进入世界。
+     *
+     * 由网络线程写、调用线程读，因此需要可见性保证。
+     */
+    @Volatile
+    private var selfEntityId: Int = -1
+
+    /**
+     * 本端声明的运动按键，整体替换。
+     *
+     * `player_input` 是状态包：服务端按最后一次收到的字节为准，因此每次改动都要
+     * 把这七个布尔位整份重发，不能只发“变化的那一位”。
+     */
+    private val movementInput = AtomicReference(MovementInput())
+
+    /**
+     * 实体状态效果，按「实体 id → 效果键名」累积。
+     *
+     * 协议每次只推一个效果的新增/替换或移除；并发容器是因为查询方法可能从调用线程进入。
+     */
+    private val effects = ConcurrentHashMap<Int, ConcurrentHashMap<String, MobEffect>>()
+
+    /**
+     * 窗口数值属性，按「窗口 id → 属性下标」累积。
+     *
+     * 下标含义取决于容器类型（熔炉的 2 是熔炼进度，酿造台的 0 是酿造时间），
+     * 本层不解释，只保留原始编号与值。
+     */
+    private val containerProperties = ConcurrentHashMap<Int, ConcurrentHashMap<Int, Int>>()
+
+    /**
      * 当前选中的快捷栏格。
      *
      * 与姿态同理：服务端**接受**切换时不回包（它只在拒绝或改写时下发 `set_held_slot`），
@@ -341,6 +386,8 @@ internal class McplConnection(
             is ClientboundLoginPacket -> {
                 // 注册表条目顺序即维度 id，必须在 Login 之前读出来：区块解码依赖维度高度。
                 currentDimension = dimensionOf(packet.commonPlayerSpawnInfo.dimension, "Login")
+                // player_command 要带本端实体 id；此前的上行包都不需要它。
+                selfEntityId = packet.entityId
                 emit(
                     ProtocolEvent.JoinedWorld(
                         entityId = packet.entityId,
@@ -384,7 +431,10 @@ internal class McplConnection(
 
             is ClientboundRemoveEntitiesPacket -> {
                 removeEntities(packet.entityIds)
-                for (id in packet.entityIds) entityAttributes.remove(id)
+                for (id in packet.entityIds) {
+                    entityAttributes.remove(id)
+                    effects.remove(id)
+                }
             }
 
             is ClientboundUpdateAttributesPacket -> applyAttributes(packet)
@@ -492,6 +542,33 @@ internal class McplConnection(
 
             is ClientboundSetEquipmentPacket -> applyEquipment(packet)
 
+            // 服务端权威能力：这是对本端 setFlying 之类请求的答复，不是请求本身。
+            is ClientboundPlayerAbilitiesPacket -> emit(
+                ProtocolEvent.AbilitiesUpdated(
+                    PlayerAbilities(
+                        invincible = packet.isInvincible,
+                        canFly = packet.isCanFly,
+                        flying = packet.isFlying,
+                        creative = packet.isCreative,
+                        flySpeed = packet.flySpeed,
+                        walkSpeed = packet.walkSpeed,
+                    ),
+                ),
+            )
+
+            // 状态效果：一个包只带一个效果，新增/替换与移除是两种包。
+            is ClientboundUpdateMobEffectPacket -> applyMobEffect(packet)
+
+            is ClientboundRemoveMobEffectPacket -> removeMobEffect(packet)
+
+            // 容器属性：服务端只给编号和值，下标含义由窗口类型决定。
+            is ClientboundContainerSetDataPacket -> {
+                val property = packet.rawProperty
+                val value = packet.value
+                containerProperties.getOrPut(packet.containerId) { ConcurrentHashMap() }[property] = value
+                emit(ProtocolEvent.ContainerPropertyChanged(packet.containerId, property, value))
+            }
+
             else -> Unit
         }
 
@@ -540,6 +617,11 @@ internal class McplConnection(
         chunkTotal = 0
         playerLoadedSent = false
         entities.clear()
+        entityAttributes.clear()
+        // 属性、状态效果与容器属性都属于“上一个身体/上一个窗口”：换维度后服务端会重发，
+        // 留着旧值等于把上一条命的事实报给调用方。
+        effects.clear()
+        containerProperties.clear()
         // 玩家列表不清：它是会话级事实，换维度不会让人从 Tab 列表里消失。
         emit(
             ProtocolEvent.Respawned(
@@ -721,6 +803,105 @@ internal class McplConnection(
         entityAttributes[entityId]?.toMap() ?: emptyMap()
 
     /**
+     * 状态效果新增或替换。
+     *
+     * 键名由数字 id 还原；未知 id 保留 `unknown:<id>` 而不是丢弃，否则新版本效果会让
+     * 整条事实凭空消失。四个显示标志是效果的属性，照原样落到快照里。
+     */
+    private fun applyMobEffect(packet: ClientboundUpdateMobEffectPacket) {
+        val id = packet.effect.ordinal
+        val key = EffectKeys.key(id) ?: "unknown:$id"
+        val effect = MobEffect(
+            key = key,
+            id = id,
+            amplifier = packet.amplifier,
+            durationTicks = packet.duration,
+            ambient = packet.isAmbient,
+            showParticles = packet.isShowParticles,
+            showIcon = packet.isShowIcon,
+            blend = packet.isBlend,
+        )
+        effects.getOrPut(packet.entityId) { ConcurrentHashMap() }[key] = effect
+        emit(ProtocolEvent.EffectsUpdated(packet.entityId, listOf(effect), emptyList()))
+    }
+
+    /** 状态效果移除：只删被点名的那个键，同实体的其它效果保持不动。 */
+    private fun removeMobEffect(packet: ClientboundRemoveMobEffectPacket) {
+        val id = packet.effect.ordinal
+        val key = EffectKeys.key(id) ?: "unknown:$id"
+        effects[packet.entityId]?.remove(key)
+        emit(ProtocolEvent.EffectsUpdated(packet.entityId, emptyList(), listOf(key)))
+    }
+
+    /** 某实体当前的状态效果表（按键合并后的快照）。 */
+    fun effects(entityId: Int): Map<String, MobEffect> =
+        effects[entityId]?.toMap() ?: emptyMap()
+
+    /** 某窗口当前的数值属性表（下标 → 值）。 */
+    fun containerProperties(windowId: Int): Map<Int, Int> =
+        containerProperties[windowId]?.toMap() ?: emptyMap()
+
+    /**
+     * 整份声明运动按键。
+     *
+     * `player_input` 是状态包而不是事件包：服务端按最后一次收到的字节为准，
+     * 因此每次改动都把七个布尔位重发一遍。调用方分别改潜行/冲刺时，本方法负责
+     * 用上一份状态补齐其它位。
+     */
+    fun setMovementInput(input: MovementInput) {
+        movementInput.set(input)
+        sendInPlay("移动输入") {
+            ServerboundPlayerInputPacket(
+                input.forward, input.backward, input.left, input.right,
+                input.jump, input.sneaking, input.sprinting,
+            )
+        }
+    }
+
+    /** 切换潜行（shift 位）。服务端不回包，本端在发送后立即推进状态。 */
+    fun setSneaking(enabled: Boolean) {
+        setMovementInput(movementInput.get().copy(sneaking = enabled))
+    }
+
+    /**
+     * 切换冲刺。
+     *
+     * 26.2 里冲刺同时要两件事：`player_input` 的 sprint 位与独立的
+     * `player_command`（START/STOP_SPRINTING）——后者带实体 id，服务端据此改移动速度。
+     * 原版客户端冲刺与潜行互斥，因此开启冲刺时顺带清掉 shift 位。
+     */
+    fun setSprinting(enabled: Boolean) {
+        val id = selfEntityId
+        check(id >= 0) { "还没有收到 Login 包，无法确定本端实体 id" }
+        val current = movementInput.get()
+        setMovementInput(
+            current.copy(
+                sprinting = enabled,
+                sneaking = if (enabled) false else current.sneaking,
+            ),
+        )
+        sendInPlay("冲刺状态") {
+            ServerboundPlayerCommandPacket(
+                id,
+                if (enabled) PlayerState.START_SPRINTING else PlayerState.STOP_SPRINTING,
+            )
+        }
+    }
+
+    /**
+     * 请求开始/停止飞行。
+     *
+     * 只是请求：服务端按 `player_abilities` 下发权威结果（可能拒绝），本层不把
+     * 上行包当成“已经在飞”。
+     */
+    fun setFlying(enabled: Boolean) {
+        sendInPlay("飞行状态") { ServerboundPlayerAbilitiesPacket(enabled) }
+    }
+
+    /** 本端最后一次声明的运动按键，用于上层快照与便捷方法的增量合并。 */
+    fun movementInput(): MovementInput = movementInput.get()
+
+    /**
      * 玩家列表更新。
      *
      * 一个包只带 `actions` 声明的那几列：可能只有延迟，也可能只有档案。缺失字段沿用
@@ -845,6 +1026,8 @@ internal class McplConnection(
     private fun forgetContainer(windowId: Int) {
         if (windowId == Container.PLAYER_WINDOW_ID) return
         if (containers.remove(windowId) == null) return
+        // 属性是窗口的一部分：窗口没了，熔炉进度之类也就没有落点。
+        containerProperties.remove(windowId)
         emit(ProtocolEvent.ContainerClosed(windowId))
     }
 

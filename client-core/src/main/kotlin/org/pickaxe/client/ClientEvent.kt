@@ -2,6 +2,8 @@ package org.pickaxe.client
 
 import org.pickaxe.protocol.chat.ChatMessage
 import org.pickaxe.protocol.entity.EntityAttribute
+import org.pickaxe.protocol.entity.MobEffect
+import org.pickaxe.protocol.entity.PlayerAbilities
 import org.pickaxe.protocol.world.BlockChange
 import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
@@ -159,6 +161,33 @@ public sealed interface ClientEvent {
      * 快照同时可从 [Session.status] 读取。
      */
     public data class StatusChanged(public val status: PlayerStatus) : ClientEvent
+
+    /**
+     * 服务端下发了本端能力快照，[Session.abilities] 已更新。
+     *
+     * 这是对飞行请求的权威答复：本端 `setFlying(true)` 之后只有收到这里的 `flying=true`
+     * 才算真的在飞。切换游戏模式、服务端拒绝请求都会体现为这一条事件。
+     */
+    public data class AbilitiesChanged(public val abilities: PlayerAbilities) : ClientEvent
+
+    /**
+     * 实体 [entityId] 的状态效果发生变化，[Session.effects] 已合并。
+     *
+     * [changed] 是本包新增或被重新设置的效果，[removed] 是本包移除的效果键名；
+     * 两个列表都很短——协议一次只推一个效果。
+     */
+    public data class EntityEffectsChanged(
+        public val entityId: Int,
+        public val changed: List<MobEffect>,
+        public val removed: List<String>,
+    ) : ClientEvent
+
+    /** 窗口数值属性变化；[Session.containerProperties] 已更新。 */
+    public data class ContainerPropertyChanged(
+        public val windowId: Int,
+        public val property: Int,
+        public val value: Int,
+    ) : ClientEvent
 
     /** 正常关闭：调用方主动关闭，或服务端按协议收尾。 */
     public data object Closed : ClientEvent

@@ -2,6 +2,8 @@ package org.pickaxe.protocol
 
 import org.pickaxe.protocol.chat.ChatMessage
 import org.pickaxe.protocol.entity.EntityAttribute
+import org.pickaxe.protocol.entity.MobEffect
+import org.pickaxe.protocol.entity.PlayerAbilities
 import org.pickaxe.protocol.inventory.Container
 import org.pickaxe.protocol.world.BlockChange
 import org.pickaxe.protocol.world.ChunkColumn
@@ -262,6 +264,39 @@ public sealed interface ProtocolEvent {
         public val sourceType: Int,
         public val sourceCause: Int?,
         public val sourceDirect: Int?,
+    ) : ProtocolEvent
+
+    /**
+     * 服务端下发了本端能力快照。
+     *
+     * 这是对 `Session.setFlying` 之类上行请求的**权威答复**：服务端可以拒绝飞行，
+     * 也可以因为切换游戏模式主动改写能力。事件到达时会话里的能力快照已经更新。
+     */
+    public data class AbilitiesUpdated(public val abilities: PlayerAbilities) : ProtocolEvent
+
+    /**
+     * 实体 [entityId] 的状态效果发生变化。
+     *
+     * [changed] 是本包新增或被重新设置的效果；[removed] 是本包移除的效果键名。
+     * 两个包一次只处理一个效果，所以列表都很短；完整表由会话按键合并，读接口才是
+     * “现在身上有哪些效果”。
+     */
+    public data class EffectsUpdated(
+        public val entityId: Int,
+        public val changed: List<MobEffect>,
+        public val removed: List<String>,
+    ) : ProtocolEvent
+
+    /**
+     * 窗口的一个数值属性被更新（熔炉燃烧进度、酿造台时间等）。
+     *
+     * [property] 是协议里的原始下标，含义取决于窗口类型；本层不内置翻译表，
+     * 因为同一个下标在不同容器里代表完全不同的东西。
+     */
+    public data class ContainerPropertyChanged(
+        public val windowId: Int,
+        public val property: Int,
+        public val value: Int,
     ) : ProtocolEvent
 
     /** 会话终止，且这是本次连接唯一一次终止通知。 */

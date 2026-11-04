@@ -16,6 +16,7 @@ import net.minestom.server.entity.attribute.Attribute
 import net.minestom.server.entity.damage.DamageType
 import net.minestom.server.event.entity.EntityAttackEvent
 import net.minestom.server.event.player.AsyncPlayerConfigurationEvent
+import net.minestom.server.event.player.PlayerPacketEvent
 import net.minestom.server.event.player.PlayerEntityInteractEvent
 import net.minestom.server.event.player.PlayerBlockPlaceEvent
 import net.minestom.server.event.player.PlayerChatEvent
@@ -28,6 +29,21 @@ import net.minestom.server.item.ItemStack
 import net.minestom.server.item.Material
 import net.minestom.server.instance.block.Block
 import net.minestom.server.instance.generator.Generator
+import net.minestom.server.network.packet.client.play.ClientEntityActionPacket
+import net.minestom.server.network.packet.client.play.ClientInputPacket
+import net.minestom.server.network.packet.client.play.ClientPlayerAbilitiesPacket
+import net.minestom.server.network.packet.client.play.ClientTabCompletePacket
+import net.minestom.server.network.packet.server.common.TransferPacket
+import net.minestom.server.network.packet.server.play.BlockEntityDataPacket
+import net.minestom.server.network.packet.server.play.EntityEffectPacket
+import net.minestom.server.network.packet.server.play.PlayerAbilitiesPacket
+import net.minestom.server.network.packet.server.play.RemoveEntityEffectPacket
+import net.minestom.server.network.packet.server.play.TabCompletePacket
+import net.minestom.server.network.packet.server.play.UpdateLightPacket
+import net.minestom.server.network.packet.server.play.WindowPropertyPacket
+import net.minestom.server.network.packet.server.play.data.LightData
+import net.minestom.server.potion.Potion
+import net.minestom.server.potion.PotionEffect
 import org.pickaxe.protocol.ProtocolVersion
 import java.net.InetSocketAddress
 import java.time.Duration
@@ -245,6 +261,101 @@ public fun setPlayerAttribute(username: String, attribute: Attribute, value: Dou
 }
 
 /**
+ * 服务端观察到的上行 `player_input` 包序列。
+ *
+ * 这些包没有回执，也没有对应的高层事件；`PlayerPacketEvent` 是唯一能证明
+ * “服务端真的收到了这一组按键位”的落点。
+ */
+private val inputs = ConcurrentHashMap<String, java.util.concurrent.CopyOnWriteArrayList<ClientInputPacket>>()
+
+/** 某玩家到目前为止被观察到的输入包；没有时返回空列表。 */
+public fun observedInputs(username: String): List<ClientInputPacket> = inputs[username]?.toList().orEmpty()
+
+/** 等待一次满足条件的输入包；超时返回 false。 */
+public fun awaitPlayerInput(username: String, timeout: Duration, predicate: (ClientInputPacket) -> Boolean): Boolean {
+    val deadline = System.nanoTime() + timeout.toNanos()
+    while (System.nanoTime() < deadline) {
+        if (observedInputs(username).any(predicate)) return true
+        Thread.sleep(5)
+    }
+    return observedInputs(username).any(predicate)
+}
+
+/** 等待服务端观察到某类上行包（键见 [PlayerPacketEvent] 监听器）。 */
+public fun awaitPlayerPacket(username: String, kind: String, timeout: Duration): Boolean =
+    awaitFact(packetFactKey(username, kind), timeout)
+
+private fun packetFactKey(username: String, kind: String): String = "packet|$username|$kind"
+
+private fun onlinePlayer(username: String): Player? =
+    MinecraftServer.getConnectionManager().getOnlinePlayerByUsername(username)
+
+/** 直接给玩家下发一份权威能力包（flags 位与原版一致：1 无敌 / 2 飞行中 / 4 可飞 / 8 创造）。 */
+public fun sendAbilities(username: String, flags: Int, flySpeed: Float, walkSpeed: Float): Boolean {
+    val player = onlinePlayer(username) ?: return false
+    player.sendPacket(PlayerAbilitiesPacket(flags.toByte(), flySpeed, walkSpeed))
+    println("event=server.abilities name=$username flags=$flags flySpeed=$flySpeed walkSpeed=$walkSpeed")
+    return true
+}
+
+/** 给某实体下发一个状态效果；[effectKey] 是 `minecraft:*`，由 Minestom 注册表解析。 */
+public fun sendMobEffect(
+    username: String,
+    entityId: Int,
+    effectKey: String,
+    amplifier: Int,
+    duration: Int,
+    flags: Int,
+): Boolean {
+    val player = onlinePlayer(username) ?: return false
+    val effect = PotionEffect.fromKey(effectKey) ?: return false
+    player.sendPacket(EntityEffectPacket(entityId, Potion(effect, amplifier, duration, flags.toByte())))
+    println("event=server.effect name=$username entity=$entityId effect=$effectKey amplifier=$amplifier duration=$duration")
+    return true
+}
+
+/** 移除某实体的一个状态效果。 */
+public fun sendRemoveMobEffect(username: String, entityId: Int, effectKey: String): Boolean {
+    val player = onlinePlayer(username) ?: return false
+    val effect = PotionEffect.fromKey(effectKey) ?: return false
+    player.sendPacket(RemoveEntityEffectPacket(entityId, effect))
+    println("event=server.effect.remove name=$username entity=$entityId effect=$effectKey")
+    return true
+}
+
+/** 下发一次窗口数值属性（熔炉进度之类）。 */
+public fun sendWindowProperty(username: String, windowId: Int, property: Int, value: Int): Boolean {
+    val player = onlinePlayer(username) ?: return false
+    player.sendPacket(WindowPropertyPacket(windowId, property.toShort(), value.toShort()))
+    println("event=server.window.property name=$username window=$windowId property=$property value=$value")
+    return true
+}
+
+/** 下发一次跨服转移请求；本 harness 只验证客户端收到，不会真的连第二个服务端。 */
+public fun sendTransfer(username: String, host: String, port: Int): Boolean {
+    val player = onlinePlayer(username) ?: return false
+    player.sendPacket(TransferPacket(host, port))
+    println("event=server.transfer name=$username host=$host port=$port")
+    return true
+}
+
+/** 回复一次命令补全；matches 的顺序与内容由服务端侧写死，客户端只负责读。 */
+public fun sendTabComplete(
+    username: String,
+    transactionId: Int,
+    start: Int,
+    length: Int,
+    matches: List<String>,
+): Boolean {
+    val player = onlinePlayer(username) ?: return false
+    player.sendPacket(
+        TabCompletePacket(transactionId, start, length, matches.map { TabCompletePacket.Match(it, null) }),
+    )
+    println("event=server.suggestions name=$username transaction=$transactionId matches=$matches")
+    return true
+}
+
+/**
  * 启动一个仅供联调的最小服务端：离线认证 + 40 格高的石头平面。
  *
  * 启动前会校验本仓库锁定的协议号与 Minestom 自带常量一致；不一致直接抛错，
@@ -363,6 +474,34 @@ public fun startHarness(port: Int = DEFAULT_PORT): InstanceContainer {
                 "id=${event.target.entityId} hand=${event.hand}",
         )
         recordFact(entityFactKey("interact", event.player.username))
+    }
+    // 上行包事实：输入、实体动作、飞行请求与补全请求都没有回执包，
+    // PlayerPacketEvent 是唯一能证明“服务端确实收到了”的落点。
+    MinecraftServer.getGlobalEventHandler().addListener(PlayerPacketEvent::class.java) { event ->
+        val name = event.player.username
+        when (val packet = event.packet) {
+            is ClientInputPacket -> {
+                inputs.computeIfAbsent(name) { java.util.concurrent.CopyOnWriteArrayList() }.add(packet)
+                recordFact(packetFactKey(name, "input"))
+                if (packet.shift()) recordFact(packetFactKey(name, "sneak"))
+                if (packet.sprint()) recordFact(packetFactKey(name, "sprint"))
+                println("event=player.input name=$name shift=${packet.shift()} sprint=${packet.sprint()}")
+            }
+            is ClientEntityActionPacket -> {
+                recordFact(packetFactKey(name, "command.${packet.action()}"))
+                println("event=player.command name=$name action=${packet.action()} entity=${packet.playerId()}")
+            }
+            is ClientPlayerAbilitiesPacket -> {
+                val flying = (packet.flags().toInt() and 0x02) != 0
+                recordFact(packetFactKey(name, "flying.$flying"))
+                println("event=player.abilities name=$name flying=$flying")
+            }
+            is ClientTabCompletePacket -> {
+                recordFact(packetFactKey(name, "suggest.${packet.text()}"))
+                println("event=player.suggest name=$name transaction=${packet.transactionId()} text=${packet.text()}")
+            }
+            else -> Unit
+        }
     }
     MinecraftServer.getCommandManager().register(EchoCommand())
 

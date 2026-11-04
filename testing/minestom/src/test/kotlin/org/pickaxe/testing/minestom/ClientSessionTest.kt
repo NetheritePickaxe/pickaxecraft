@@ -64,6 +64,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.abs
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -1325,11 +1326,142 @@ class ClientSessionTest {
                     val change = log.snapshot().filterIsInstance<ClientEvent.BlocksChanged>()
                         .flatMap { it.changes }
                         .firstOrNull { it.position == above }
-                    assertNotNull(change, "事件流里应有这条方块变更")
+                    assertTrue(change != null, "事件流里应有这条方块变更")
                 } finally {
                     log.close()
                 }
             } finally {
+                session.close()
+            }
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `冲刺潜行与飞行的上行包服务端可见且能力由服务端权威下发`() = runBlocking {
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, MOTION_USERNAME)
+            val log = EventLog(this, session)
+            try {
+                assertTrue(awaitMilestone(MOTION_USERNAME, PlayerMilestone.SPAWNED, MILESTONE_TIMEOUT))
+                // 服务端里程碑先到、客户端 JoinedWorld 还在 inbox 里排队：等客户端侧就绪。
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.selfEntityId != null }
+                assertNotNull(session.selfEntityId, "出生后应拿到本端实体 id")
+
+                // 三个动作各走不同的包：input(shift)、input(sprint)+player_command、abilities。
+                session.setSneaking(true)
+                session.setSprinting(true)
+                session.setFlying(true)
+
+                assertTrue(
+                    awaitPlayerInput(MOTION_USERNAME, MILESTONE_TIMEOUT) { it.shift() },
+                    "服务端应看到 shift 位被置起",
+                )
+                assertTrue(
+                    awaitPlayerInput(MOTION_USERNAME, MILESTONE_TIMEOUT) { it.sprint() && !it.shift() },
+                    "开启冲刺时应清掉 shift 位（原版两者互斥）",
+                )
+                assertTrue(
+                    awaitPlayerPacket(MOTION_USERNAME, "command.START_SPRINTING", MILESTONE_TIMEOUT),
+                    "服务端应收到独立的 START_SPRINTING",
+                )
+                assertTrue(
+                    awaitPlayerPacket(MOTION_USERNAME, "flying.true", MILESTONE_TIMEOUT),
+                    "服务端应收到飞行请求",
+                )
+                assertTrue(session.movementInput.value.sprinting, "本地按键状态应立即推进")
+                assertFalse(session.abilities.value.flying, "上行请求不等于服务端已认可飞行")
+
+                // 服务端权威答复：能力包里允许且正在飞。
+                sendAbilities(MOTION_USERNAME, ABILITIES_CAN_FLY or ABILITIES_FLYING, ABILITIES_FLY_SPEED, 0.2f)
+                log.await {
+                    it is ClientEvent.AbilitiesChanged && it.abilities.flying && it.abilities.canFly
+                }
+                assertTrue(session.abilities.value.flying, "能力包到达后才算真的在飞")
+                assertEquals(ABILITIES_FLY_SPEED, session.abilities.value.flySpeed)
+
+                session.setSprinting(false)
+                assertTrue(
+                    awaitPlayerPacket(MOTION_USERNAME, "command.STOP_SPRINTING", MILESTONE_TIMEOUT),
+                    "服务端应收到 STOP_SPRINTING",
+                )
+                assertFalse(session.movementInput.value.sprinting)
+            } finally {
+                log.close()
+                session.close()
+            }
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `状态效果可按键合并且移除只影响被点名的效果`() = runBlocking {
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, EFFECT_USERNAME)
+            val log = EventLog(this, session)
+            try {
+                assertTrue(awaitMilestone(EFFECT_USERNAME, PlayerMilestone.SPAWNED, MILESTONE_TIMEOUT))
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.selfEntityId != null }
+                val entityId = assertNotNull(session.selfEntityId)
+
+                sendMobEffect(EFFECT_USERNAME, entityId, SPEED_KEY, EFFECT_AMPLIFIER, EFFECT_DURATION, 0x02)
+                log.await {
+                    it is ClientEvent.EntityEffectsChanged && it.changed.any { effect -> effect.key == SPEED_KEY }
+                }
+                val speed = assertNotNull(session.effect(entityId, SPEED_KEY))
+                assertEquals(EFFECT_AMPLIFIER, speed.amplifier)
+                assertEquals(EFFECT_DURATION, speed.durationTicks)
+                assertTrue(speed.showParticles, "flags 的粒子位应保留")
+                assertFalse(speed.showIcon)
+
+                // 第二个包只带一个效果，合并后两个键都要在。
+                sendMobEffect(EFFECT_USERNAME, entityId, HASTE_KEY, 0, 100, 0)
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.effects(entityId).size == 2 }
+
+                sendRemoveMobEffect(EFFECT_USERNAME, entityId, SPEED_KEY)
+                log.await { it is ClientEvent.EntityEffectsChanged && SPEED_KEY in it.removed }
+                assertNull(session.effect(entityId, SPEED_KEY))
+                assertTrue(
+                    session.effects(entityId).containsKey(HASTE_KEY),
+                    "移除一个效果不应抹掉另一个",
+                )
+            } finally {
+                log.close()
+                session.close()
+            }
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `容器数值属性可读且多个下标互不覆盖`() = runBlocking {
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, PROPERTY_USERNAME)
+            val log = EventLog(this, session)
+            try {
+                assertTrue(awaitMilestone(PROPERTY_USERNAME, PlayerMilestone.SPAWNED, MILESTONE_TIMEOUT))
+
+                sendWindowProperty(PROPERTY_USERNAME, Container.PLAYER_WINDOW_ID, FURNACE_PROGRESS, 75)
+                log.await {
+                    it is ClientEvent.ContainerPropertyChanged &&
+                        it.windowId == Container.PLAYER_WINDOW_ID &&
+                        it.property == FURNACE_PROGRESS && it.value == 75
+                }
+                assertEquals(75, session.containerProperties(Container.PLAYER_WINDOW_ID)[FURNACE_PROGRESS])
+
+                sendWindowProperty(PROPERTY_USERNAME, Container.PLAYER_WINDOW_ID, FURNACE_TOTAL, 200)
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    session.containerProperties(Container.PLAYER_WINDOW_ID).size == 2
+                }
+                assertEquals(75, session.containerProperties(Container.PLAYER_WINDOW_ID)[FURNACE_PROGRESS])
+            } finally {
+                log.close()
                 session.close()
             }
         } finally {
@@ -1504,6 +1636,24 @@ class ClientSessionTest {
         /** 物品键名用例：服务端塞一块带名字的石头与一颗无名钻石。 */
         const val ITEM_USERNAME: String = "ItemBot"
         const val NAMED_ITEM_NAME: String = "试金石"
+
+        /** 运动状态用例：上行包由 PlayerPacketEvent 登记，能力由服务端权威下发。 */
+        const val MOTION_USERNAME: String = "MotionBot"
+        const val ABILITIES_FLYING: Int = 0x02
+        const val ABILITIES_CAN_FLY: Int = 0x04
+        const val ABILITIES_FLY_SPEED: Float = 0.08f
+
+        /** 状态效果用例：两个键合并后移除其中一个。 */
+        const val EFFECT_USERNAME: String = "EffectBot"
+        const val SPEED_KEY: String = "minecraft:speed"
+        const val HASTE_KEY: String = "minecraft:haste"
+        const val EFFECT_AMPLIFIER: Int = 1
+        const val EFFECT_DURATION: Int = 200
+
+        /** 容器属性用例：熔炉进度与总时长两个下标。 */
+        const val PROPERTY_USERNAME: String = "PropertyBot"
+        const val FURNACE_PROGRESS: Int = 2
+        const val FURNACE_TOTAL: Int = 3
 
         const val EVENT_TIMEOUT_MILLIS: Long = 10_000
         val MILESTONE_TIMEOUT: Duration = Duration.ofSeconds(10)

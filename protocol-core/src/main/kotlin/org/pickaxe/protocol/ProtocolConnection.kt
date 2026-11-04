@@ -3,6 +3,8 @@ package org.pickaxe.protocol
 import org.geysermc.mcprotocollib.protocol.MinecraftProtocol
 import org.cloudburstmc.math.vector.Vector3d
 import org.pickaxe.protocol.entity.EntityAttribute
+import org.pickaxe.protocol.entity.MobEffect
+import org.pickaxe.protocol.entity.MovementInput
 import org.pickaxe.protocol.internal.ChatInput
 import org.pickaxe.protocol.internal.DigAction
 import org.pickaxe.protocol.internal.McplConnection
@@ -172,6 +174,52 @@ public class ProtocolConnection private constructor(
     /** 按 [key]（如 `minecraft:max_health`）查单个属性；没有收到过就是 null。 */
     public fun attribute(entityId: Int, key: String): EntityAttribute? =
         connection.attributes(entityId)[key]
+
+    /**
+     * 整份声明运动按键（前进/后退/左右/跳跃/潜行/冲刺）。
+     *
+     * `player_input` 是状态包，服务端按最后一次收到的字节为准；本方法每次都把七个布尔位
+     * 整份重发。没有回执，发送后本端状态立即推进。
+     *
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    public fun setMovementInput(input: MovementInput) {
+        connection.setMovementInput(input)
+    }
+
+    /** 切换潜行（shift 位）。 */
+    public fun setSneaking(enabled: Boolean) {
+        connection.setSneaking(enabled)
+    }
+
+    /**
+     * 切换冲刺：同时发 `player_input` 的 sprint 位与独立的 `player_command`。
+     *
+     * @throws IllegalStateException 尚未收到 Login 包（拿不到本端实体 id），或未进入 play
+     */
+    public fun setSprinting(enabled: Boolean) {
+        connection.setSprinting(enabled)
+    }
+
+    /**
+     * 请求开始/停止飞行。
+     *
+     * 成功没有回执：服务端若允许，会下发 `player_abilities`，表现为
+     * [ProtocolEvent.AbilitiesUpdated]；拒绝时则什么都不发。
+     */
+    public fun setFlying(enabled: Boolean) {
+        connection.setFlying(enabled)
+    }
+
+    /** 本端最后一次声明的运动按键。 */
+    public fun movementInput(): MovementInput = connection.movementInput()
+
+    /** 某实体当前的状态效果表（按键合并后的快照）。 */
+    public fun effects(entityId: Int): Map<String, MobEffect> = connection.effects(entityId)
+
+    /** 某窗口当前的数值属性表（原始下标 → 值；含义取决于容器类型）。 */
+    public fun containerProperties(windowId: Int): Map<Int, Int> =
+        connection.containerProperties(windowId)
 
     /**
      * 攻击一个实体。
