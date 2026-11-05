@@ -108,6 +108,17 @@ public sealed interface ClientEvent {
     ) : ClientEvent
 
     /**
+     * 生物实体的生命值变为 [health]，[Session.entity] 里的快照已同步更新。
+     *
+     * 只有适配层确认实体类型属于生物层级、且元数据里的值真的变了才发；本端玩家自己的
+     * 血量走 [StatusChanged]。
+     */
+    public data class EntityHealthChanged(
+        public val entityId: Int,
+        public val health: Float,
+    ) : ClientEvent
+
+    /**
      * 玩家列表发生变化。
      *
      * 一个服务端包对应一个事件：[updated] 是新增或有字段变化的条目，[removed] 是被移出

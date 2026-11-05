@@ -17,8 +17,10 @@ import net.minestom.server.crypto.LastSeenMessages
 import net.minestom.server.crypto.MessageSignature
 import net.minestom.server.crypto.SignedMessageBody
 import net.minestom.server.entity.EntityCreature
+import net.minestom.server.entity.Entity
 import net.minestom.server.entity.EntityType
 import net.minestom.server.entity.EquipmentSlot
+import net.minestom.server.entity.ItemEntity
 import net.minestom.server.entity.Player
 import net.minestom.server.entity.attribute.Attribute
 import net.minestom.server.event.player.AsyncPlayerConfigurationEvent
@@ -1178,9 +1180,10 @@ class ClientSessionTest {
                     spawnZombie(instance, MOB_ZOMBIE_X, GROUND_LEVEL, 0.5)
                 }
                 awaitCondition(EVENT_TIMEOUT_MILLIS) {
-                    session.entities().values.any { it.type == "ZOMBIE" }
+                    session.entity(zombie.entityId)?.type == "ZOMBIE"
                 }
-                val zombieId = session.entities().values.first { it.type == "ZOMBIE" }.id
+                // 共享 instance 里可能有别的用例留下的僵尸，必须按服务端给的 id 定位。
+                val zombieId = zombie.entityId
 
                 // 僵尸的属性实例同样按需创建，出生包可能为空；服务端改一次基值，
                 // Minestom 会把属性包推给所有观察者（本端客户端就是观察者）。
@@ -1208,6 +1211,60 @@ class ClientSessionTest {
             } finally {
                 log.close()
                 session.close()
+            }
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `生物血量按实体层级读取而非只看元数据下标`() = runBlocking {
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, HEALTH_USERNAME)
+            val log = EventLog(this, session)
+            val spawned = mutableListOf<Entity>()
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+
+                val zombie = withContext(Dispatchers.IO) {
+                    spawnZombie(instance, HEALTH_ZOMBIE_X, GROUND_LEVEL, 0.5)
+                }
+                spawned += zombie
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.entity(zombie.entityId)?.type == "ZOMBIE" }
+
+                // 服务端改血量 → LivingEntityMeta → set_entity_data；客户端只在确认是生物后才读下标 9。
+                withContext(Dispatchers.IO) { setEntityHealth(zombie, ZOMBIE_HEALTH) }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.health(zombie.entityId) == ZOMBIE_HEALTH }
+                log.await {
+                    it is ClientEvent.EntityHealthChanged &&
+                        it.entityId == zombie.entityId && it.health == ZOMBIE_HEALTH
+                }
+                assertEquals(ZOMBIE_HEALTH, session.entity(zombie.entityId)?.health)
+
+                // 掉落物不是生物：同一下标即便带 float，也不该被当成血量。
+                // 先把世界存进局部变量：apply 的隐式接收者自己也有 instance 属性（此时为 null）。
+                val world = instance
+                val dropped = withContext(Dispatchers.IO) {
+                    ItemEntity(ItemStack.of(Material.STONE)).apply {
+                        setInstance(world, Pos(HEALTH_ITEM_X, GROUND_LEVEL, 0.5))
+                    }
+                }
+                spawned += dropped
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.entity(dropped.entityId) != null }
+                assertNull(session.health(dropped.entityId), "非生物不应读到血量")
+                assertFalse(
+                    log.snapshot().any {
+                        it is ClientEvent.EntityHealthChanged && it.entityId == dropped.entityId
+                    },
+                    "非生物不应产生血量事件",
+                )
+            } finally {
+                log.close()
+                session.close()
+                // instance 由整个测试类共享：用完就撤，不给后续用例留下多余的实体。
+                spawned.forEach { it.remove() }
             }
         } finally {
             client.close()
@@ -1323,6 +1380,11 @@ class ClientSessionTest {
                     }
                     assertTrue(session.lastAcknowledgedSequence > 0, "服务端应回执放置动作")
 
+                    // 方块缓存由网络线程旁路先写，事件随后才排进 Actor：查一次快照会偶发抢跑。
+                    awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                        log.snapshot().filterIsInstance<ClientEvent.BlocksChanged>()
+                            .any { event -> event.changes.any { it.position == above } }
+                    }
                     val change = log.snapshot().filterIsInstance<ClientEvent.BlocksChanged>()
                         .flatMap { it.changes }
                         .firstOrNull { it.position == above }
@@ -1632,6 +1694,12 @@ class ClientSessionTest {
         const val MOB_USERNAME: String = "MobBot"
         const val MOB_ZOMBIE_X: Double = 2.5
         const val ATTACK_DAMAGE: Double = 3.0
+
+        /** 生物血量用例：僵尸改血量，掉落物作为「同下标但不是血量」的反例。 */
+        const val HEALTH_USERNAME: String = "HealthBot"
+        const val HEALTH_ZOMBIE_X: Double = 8.5
+        const val HEALTH_ITEM_X: Double = 9.5
+        const val ZOMBIE_HEALTH: Float = 7.5f
 
         /** 物品键名用例：服务端塞一块带名字的石头与一颗无名钻石。 */
         const val ITEM_USERNAME: String = "ItemBot"

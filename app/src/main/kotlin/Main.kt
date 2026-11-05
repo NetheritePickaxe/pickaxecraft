@@ -205,6 +205,7 @@ private fun describe(event: ClientEvent): String = when (event) {
         "event=attributes id=${event.entityId} " +
             event.changed.joinToString(" ") { "${it.key}=${it.value}" }
     is ClientEvent.EntityDamaged -> "event=damaged id=${event.entityId} source=${event.sourceType}"
+    is ClientEvent.EntityHealthChanged -> "event=entity.health id=${event.entityId} hp=${event.health}"
     is ClientEvent.AbilitiesChanged -> with(event.abilities) {
         "event=abilities invincible=$invincible canFly=$canFly flying=$flying " +
             "creative=$creative flySpeed=$flySpeed walkSpeed=$walkSpeed"

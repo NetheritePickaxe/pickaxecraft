@@ -11,6 +11,7 @@ import net.minestom.server.coordinate.Pos
 import net.minestom.server.component.DataComponents
 import net.minestom.server.entity.EntityCreature
 import net.minestom.server.entity.EntityType
+import net.minestom.server.entity.LivingEntity
 import net.minestom.server.entity.Player
 import net.minestom.server.entity.attribute.Attribute
 import net.minestom.server.entity.damage.DamageType
@@ -229,6 +230,18 @@ public fun spawnZombie(instance: InstanceContainer, x: Double, y: Double, z: Dou
     EntityCreature(EntityType.ZOMBIE).apply {
         setInstance(instance, Pos(x, y, z))
     }
+
+/**
+ * 服务端侧改一只生物的血量。
+ *
+ * Minestom 的 `LivingEntity#setHealth` 会同步写进 `LivingEntityMeta`，下一 tick 由
+ * `set_entity_data` 推给观察者；这是「客户端能读到生物血量」的服务端侧入口。
+ * 值会被最大生命属性截断，联调用的值必须小于默认上限。
+ */
+public fun setEntityHealth(entity: LivingEntity, health: Float) {
+    entity.health = health
+    println("event=server.health id=${entity.entityId} health=${entity.health}")
+}
 
 /**
  * 把一个带自定义名称的物品塞进玩家背包，返回是否成功。

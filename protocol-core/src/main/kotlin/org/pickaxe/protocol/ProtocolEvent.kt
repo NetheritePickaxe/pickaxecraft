@@ -160,10 +160,22 @@ public sealed interface ProtocolEvent {
      * 服务端的移动包大多是相对量（1/4096 格），适配层负责叠加；上层永远看到绝对坐标。
      * 未知 id 的增量包会被丢弃：增量只有叠加到已知状态上才有意义。
      *
-     * 元数据包只在**本层关心的字段真的变了**时才上报（目前只有自定义名称）：
+     * 元数据包只在本层关心的字段真的变了时才上报（目前是自定义名称与生物血量）：
      * 服务端每秒会为实体下发与位置无关的状态字节，原样转发只是噪音。
      */
     public data class EntityUpdated(public val entity: TrackedEntity) : ProtocolEvent
+
+    /**
+     * 生物实体的生命值发生变化。[health] 是服务端元数据里的新值。
+     *
+     * 与 [EntityUpdated] 分开投递：位置增量每秒上百条，不该进事件流；血量是低频、
+     * 语义明确的里程碑，下游（血条、目标信息）需要立刻响应。事件到达时实体快照已更新。
+     * 本端玩家自己的血量走 [HealthUpdated]，不在这里。
+     */
+    public data class EntityHealthChanged(
+        public val entityId: Int,
+        public val health: Float,
+    ) : ProtocolEvent
 
     /** 服务端要求丢弃这些实体：离开视野、死亡或消失。未跟踪的 id 直接忽略。 */
     public data class EntityRemoved(public val ids: List<Int>) : ProtocolEvent

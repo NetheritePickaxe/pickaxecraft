@@ -281,6 +281,14 @@ public class Session internal constructor(
     public fun entity(entityId: Int): TrackedEntity? = entities[entityId]
 
     /**
+     * 按实体 id 读生物生命值；非生物、还没收到元数据、或会话已关闭时返回 null。
+     *
+     * 等价于 `entity(id)?.health`，单独提供是为了让调用方不必先理解实体元数据层级。
+     * 本端玩家自己的血量在 [status] 里。
+     */
+    public fun health(entityId: Int): Float? = entities[entityId]?.health
+
+    /**
      * 当前所有已跟踪实体的快照。
      *
      * 每次调用都会复制一份映射，成本与实体数成正比；高频渲染路径应当按 id 查询
@@ -1024,6 +1032,11 @@ public class Session internal constructor(
                     sourceDirect = event.sourceDirect,
                 ),
             )
+            true
+        }
+
+        is ProtocolEvent.EntityHealthChanged -> {
+            emit(ClientEvent.EntityHealthChanged(event.entityId, event.health))
             true
         }
 

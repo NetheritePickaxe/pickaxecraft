@@ -333,6 +333,16 @@ id 连续），升级协议库时必须重新导出核对。`custom_name` 组件
 （熔炉的 2 是熔炼进度，酿造台则不是）。协议不带类型信息，本层按下标累积而不翻译；
 窗口关闭时该窗口的属性表一并作废。
 
+### 2.26 实体元数据下标依赖实体层级
+
+`set_entity_data` 只有「下标 → 值」，没有层级信息：`Entity` 层占 0–7（自定义名称是 2），
+`LivingEntity` 层从 8 开始，血量在绝对下标 9；同一个 9 对 `Interaction` / `ItemDisplay`
+是完全无关的 float 字段。协议不下发 `entity_type` 注册表，因此本仓库按版本固化
+`LivingEntityTypes`（由 Minestom 的 `packetType = LIVING|PLAYER` 导出，协议 776 为
+158 种中的 93 种，名字与 MCPL `EntityType` 枚举逐项一致）。只有表内类型才读下标 9，
+未知类型返回 `null` 而不是猜。玩家自己的血量走 `set_health`，不属于这条链路。
+升级协议库必须重新导出并核对这张表。
+
 
 ## 3. 由本项目实现、不得记在上游账上的部分
 
@@ -414,6 +424,7 @@ id 连续），升级协议库时必须重新导出核对。`custom_name` 组件
 | 运动按键：三类上行包到服务端、能力与本地声明分离 | 联调 `冲刺潜行与飞行的上行包服务端可见且能力由服务端权威下发`；`MovementInputTest`（3 例） |
 | 状态效果表与按键合并、移除只影响一个键 | `EffectKeysTest`（2 例）；联调 `状态效果可按键合并且移除只影响被点名的效果` |
 | 容器属性按下标累积 | 联调 `容器数值属性可读且多个下标互不覆盖` |
+| 生物血量只在生物层级读下标 9，掉落物不误读 | `LivingEntityTypesTest`（2 例）；联调 `生物血量按实体层级读取而非只看元数据下标` |
 | `chat_type` 注册表的 NBT 形状与下标解析 | `ChatTypeRegistryTest`（9 例） |
 | 事件溢出终止而非丢弃 | `ClientSessionTest.事件缓冲写满时终止会话而不是静默丢弃` |
 | 出生：自动应答传送到位并收到区块 | `ClientSessionTest.登录后完成出生并进入世界`（客户端事件） |
@@ -429,6 +440,9 @@ id 连续），升级协议库时必须重新导出核对。`custom_name` 组件
 1. 同时升级 `mcprotocollib` 与 `minestom` 版本，保持协议号一致。
 2. 重跑 `./gradlew clean build`，特别是 `testing:minestom` 的 `ClientSessionTest`。
 3. 核对本文第 2 节每一条是否仍成立（线程模型、KeepAlive、状态切换点、断开语义）。
+4. 重新导出版本资产并核对条目数：`AttributeTable`（属性）、`ItemKeys`（物品）、
+   `EffectKeys`（效果）、`LivingEntityTypes`（实体层级）；后者的名字必须与新版
+   `EntityType` 枚举一致，元数据基础层的字段数变化会直接移动血量下标。
 4. 若上游改了默认执行器或 `EventLoopGroup` 归属，确认适配层的覆盖仍然生效。
 5. 若上游开始自带区块解码，或调色板线格式变化（例如重新带回 long 数组长度前缀），
    先跑 `ChunkDecoderTest` 与 `ClientSessionTest.出生后读到的方块状态与服务端一致`。

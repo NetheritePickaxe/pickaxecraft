@@ -406,6 +406,20 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 实现记录见 [M4o](plans/m4o-movement-state.md)、[M4p](plans/m4p-mob-effects.md)、
 [M4q](plans/m4q-container-properties.md)。
 
+### 5.17 M4r 已落地的具体形态：生物血量
+
+- 元数据下标含义依赖实体层级。适配层用 `LivingEntityTypes`（Minestom 注册表导出的
+  93 项版本资产）判断 `TrackedEntity.type` 是否属于生物层级，只有是才读绝对下标 9；
+  不在表内就留 `null`，不把 `Interaction` 的 `view_range` 之类字段误当成血量。
+- `TrackedEntity.health` 与其它实体事实一起放进不可变快照，`Session.health(id)` 是便捷入口。
+  本端玩家自己的血量仍是 `Session.status`（`set_health` 包），两条链路互不覆盖。
+- 低频里程碑才进事件流：`EntityUpdated` 只写缓存（位置增量太密），血量变化另发
+  `EntityHealthChanged`；两者按序入队，事件到达时缓存已是新值。
+- 联调同时给正例（僵尸改血量）与反例（掉落物不产生血量、查询为 null），
+  服务端 `event=server.health` 日志是独立证据。
+
+实现记录见 [M4r](plans/m4r-entity-health.md)。
+
 ## 6. libGDX 与平台约束
 
 共享发布产物使用 Java 21 字节码，由 `verifyBytecode`（major 65）自动断言；构建、CLI 与测试仍使用 Java 25。libGDX 官方当前推荐 JDK 17/21，因此下游图形客户端不被迫使用 Java 25；启用 Minestom 单人模式的 Desktop 组合根除外。

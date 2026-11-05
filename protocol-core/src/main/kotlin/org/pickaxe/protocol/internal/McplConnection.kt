@@ -96,6 +96,7 @@ import org.pickaxe.protocol.entity.AttributeTable
 import org.pickaxe.protocol.entity.EffectKeys
 import org.pickaxe.protocol.entity.EntityAttribute
 import org.pickaxe.protocol.entity.EntityAttributeModifier
+import org.pickaxe.protocol.entity.LivingEntityTypes
 import org.pickaxe.protocol.entity.MobEffect
 import org.pickaxe.protocol.entity.MovementInput
 import org.pickaxe.protocol.entity.PlayerAbilities
@@ -725,26 +726,43 @@ internal class McplConnection(
     }
 
     /**
-     * 实体元数据里的自定义名称。
+     * 实体元数据里的自定义名称与生物血量。
      *
-     * 元数据是一张“下标 → 值”的表，下标由协议版本固定，但**含义取决于实体层级**：
-     * 下标 2 是所有实体共有的自定义名称，而下标 9 之类的字段只在生物层级里才成立。
-     * 协议包不携带层级信息，因此本层只读下标 2；其余字段要么需要本地实体类型表，
-     * 要么属于别的子系统（装备、状态效果）。
+     * 元数据是一张「下标 → 值」的表，下标由协议版本固定，但**含义取决于实体层级**：
+     * 下标 2 是所有实体共有的自定义名称；生物层从 8 开始，血量在 9，而同样的 9 在船、
+     * 掉落物或展示实体上是完全无关的字段。协议包不携带层级信息，因此这里按实体类型查
+     * [LivingEntityTypes]，不在表内的类型不读血量——不猜层级。
      *
+     * 字段存在但为空表示服务端要求清掉名牌；字段不出现才表示「本包没提这件事」。
      * 未知实体的元数据直接忽略，理由与移动增量相同：没有可更新的状态。
      */
     private fun applyEntityMetadata(packet: ClientboundSetEntityDataPacket) {
         val current = entities[packet.entityId] ?: return
+        val living = LivingEntityTypes.isLiving(current.type)
         var customName = current.customName
+        var health = current.health
+        var healthUpdate: Float? = null
         for (metadata in packet.metadata) {
-            if (metadata.id != CUSTOM_NAME_INDEX) continue
-            // 字段存在但为空表示服务端要求清掉名牌；字段不出现才表示“本包没提这件事”。
-            val component = (metadata.value as? Optional<*>)?.orElse(null) as? Component
-            customName = component?.let(ComponentText::render)
+            when (metadata.id) {
+                CUSTOM_NAME_INDEX -> {
+                    val component = (metadata.value as? Optional<*>)?.orElse(null) as? Component
+                    customName = component?.let(ComponentText::render)
+                }
+
+                HEALTH_INDEX -> if (living) {
+                    val value = (metadata.value as? Number)?.toFloat()
+                    if (value != null && value != health) {
+                        health = value
+                        healthUpdate = value
+                    }
+                }
+            }
         }
-        if (customName == current.customName) return
-        updateEntity(packet.entityId) { it.copy(customName = customName) }
+        if (customName != current.customName || health != current.health) {
+            updateEntity(packet.entityId) { it.copy(customName = customName, health = health) }
+        }
+        // 快照先入队写缓存，血量事件后入队；消费者收到事件时 entity(id) 已是新值。
+        healthUpdate?.let { emit(ProtocolEvent.EntityHealthChanged(packet.entityId, it)) }
     }
 
     /**
@@ -1448,11 +1466,19 @@ internal class McplConnection(
         /**
          * 自定义名称在实体元数据表里的下标。
          *
-         * 取 0–7 是 `Entity` 层共有的字段，下标 2 是其中唯一与显示相关的文本字段。
-         * 生物层的字段从这个基址往后排（例如生命值是 9），而协议不告诉本端某个实体
-         * 属于哪一层，所以本层只读所有实体都成立的下标 2。
+         * 0–7 是 `Entity` 层共有的字段，下标 2 是其中唯一与显示相关的文本字段，
+         * 对所有实体都成立，不需要知道实体层级。
          */
         const val CUSTOM_NAME_INDEX: Int = 2
+
+        /**
+         * 生物生命值在实体元数据表里的绝对下标。
+         *
+         * `Entity` 层占 0–7，`LivingEntity` 层从 8 开始，其中血量是该层的第 1 项。
+         * 这个下标**只在生物层级成立**：同样的 9 对船、掉落物、展示实体是别的字段。
+         * 读取前必须先用 [LivingEntityTypes] 判定类型，不能只看下标取值。
+         */
+        const val HEALTH_INDEX: Int = 9
 
         /**
          * 每条玩家消息回送的确认步长。
