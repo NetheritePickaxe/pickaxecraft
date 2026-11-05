@@ -3,6 +3,7 @@ package org.pickaxe.testing.minestom
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -42,6 +43,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import org.pickaxe.client.ClientEvent
 import org.pickaxe.client.ClientException
+import org.pickaxe.client.CompletionResult
 import org.pickaxe.client.ClientOptions
 import org.pickaxe.client.MinecraftClient
 import org.pickaxe.client.Position
@@ -51,6 +53,10 @@ import org.pickaxe.protocol.ProtocolVersion
 import org.pickaxe.protocol.chat.ChatKind
 import org.pickaxe.protocol.chat.ChatMessage
 import org.pickaxe.protocol.chat.ChatParameter
+import org.pickaxe.protocol.command.CommandArgumentProperty
+import org.pickaxe.protocol.command.CommandArgumentType
+import org.pickaxe.protocol.command.CommandNodeKind
+import org.pickaxe.protocol.command.CommandTextMode
 import org.pickaxe.protocol.inventory.Container
 import org.pickaxe.protocol.inventory.PlayerInventoryLayout
 import org.pickaxe.protocol.inventory.SlotClick
@@ -777,6 +783,85 @@ class ClientSessionTest {
                 "CLOSED" in rejected.message.orEmpty() && "聊天" in rejected.message.orEmpty(),
                 "拒绝原因应说明当前状态与操作，实际为 ${rejected.message}",
             )
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `命令树与补全由服务端给出`() = runBlocking {
+        // 命令树与候选都只能由服务端决定：前者随 Player#spawn 下发，后者由服务端按权限与
+        // 当前输入算。客户端能证明的是“包到了、形状对、区间落在该换的那一段上”，
+        // 服务端侧另有补全请求原文作为独立证据。
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, COMMAND_USERNAME)
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+
+                log.await { it is ClientEvent.CommandTreeReceived }
+                val tree = withTimeout(EVENT_TIMEOUT_MILLIS) { session.commands.first { it != null } }!!
+                assertTrue(
+                    SUGGEST_COMMAND_NAME in tree.topLevelLiterals,
+                    "harness 注册的命令应出现在树里，实际为 ${tree.topLevelLiterals}",
+                )
+
+                // 逐层走一遍：命令名下面是唯一的参数节点，类型与文本模式都要对得上。
+                val command = tree.childrenOf(tree.rootIndex).first { it.name == SUGGEST_COMMAND_NAME }
+                assertTrue(command.executable, "带默认执行器的命令应当可执行")
+                val argument = tree.childrenOf(command.index).single()
+                assertEquals(CommandNodeKind.ARGUMENT, argument.kind)
+                assertEquals(CommandArgumentType.STRING, argument.argumentType)
+                assertEquals(
+                    CommandArgumentProperty.Text(CommandTextMode.SINGLE_WORD),
+                    argument.property,
+                    "ArgumentType.Word 在协议里是 string + 单词模式",
+                )
+
+                // 补全：候选由服务端的回调按前缀过滤，所以只有 red 回来。
+                val text = "/$SUGGEST_COMMAND_NAME r"
+                val result = session.complete(text)
+                assertTrue(result is CompletionResult.Suggestions, "服务端应回答补全，实际为 $result")
+                val suggestions = (result as CompletionResult.Suggestions).suggestions
+                assertEquals(listOf("red"), suggestions.matches, "候选由服务端过滤，不该是全部三个")
+
+                // 区间说的就是“把这几个字符换掉”：取出来必须正好是已输入的前缀。
+                val replaced = text.substring(suggestions.start, suggestions.start + suggestions.length)
+                assertEquals("r", replaced, "替换区间应指向最后一个词")
+                assertEquals("/$SUGGEST_COMMAND_NAME red", suggestions.applyTo(text), "套回原文应得到完整命令")
+
+                // 事件与挂起 API 是同一份数据；不想用挂起接口的调用方可以只看事件。
+                log.await { it is ClientEvent.CommandSuggestionsReceived }
+
+                // 服务端确实收到了这次请求：包里的原文就是证据（补全包本身没有其他回执）。
+                assertTrue(
+                    withContext(Dispatchers.IO) {
+                        awaitPlayerPacket(COMMAND_USERNAME, "suggest.$text", MILESTONE_TIMEOUT)
+                    },
+                    "服务端应收到补全请求：$text",
+                )
+
+                // 选中的候选可以直接下发执行，服务端侧按真实命令跑一遍。
+                session.sendCommand("/$SUGGEST_COMMAND_NAME red")
+                assertTrue(
+                    withContext(Dispatchers.IO) {
+                        awaitCommand(COMMAND_USERNAME, "/$SUGGEST_COMMAND_NAME red", MILESTONE_TIMEOUT)
+                    },
+                    "补全出来的命令应能在服务端执行",
+                )
+
+                // 没有补全回调的命令服务端**不回包**：这是“没有答案”，不是“没有候选”。
+                // 超时刻意压短，避免把用例拖成十秒。
+                assertEquals(
+                    CompletionResult.NoAnswer,
+                    session.complete("/$ECHO_COMMAND_NAME hi", timeoutMillis = NO_ANSWER_TIMEOUT_MILLIS),
+                    "服务端不回包时应报告 NoAnswer",
+                )
+            } finally {
+                log.close()
+                session.close()
+            }
         } finally {
             client.close()
         }
@@ -1847,6 +1932,12 @@ class ClientSessionTest {
         const val HASTE_KEY: String = "minecraft:haste"
         const val EFFECT_AMPLIFIER: Int = 1
         const val EFFECT_DURATION: Int = 200
+
+        /** 命令树与补全用例：候选由服务端的回调按前缀过滤。 */
+        const val COMMAND_USERNAME: String = "CommandBot"
+
+        /** 服务端不回包时的等待上限：只为证明“没有答案”不会挂住调用方。 */
+        const val NO_ANSWER_TIMEOUT_MILLIS: Long = 800
 
         /** 容器属性用例：熔炉进度与总时长两个下标。 */
         const val PROPERTY_USERNAME: String = "PropertyBot"

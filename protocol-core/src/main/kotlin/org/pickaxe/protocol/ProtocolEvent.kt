@@ -1,6 +1,8 @@
 package org.pickaxe.protocol
 
 import org.pickaxe.protocol.chat.ChatMessage
+import org.pickaxe.protocol.command.CommandSuggestions
+import org.pickaxe.protocol.command.CommandTree
 import org.pickaxe.protocol.entity.EntityAttribute
 import org.pickaxe.protocol.entity.MobEffect
 import org.pickaxe.protocol.entity.PlayerAbilities
@@ -332,6 +334,25 @@ public sealed interface ProtocolEvent {
         public val windowId: Int,
         public val property: Int,
         public val value: Int,
+    ) : ProtocolEvent
+
+    /**
+     * 服务端下发了完整命令树。
+     *
+     * 登录进入 play 后下发一次，权限变化（`/op`、切创造）时可能整棵重发，因此这里按
+     * “替换”而不是“追加”语义上报。[tree] 是只读快照，节点下标与服务端一致。
+     */
+    public data class CommandTreeReceived(public val tree: CommandTree) : ProtocolEvent
+
+    /**
+     * 服务端回答了一次命令补全请求。
+     *
+     * 补全请求是**唯一有回执的上行**：每个请求带一个自增编号，服务端原样带回。
+     * 因此上层可以按编号把回答与问题对上（`Session.complete` 就是这么做的）；
+     * 编号对不上、或本端没发过请求时，这条回答仍然上报，不会被吞掉。
+     */
+    public data class CommandSuggestionsReceived(
+        public val suggestions: CommandSuggestions,
     ) : ProtocolEvent
 
     /** 会话终止，且这是本次连接唯一一次终止通知。 */

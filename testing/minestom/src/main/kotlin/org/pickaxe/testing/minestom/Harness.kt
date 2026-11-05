@@ -7,6 +7,7 @@ import net.minestom.server.command.CommandSender
 import net.minestom.server.command.builder.Command
 import net.minestom.server.command.builder.CommandContext
 import net.minestom.server.command.builder.arguments.ArgumentType
+import net.minestom.server.command.builder.suggestion.SuggestionEntry
 import net.minestom.server.coordinate.Pos
 import net.minestom.server.component.DataComponents
 import net.minestom.server.entity.EntityCreature
@@ -72,6 +73,17 @@ public const val ECHO_COMMAND_NAME: String = "pickaxe"
 
 /** echo 命令回给执行者的固定文本；客户端以系统消息读到它。 */
 public const val ECHO_COMMAND_REPLY: String = "pickaxe-ok"
+
+/**
+ * 带补全的命令名与候选。
+ *
+ * 补全必须由服务端算：候选依赖权限、世界状态与实体，客户端本地推不出来。
+ * 这里固定一组候选，让“服务端说了算”成为可断言的事实。
+ */
+public const val SUGGEST_COMMAND_NAME: String = "pickaxecolor"
+
+/** 补全候选；客户端断言直接引用，避免两侧各写一份字符串。 */
+public val SUGGEST_CANDIDATES: List<String> = listOf("red", "green", "blue")
 
 /** 出生平台高度：只铺一层够站立的石头，不生成地形，联调时无需等待区块生成。 */
 private const val GROUND_HEIGHT: Int = 40
@@ -575,6 +587,7 @@ public fun startHarness(port: Int = DEFAULT_PORT): InstanceContainer {
         }
     }
     MinecraftServer.getCommandManager().register(EchoCommand())
+    MinecraftServer.getCommandManager().register(SuggestColorCommand())
 
     server.start(InetSocketAddress(DEFAULT_HOST, port))
     harnessStarted = true
@@ -610,5 +623,37 @@ private class EchoCommand : Command(ECHO_COMMAND_NAME) {
             recordFact(commandFactKey(player.username, context.input))
         }
         sender.sendMessage(Component.text(ECHO_COMMAND_REPLY))
+    }
+}
+
+/**
+ * 带补全回调的最小命令：`/<名字> <颜色>`。
+ *
+ * 候选按已输入的前缀过滤——真实服务端也这么做，客户端的断言才有意义（收到的是
+ * “red”而不是三个都回来）。前缀从 `suggestion.input` 里按最后一个空格切出来，
+ * 不用它的 `start`：那个下标由服务端自己算，本命令不该依赖它的口径。
+ *
+ * Minestom 在自己的补全实现里会把前导斜杠去掉再解析，因此执行到这里时 `input`
+ * 可能不带斜杠；这也是不能用固定偏移取前缀的原因之一。
+ */
+private class SuggestColorCommand : Command(SUGGEST_COMMAND_NAME) {
+    init {
+        val color = ArgumentType.Word("color").setSuggestionCallback { _, _, suggestion ->
+            val typed = suggestion.input
+                .substringAfterLast(' ')
+                .trim('\u0000')
+            SUGGEST_CANDIDATES
+                .filter { it.startsWith(typed, ignoreCase = true) }
+                .forEach { suggestion.addEntry(SuggestionEntry(it)) }
+        }
+        addSyntax({ sender, context ->
+            val picked = context.get<String>(color)
+            (sender as? Player)?.let { player ->
+                println("event=player.suggest.exec name=${player.username} color=$picked")
+                recordFact(commandFactKey(player.username, "/$SUGGEST_COMMAND_NAME $picked"))
+            }
+            sender.sendMessage(Component.text("color=$picked"))
+        }, color)
+        setDefaultExecutor { sender, _ -> sender.sendMessage(Component.text("color=-")) }
     }
 }

@@ -75,6 +75,20 @@ public class ProtocolConnection private constructor(
     }
 
     /**
+     * 请求一次命令补全，[transactionId] 由调用方分配并在回答里原样带回。
+     *
+     * 这是上行里唯一**有回执**的请求：服务端要么回 [ProtocolEvent.CommandSuggestionsReceived]，
+     * 要么什么都不发（算不出候选时）。编号在一个连接内唯一即可，并发请求靠它配对。
+     *
+     * [text] 是完整输入行（含前导斜杠）：服务端按自己解析出的位置决定替换区间。
+     *
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    public fun requestCommandSuggestions(transactionId: Int, text: String) {
+        connection.requestCommandSuggestions(transactionId, text)
+    }
+
+    /**
      * 把本端位置与朝向声明给服务端。
      *
      * 只发送与上一状态不同的分量（协议里 `pos`、`rot`、`pos_rot` 是三个包）；坐标与朝向

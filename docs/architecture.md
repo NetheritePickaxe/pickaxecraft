@@ -454,6 +454,24 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 
 实现记录见 [M4t](plans/m4t-chunk-environment.md)。
 
+### 5.20 M4u 已落地的具体形态：命令树与补全
+
+- 命令树只在服务端存在，本层做的是**形状转换**：扁平数组原样保留下标，子节点与重定向
+  继续用下标表达。重排或压缩会让引用指错地方，所以 `CommandNode` 只带 `children: List<Int>`。
+- 参数类型按**名字**对齐协议库的 `CommandParser`（57 项，加上本层的 `UNKNOWN` 兜底），
+  不按序号：上游新增类型时既有值不会整体错位，`CommandTreeParsingTest` 还会直接对账两边集合，
+  让“忘了同步”在测试里先失败。参数属性拆成独立的 `CommandArgumentProperty`，
+  类型说明“是什么”、属性说明“允许什么”；数值范围的哨兵值按整型与浮点各自的常量判断。
+- 补全是上行里**唯一有回执**的一条：`Session.complete(text)` 分配编号、等待同编号的回答。
+  等待用的 deferred 由网络线程直接完成，不经事件队列——否则消费者慢一点就会等到超时，
+  哪怕答案早已到达。会话结束时以 null 结束等待，调用方拿到 `NoAnswer` 而不是被取消。
+- `NoAnswer` 与“空候选”刻意分开：服务端算不出候选时可以完全不回包（Minestom 就没有补全
+  回调时不回），把它显示成空列表会让调用方误判成“这里没有可选值”。
+- 替换区间（`start`/`length`）是服务端给的**修补指令**，`CommandSuggestions.applyTo` 负责套回
+  原文；区间越界时返回 null 而不是尽量修正，错位替换出来的假输入比不替换更难排查。
+
+实现记录见 [M4u](plans/m4u-command-completion.md)。
+
 ## 6. libGDX 与平台约束
 
 共享发布产物使用 Java 21 字节码，由 `verifyBytecode`（major 65）自动断言；构建、CLI 与测试仍使用 Java 25。libGDX 官方当前推荐 JDK 17/21，因此下游图形客户端不被迫使用 Java 25；启用 Minestom 单人模式的 Desktop 组合根除外。
@@ -513,6 +531,9 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
   必须换 `LightingChunk` 并主动触发重算，所以断言前先读服务端侧
   `getSkyLight`/`getBlockLight`，两侧都非 0 才算通过。高度图断言刻意换一列未被其它用例
   动过的区块，因为它是快照，被挖过的列不会更新。
+- 补全用例把“服务端不回包”也当成一条断言：超时压缩到 800ms，验证调用方拿到
+  `NoAnswer` 而不是被挂住。替换区间还要回读 `text.substring(start, start + length)`，
+  否则“候选对了但区间偏了一位”会被 `applyTo` 的结果掩盖。
 - Minestom 测试覆盖真实状态迁移，不用自有 Mock 替代全部联调。
 - 构建门控：字节码主版本、模块依赖边界（Netty / MCProtocolLib / Minestom 不得出现在业务模块）。
 - 跨仓库门控：独立 libGDX 消费工程验证发布产物和线程桥接；Android/iOS 分别在真实运行时验证，不能用 JVM 单测替代。

@@ -30,6 +30,7 @@
 - [M4r 实施记录](plans/m4r-entity-health.md)：元数据下标依赖实体层级、分层表是版本资产、掉落物反例。
 - [M4s 实施记录](plans/m4s-item-components.md)：组件是补丁而非全量、附魔注册表动态下发。
 - [M4t 实施记录](plans/m4t-chunk-environment.md)：光照掩码与层偏移、高度图是快照、方块实体没有删除包。
+- [M4u 实施记录](plans/m4u-command-completion.md)：命令树下标不可重排、补全的替换区间、没有回包不等于空候选。
 - [M1 实施计划](plans/m1-implementation-plan.md)：自有客户端 API、连接生命周期、联调迁移、CLI 与提前 Android 探针；末尾附实施记录与偏差。
 - [协议适配契约](protocol-contract.md)：`protocol-core` 与协议库之间哪些行为由库保证、哪些由本项目实现，以及升级检查清单。
 - [Android 反糖探针](android-dex-probe.md)：D8 实测结论（minSdk 26、重复类、`HexFormat`）与仍未验证的运行时项。
@@ -70,7 +71,7 @@ M4s 让物品组件可读：`InventoryItem` 带耐久、无法破坏、修复代
 
 `protocol-core` 负责协议事实转换、区块解码与资源回收，`client-core` 负责会话 Actor、有界缓冲、区块缓存与错误分类；协议库的隐含行为已写入[协议适配契约](protocol-contract.md)。
 
-Android 只完成了构建链探针（D8 可产出 dex，`minSdk` 下限 26），运行时仍属 M3 门控；物品默认组件原型、跨服转移、命令补全与 libGDX 消费工程仍属 M4 的后续增量。
+Android 只完成了构建链探针（D8 可产出 dex，`minSdk` 下限 26），运行时仍属 M3 门控；物品默认组件原型、跨服转移与 libGDX 消费工程仍属 M4 的后续增量。
 
 ## 参考文档
 

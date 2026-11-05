@@ -1,6 +1,7 @@
 package org.pickaxe.client
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.pickaxe.protocol.ProtocolCloseReason
 import org.pickaxe.protocol.ProtocolConnection
 import org.pickaxe.protocol.ProtocolEvent
@@ -21,6 +23,8 @@ import org.pickaxe.protocol.ProtocolListener
 import org.pickaxe.protocol.ProtocolPhase
 import org.pickaxe.protocol.ServerAddress
 import org.pickaxe.protocol.chat.ChatMessage
+import org.pickaxe.protocol.command.CommandSuggestions
+import org.pickaxe.protocol.command.CommandTree
 import org.pickaxe.protocol.entity.EntityAttribute
 import org.pickaxe.protocol.entity.MobEffect
 import org.pickaxe.protocol.entity.MovementInput
@@ -41,6 +45,7 @@ import org.pickaxe.protocol.world.TrackedEntity
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -99,6 +104,29 @@ public class Session internal constructor(
 
     /** 本端最后一次声明的运动按键；发送后本地立即推进，服务端不回包。 */
     public val movementInput: StateFlow<MovementInput> = mutableMovementInput.asStateFlow()
+
+    private val mutableCommands = MutableStateFlow<CommandTree?>(null)
+
+    /**
+     * 服务端下发的命令树；还没收到时为 null。
+     *
+     * 登录进入 play 后会下发一次，权限变化时可能整棵重发，因此这里是**替换**语义。
+     * 补全请求不依赖它（候选由服务端算），它提供的是离线可读的结构：有哪些命令、
+     * 各自要什么参数。会话结束或溢出终止时清空。
+     */
+    public val commands: StateFlow<CommandTree?> = mutableCommands.asStateFlow()
+
+    /**
+     * 未完成的补全请求：请求编号 → 等待中的结果。
+     *
+     * 网络线程在收到回答时直接完成对应的 deferred，不经过 Actor 的事件队列——
+     * 否则消费者稍慢一点，`complete` 就会等到超时，哪怕答案早已到达。
+     * 完成时用 null 表示“会话结束了，不会有答案”。
+     */
+    private val pendingSuggestions = ConcurrentHashMap<Int, CompletableDeferred<CommandSuggestions?>>()
+
+    /** 补全请求编号；只需在一个连接内唯一，从 1 开始便于日志辨认。 */
+    private val nextSuggestionId = AtomicInteger(1)
 
     private val mutableWorld = MutableStateFlow<WorldSnapshot?>(null)
 
@@ -233,6 +261,8 @@ public class Session internal constructor(
             heldSlotIndex = 0
             lastAcknowledgedSequenceValue = 0
             entityAttributes.clear()
+            mutableCommands.value = null
+            releasePendingSuggestions()
             mutableStatus.value = PlayerStatus()
             clearChat()
             mutableState.value = SessionState.CLOSED
@@ -562,6 +592,43 @@ public class Session internal constructor(
      */
     public fun sendCommand(command: String) {
         playConnection("命令").sendCommand(command)
+    }
+
+    /**
+     * 请求服务端补全 [text] 对应的命令候选，最多等 [timeoutMillis] 毫秒。
+     *
+     * [text] 必须是**完整输入行**（含前导斜杠，例如 `/gamemode cr`）：服务端按它自己
+     * 解析出的位置决定替换哪一段，只发末尾几个字符会让区间算错。结果里的
+     * [org.pickaxe.protocol.command.CommandSuggestions.applyTo] 可以把第一个候选套回原文。
+     *
+     * 这是上行里唯一**有回执**的请求：本端分配编号、服务端原样带回，因此并发调用互不串答案。
+     * 没有回执时（服务端算不出候选，Minestom 就不回包）表现为 [CompletionResult.NoAnswer]，
+     * 不是空列表——两者语义不同，见 [CompletionResult]。
+     *
+     * 挂起只发生在等待回答期间；不占用会话的事件队列，因此可以与 [events] 的消费并行调用
+     * （在 `events.collect` 里直接调用也是安全的）。
+     *
+     * @throws IllegalArgumentException [timeoutMillis] 不是正数
+     * @throws IllegalStateException 会话尚未进入 play，或已经关闭
+     */
+    public suspend fun complete(
+        text: String,
+        timeoutMillis: Long = DEFAULT_COMPLETION_TIMEOUT_MILLIS,
+    ): CompletionResult {
+        require(timeoutMillis > 0) { "补全超时必须大于 0，当前为 $timeoutMillis" }
+        val connection = playConnection("命令补全")
+        val transactionId = nextSuggestionId.getAndIncrement()
+        val pending = CompletableDeferred<CommandSuggestions?>()
+        pendingSuggestions[transactionId] = pending
+        return try {
+            connection.requestCommandSuggestions(transactionId, text)
+            when (val answer = withTimeoutOrNull(timeoutMillis) { pending.await() }) {
+                null -> CompletionResult.NoAnswer
+                else -> CompletionResult.Suggestions(answer)
+            }
+        } finally {
+            pendingSuggestions.remove(transactionId)
+        }
     }
 
     /**
@@ -903,6 +970,20 @@ public class Session internal constructor(
                 if (!closing.get()) heldSlotIndex = event.slot
             }
 
+            // 命令树是会话级快照（权限变化时整棵重发），先写 StateFlow 再上报事件。
+            is ProtocolEvent.CommandTreeReceived -> {
+                if (!closing.get()) mutableCommands.value = event.tree
+            }
+
+            // 补全回答是**一对一的请求/响应**，不是可缓存状态：在网络线程上直接交给等待方，
+            // 不经过 Actor 的事件队列——消费者慢一点也照样能拿到答案。事件仍然照常排队上报。
+            is ProtocolEvent.CommandSuggestionsReceived -> {
+                if (!closing.get()) {
+                    pendingSuggestions.remove(event.suggestions.transactionId)
+                        ?.complete(event.suggestions)
+                }
+            }
+
             else -> Unit
         }
 
@@ -934,6 +1015,8 @@ public class Session internal constructor(
         entityAttributes.clear()
         entityEffects.clear()
         containerPropertyValues.clear()
+        mutableCommands.value = null
+        releasePendingSuggestions()
         mutableStatus.value = PlayerStatus()
         mutableAbilities.value = PlayerAbilities()
         mutableMovementInput.value = MovementInput()
@@ -1092,6 +1175,17 @@ public class Session internal constructor(
             true
         }
 
+        // 命令树与补全回答都已经在 onProtocolEvent 里写过缓存/交付过等待方，这里只上报事实。
+        is ProtocolEvent.CommandTreeReceived -> {
+            emit(ClientEvent.CommandTreeReceived(event.tree))
+            true
+        }
+
+        is ProtocolEvent.CommandSuggestionsReceived -> {
+            emit(ClientEvent.CommandSuggestionsReceived(event.suggestions))
+            true
+        }
+
         is ProtocolEvent.Damaged -> {
             emit(
                 ClientEvent.EntityDamaged(
@@ -1207,6 +1301,17 @@ public class Session internal constructor(
         synchronized(chatLock) { chatLog.clear() }
     }
 
+    /**
+     * 结束所有等待中的补全请求。
+     *
+     * 用 null 完成而不是取消：调用方拿到 [CompletionResult.NoAnswer] 就能正常收尾，
+     * 取消会让 `await` 抛 CancellationException，看起来像调用方自己被取消了。
+     */
+    private fun releasePendingSuggestions() {
+        pendingSuggestions.values.forEach { it.complete(null) }
+        pendingSuggestions.clear()
+    }
+
     private suspend fun transition(next: SessionState) {
         val current = mutableState.value
         if (current == next || current == SessionState.CLOSED) return
@@ -1245,6 +1350,8 @@ public class Session internal constructor(
         entityAttributes.clear()
         entityEffects.clear()
         containerPropertyValues.clear()
+        mutableCommands.value = null
+        releasePendingSuggestions()
         mutableStatus.value = PlayerStatus()
         mutableAbilities.value = PlayerAbilities()
         mutableMovementInput.value = MovementInput()

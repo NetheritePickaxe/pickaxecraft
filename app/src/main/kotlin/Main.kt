@@ -5,6 +5,7 @@ import kotlinx.coroutines.runBlocking
 import org.pickaxe.client.ClientEvent
 import org.pickaxe.client.ClientException
 import org.pickaxe.client.ClientOptions
+import org.pickaxe.client.CompletionResult
 import org.pickaxe.client.MinecraftClient
 import org.pickaxe.client.Session
 import org.pickaxe.protocol.ProtocolVersion
@@ -29,6 +30,7 @@ private val usage = """
       connect <host> [port] [--username <名称>] [--timeout <秒>] [--say <文本>]...
               [--walk <格数>] [--hold <0-8>] [--click <槽位>[:动作]]... [--close-window]
               [--dig] [--place] [--sneak] [--sprint] [--fly] [--light]
+              [--commands] [--complete <文本>]...
           离线登录并持续打印会话事件，Ctrl+C 关闭会话后退出
           --say 在出生完成后再发送一条聊天消息，可重复；服务端会把它广播回来
           --walk 在出生后沿 +X 方向走指定格数（每步 0.5 格），打印每一步的坐标
@@ -42,6 +44,8 @@ private val usage = """
                飞行是否被接受要看随后服务端的 player_abilities 包
           --light 在出生后打印本列的光照、高度图与方块实体；用来核对
                level_chunk_with_light 的四部分是否都到了本端
+          --commands 在出生后打印服务端下发的命令树摘要（节点数、顶层命令名）
+          --complete 在出生后请求一次补全，可重复；候选由服务端算，含前导斜杠
 
           点击动作:
             pickup      左键拿起或放下整堆（默认）
@@ -173,6 +177,8 @@ private fun runConnect(args: List<String>): Int {
                     if (parsed.digBelow) digBelow(session)
                     if (parsed.placeBelow) placeBelow(session)
                     if (parsed.reportLight) reportLight(session)
+                    if (parsed.listCommands) reportCommands(session)
+                    for (text in parsed.completions) reportCompletion(session, text)
                     applyMotionFlags(session, parsed)
                 }
             }
@@ -202,6 +208,11 @@ private fun describe(event: ClientEvent): String = when (event) {
     }
     is ClientEvent.BlockAcknowledged -> "event=block.ack sequence=${event.sequence}"
     is ClientEvent.ChunkLightUpdated -> "event=light chunk=${event.chunkX},${event.chunkZ}"
+    is ClientEvent.CommandTreeReceived -> "event=commands nodes=${event.tree.size} " +
+        "root=${event.tree.rootIndex} literals=${event.tree.topLevelLiterals.size}"
+    is ClientEvent.CommandSuggestionsReceived -> with(event.suggestions) {
+        "event=suggestions id=$transactionId start=$start length=$length matches=$matches"
+    }
     is ClientEvent.BlockEntityChanged -> with(event.entity) {
         "event=blockentity type=$type pos=$position keys=${data?.entries?.keys?.joinToString(",").orEmpty()}"
     }
@@ -474,6 +485,42 @@ private fun reportLight(session: Session) {
     )
 }
 
+/**
+ * 打印服务端下发的命令树摘要。
+ *
+ * 只列节点数与顶层命令名：整棵树在真实服务端上有几百个节点，全量打印会把日志淹掉。
+ * 树还没到时明确说出来——出生完成与命令树下发是两个包，理论上可能差一拍。
+ */
+private fun reportCommands(session: Session) {
+    val tree = session.commands.value ?: run {
+        System.err.println("跳过命令树（尚未收到）")
+        return
+    }
+    val literals = tree.topLevelLiterals
+    println(
+        "event=commands nodes=${tree.size} root=${tree.rootIndex} " +
+            "literals=${literals.size} first=${literals.take(8)}",
+    )
+}
+
+/**
+ * 请求一次命令补全并打印结果。
+ *
+ * 候选全部来自服务端：本端不猜。无回执时明确打印 no-answer，而不是打印空列表——
+ * 两者在“服务端不支持补全”和“这里没有可选值”之间是不同的结论。
+ */
+private suspend fun reportCompletion(session: Session, text: String) {
+    when (val result = session.complete(text)) {
+        is CompletionResult.Suggestions -> with(result.suggestions) {
+            println(
+                "event=complete text=$text id=$transactionId start=$start length=$length " +
+                    "matches=$matches applied=${applyTo(text)}",
+            )
+        }
+        CompletionResult.NoAnswer -> println("event=complete text=$text result=no-answer")
+    }
+}
+
 /** 摘要里把物品的非默认组件一起列出来，便于肉眼核对组件补丁是否穿过协议。 */
 private fun describeItem(item: InventoryItem): String {
     val details = buildList {
@@ -514,6 +561,10 @@ private class ParsedArgs(
     val fly: Boolean = false,
     /** 出生后打印本列的光照、高度图与方块实体。 */
     val reportLight: Boolean = false,
+    /** 出生后打印命令树摘要。 */
+    val listCommands: Boolean = false,
+    /** 出生后要补全的输入行（含前导斜杠），按命令行顺序。 */
+    val completions: List<String> = emptyList(),
 ) {
     fun options(): ClientOptions = ClientOptions(
         connectTimeoutMillis = timeoutSeconds * 1000,
@@ -541,6 +592,8 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
     var digBelow = false
     var placeBelow = false
     var reportLight = false
+    var listCommands = false
+    val completions = ArrayList<String>()
     var sneak = false
     var sprint = false
     var fly = false
@@ -636,6 +689,18 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
                 reportLight = true
                 index += 1
             }
+            "--commands" -> {
+                listCommands = true
+                index += 1
+            }
+            "--complete" -> {
+                if (value == null) {
+                    System.err.println("--complete 缺少取值")
+                    return null
+                }
+                completions += value
+                index += 2
+            }
             else -> {
                 System.err.println("未知参数: $option")
                 return null
@@ -659,6 +724,8 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
             sprint = sprint,
             fly = fly,
             reportLight = reportLight,
+            listCommands = listCommands,
+            completions = completions,
         )
     } catch (e: IllegalArgumentException) {
         System.err.println("参数不合法: ${e.message}")

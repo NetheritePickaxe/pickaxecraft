@@ -1,6 +1,8 @@
 package org.pickaxe.client
 
 import org.pickaxe.protocol.chat.ChatMessage
+import org.pickaxe.protocol.command.CommandSuggestions
+import org.pickaxe.protocol.command.CommandTree
 import org.pickaxe.protocol.entity.EntityAttribute
 import org.pickaxe.protocol.entity.MobEffect
 import org.pickaxe.protocol.entity.PlayerAbilities
@@ -221,6 +223,23 @@ public sealed interface ClientEvent {
         public val windowId: Int,
         public val property: Int,
         public val value: Int,
+    ) : ClientEvent
+
+    /**
+     * 服务端下发了命令树（登录后一次，权限变化时可能重发），[Session.commands] 已更新。
+     *
+     * 这是补全与命令提示的数据来源：节点、参数类型都由服务端决定，本层只转成只读模型。
+     */
+    public data class CommandTreeReceived(public val tree: CommandTree) : ClientEvent
+
+    /**
+     * 服务端回答了一次补全请求。
+     *
+     * `Session.complete` 的返回值是同一份数据；这个事件是给“不想用挂起 API”的调用方
+     * 准备的旁路。两者互不影响：事件总是上报，编组由 [CommandSuggestions.transactionId] 承担。
+     */
+    public data class CommandSuggestionsReceived(
+        public val suggestions: CommandSuggestions,
     ) : ClientEvent
 
     /** 正常关闭：调用方主动关闭，或服务端按协议收尾。 */

@@ -33,6 +33,8 @@ import org.geysermc.mcprotocollib.protocol.data.status.handler.ServerInfoHandler
 import org.geysermc.mcprotocollib.protocol.data.status.handler.ServerPingTimeHandler
 import org.geysermc.mcprotocollib.protocol.packet.common.serverbound.ServerboundClientInformationPacket
 import org.geysermc.mcprotocollib.protocol.packet.configuration.clientbound.ClientboundRegistryDataPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundCommandSuggestionsPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundCommandsPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundDeleteChatPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundDisguisedChatPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundLoginPacket
@@ -78,6 +80,7 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.Clien
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatAckPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatCommandPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundCommandSuggestionPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundPlayerLoadedPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.player.ServerboundAttackPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.player.ServerboundInteractPacket
@@ -458,6 +461,12 @@ internal class McplConnection(
                     ),
                 ),
             )
+
+            // 命令树与补全：补全请求是上行里**唯一有回执**的一条，服务端把请求编号原样带回。
+            is ClientboundCommandsPacket -> emit(ProtocolEvent.CommandTreeReceived(commandTree(packet)))
+
+            is ClientboundCommandSuggestionsPacket ->
+                emit(ProtocolEvent.CommandSuggestionsReceived(commandSuggestions(packet)))
 
             // 方块变更：服务端下发的才是权威结果。挖掉一块方块后本地缓存要跟着变，
             // 否则 `blockStateAt` 会一直返回已经不存在的方块。
@@ -1266,6 +1275,20 @@ internal class McplConnection(
      */
     fun sendCommand(command: String) {
         sendInPlay("命令") { ServerboundChatCommandPacket(command) }
+    }
+
+    /**
+     * 请求一次命令补全。
+     *
+     * [transactionId] 由调用方分配：同一连接上可以同时有多个未完成的请求，服务端把编号
+     * 原样带回，所以并发请求不会互相串答案。编号是 `varint`，取值只要在一个连接内唯一。
+     *
+     * [text] 是**完整输入行**（含前导斜杠）：服务端按它自己解析出的当前位置决定补全哪一段，
+     * 只发末尾几个字符会让它算错区间。是否在补全候选里返回什么由服务端决定，
+     * 本端不本地推候选——候选依赖权限、世界状态与实体，本地猜必然与服务端不一致。
+     */
+    fun requestCommandSuggestions(transactionId: Int, text: String) {
+        sendInPlay("命令补全") { ServerboundCommandSuggestionPacket(transactionId, text) }
     }
 
     /**
