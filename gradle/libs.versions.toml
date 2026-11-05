@@ -24,6 +24,9 @@ junit = "5.14.4"
 junitPlatform = "1.14.4"
 minestom = "2026.10.07-26.2"
 slf4j = "2.0.20"
+# 下游渲染基线（见 docs/architecture.md 第 6 节）。只被 samples 模块使用，
+# 核心库不得依赖它；headless 后端是纯 Java，CI 无需显示器与 GL。
+libgdx = "1.13.1"
 
 [libraries]
 kotlinGradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
@@ -47,6 +50,11 @@ junitJupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "juni
 junitPlatformLauncher = { module = "org.junit.platform:junit-platform-launcher", version.ref = "junitPlatform" }
 
 minestom = { module = "net.minestom:minestom", version.ref = "minestom" }
+libgdxCore = { module = "com.badlogicgames.gdx:gdx", version.ref = "libgdx" }
+libgdxHeadless = { module = "com.badlogicgames.gdx:gdx-backend-headless", version.ref = "libgdx" }
+# 本地库（gdx64.dll / libgdx64.so / libgdx.dylib）。headless 后端也会加载它，
+# 所以“不需要 GL 上下文”不等于“不需要 natives”。
+libgdxNatives = { module = "com.badlogicgames.gdx:gdx-platform", version.ref = "libgdx" }
 slf4jSimple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 
 [bundles]

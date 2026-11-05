@@ -103,7 +103,8 @@ ANDROID_HOME=/path/to/android-sdk tools/android-probe/dex.sh 26     # 只跑一�
 
 ## 6. 下一步
 
-运行时验证仍归 M3 双路径 spike：
+运行时验证仍归 M3 双路径 spike；判据、阻塞事实与解除条件见
+[M3 Android 运行时验证（门控中）](plans/m3-android-runtime.md)。概要：
 
 1. ART 路径：模拟器/真机上跑一次 Status 查询，重点看 Netty 类加载、`minSdk 26` 的实际表现、
    连接关闭后线程与内存回收。

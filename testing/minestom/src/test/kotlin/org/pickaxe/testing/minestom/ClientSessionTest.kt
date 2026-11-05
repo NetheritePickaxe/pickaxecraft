@@ -74,6 +74,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.abs
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
@@ -823,8 +824,7 @@ class ClientSessionTest {
                 // 补全：候选由服务端的回调按前缀过滤，所以只有 red 回来。
                 val text = "/$SUGGEST_COMMAND_NAME r"
                 val result = session.complete(text)
-                assertTrue(result is CompletionResult.Suggestions, "服务端应回答补全，实际为 $result")
-                val suggestions = (result as CompletionResult.Suggestions).suggestions
+                val suggestions = assertIs<CompletionResult.Suggestions>(result).suggestions
                 assertEquals(listOf("red"), suggestions.matches, "候选由服务端过滤，不该是全部三个")
 
                 // 区间说的就是“把这几个字符换掉”：取出来必须正好是已输入的前缀。

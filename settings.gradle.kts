@@ -36,5 +36,7 @@ include(":app")
 include(":client-core")
 include(":protocol-core")
 include(":testing:minestom")
+// 示例：下游如何消费核心库。不发布，也不被任何模块依赖。
+include(":samples:libgdx-viewer")
 
 rootProject.name = "pickaxecraft"

@@ -12,7 +12,7 @@
 - 公共 API 不依赖 libGDX、OpenGL、Android、RoboVM 或 Minestom 类型，避免核心库反向绑定某个宿主或服务端实现。
 - Minestom 只出现在 `testing:minestom`。可选单人游戏集成属于外部客户端的 Desktop/Java 25 组合模块，不在本仓库创建生产依赖。
 - 测试服务不参与运行时发布。
-- 当前模块为 `:protocol-core`、`:client-core`、`:app`、`:testing:minestom`；`client-core` 在 M1 随首个真实调用方创建。
+- 当前模块为 `:protocol-core`、`:client-core`、`:app`、`:testing:minestom`、`:samples:libgdx-viewer`；`client-core` 在 M1 随首个真实调用方创建。
 
 ## 2. 目标目录树
 
@@ -89,6 +89,7 @@ pickaxecraft/
 | `:client-core` | Kotlin JVM | Java 21（major 65） | 是 | 已创建（M1） |
 | `:app` | Kotlin JVM 应用 | Java 25（major 69） | 否 | 已创建 |
 | `:testing:minestom` | Kotlin JVM 测试工具 | Java 25（major 69） | 否 | 已创建 |
+| `:samples:libgdx-viewer` | Kotlin JVM 示例（headless） | Java 21（major 65） | 否 | 已创建（M4w） |
 
 共享产物一律用 Java 21 字节码：既符合 libGDX 当前 JDK 17/21 开发基线，也避免 Desktop“跑得起来”但 Android/RoboVM 无法消费。构建、CLI 与测试模块可以使用 Java 25，但不能把 major 69 泄漏到共享发布产物。
 
@@ -98,18 +99,21 @@ pickaxecraft/
 
 ### 3.2 Android 的现状
 
-Android 尚未验证。已知风险与待验证项见 `docs/architecture.md` 第 6 节；在 spike 通过前不引入 AGP、KMP 或 Android 专属模块。
+Android 尚未验证。已知风险与待验证项见 `docs/architecture.md` 第 6 节；阻塞事实、逐条判据与解除条件见
+[M3 Android 运行时验证（门控中）](plans/m3-android-runtime.md)。在 spike 通过前不引入 AGP、KMP 或 Android 专属模块。
 
 ## 4. 依赖方向
 
 ```text
 独立 libGDX 客户端（外部仓库） ──┐
-                                  ├─► client-core ──► protocol-core ──► MCProtocolLib ──► Netty
+samples:libgdx-viewer（示例） ────┼─► client-core ──► protocol-core ──► MCProtocolLib ──► Netty
 app（CLI） ───────────────────────┘
 外部 desktop-singleplayer（可选，Java 25） ──► client-core + Minestom
 
 testing:minestom ──► client-core + protocol-core（版本对账）+ Minestom
 ```
+
+`samples:libgdx-viewer` 是示例而不是下游：它不发布、不被任何模块依赖，也不代表渲染实现回流到本仓库。
 
 `desktop-singleplayer` 是外部客户端按需创建的组合模块，不是当前承诺的模块名。它通过客户端公共 API 连接本地 Minestom，不把服务端对象或 Minestom 类型传入核心库。
 

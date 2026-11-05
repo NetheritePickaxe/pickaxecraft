@@ -507,7 +507,7 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 
 | 平台 | 当前决策 | 验证门控 |
 | --- | --- | --- |
-| Windows / Linux / macOS Desktop | 首要支持目标 | Java 21 共享库可嵌入 LWJGL3 宿主；M4 用独立 libGDX 消费工程验证；启用内嵌 Minestom 单人模式时宿主使用 Java 25 |
+| Windows / Linux / macOS Desktop | 首要支持目标 | Java 21 共享库可嵌入 LWJGL3 宿主；M4w 用仓库内 `samples:libgdx-viewer`（不发布、headless）验证网格化；启用内嵌 Minestom 单人模式时宿主使用 Java 25 |
 | Android | 明确目标，尚未承诺支持 | 构建链已探针通过（minSdk 26）；运行时（ART + Netty NIO + 资源回收）仍待 M3 |
 | iOS | 尽力保留的候选平台 | macOS/Xcode + RoboVM spike；验证 Java 21、Kotlin、协程与 Netty |
 | Web / HTML5 | 不做 | 当前 Kotlin/JVM + Netty 路线与 libGDX GWT 后端不匹配 |
@@ -525,6 +525,27 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 - Minestom 使用 Java 25，可选单人模式因此只由外部 Desktop/Java 25 组合模块承载。该模块管理服务端配置、世界存档、端口和启停；核心通过回环网络使用同一协议连接，不能为了“单人优化”直接共享服务端可变对象。本地直连传输只有经过独立验证后才可引入。
 - Android/iOS 默认连接外部服务端，不承诺内嵌 Minestom；若未来提出该需求，必须单独验证对应运行时对 Minestom Java 25 及其依赖的支持。
 - 密码学使用协议库与平台经过验证的实现，不自研 RSA/AES/SHA 算法。
+
+### 6.2 仓库内的消费示例（`samples:libgdx-viewer`）
+
+上面说“渲染实现位于外部客户端、本仓库不引入相关依赖”，这条仍然成立——但需要一个
+**可执行的证明**：核心确实能被消费，而且边界没有被侵染。示例因此是一个独立模块：
+
+- 用 `application` 插件，**不发布**，也没有任何模块依赖它；下游可以随时把它整个删掉。
+- 只用 headless 后端：网格构建不需要 GL 上下文，CI 也没有显示器与显卡。
+- `ChunkMeshBuilder` 产出 `MeshData`（顶点/法线/索引数组），**不创建 `Mesh`**：
+  `Mesh` 需要 GL 上下文，创建它就得先有窗口；数组可以在任何线程产出并断言，
+  上屏时再 `mesh.setVertices(...)`。
+- `SolidQuery` 是最小输入（三态查询），不接收 `ChunkColumn`：下游可能把区块缓存、
+  服务端方块变更与自己的预测地形拼在同一份网格里，绑死类型就没法拼。
+- `verifyModuleBoundaries` 断言示例的编译类路径里没有 Netty、协议库与 Minestom——
+  这就是“下游只看得见公共 API”的机器判据。
+
+headless 也需要 natives：`gdx-platform:natives-desktop` 必须作为 `runtimeOnly` 引入，
+否则 `GdxNativesLoader` 会抛 `SharedLibraryLoadRuntimeException`。这一点容易踩——
+“不创建 GL 上下文”不等于“不加载本地库”。
+
+真正上屏（着色器、相机、材质、区块流式加载与四级 LOD）仍归外部客户端。
 
 ## 7. 测试与质量门控
 
