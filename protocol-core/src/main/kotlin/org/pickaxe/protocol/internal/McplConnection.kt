@@ -20,7 +20,11 @@ import org.geysermc.mcprotocollib.protocol.data.game.entity.player.HandPreferenc
 import org.geysermc.mcprotocollib.protocol.data.game.entity.player.PlayerState
 import org.geysermc.mcprotocollib.protocol.data.game.entity.player.PositionElement
 import org.geysermc.mcprotocollib.protocol.data.game.item.ItemStack
+import org.geysermc.mcprotocollib.protocol.data.game.level.HeightmapTypes
+import org.geysermc.mcprotocollib.protocol.data.game.level.LightUpdateData
 import org.geysermc.mcprotocollib.protocol.data.game.level.block.BlockChangeEntry
+import org.geysermc.mcprotocollib.protocol.data.game.level.block.BlockEntityInfo
+import org.geysermc.mcprotocollib.protocol.data.game.level.block.BlockEntityType
 import org.geysermc.mcprotocollib.protocol.data.game.setting.ChatVisibility
 import org.geysermc.mcprotocollib.protocol.data.game.setting.ParticleStatus
 import org.geysermc.mcprotocollib.protocol.data.game.setting.SkinPart
@@ -64,10 +68,12 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.C
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundSetCursorItemPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundSetPlayerInventoryPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundBlockChangedAckPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundBlockEntityDataPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundBlockUpdatePacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundChunkBatchFinishedPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundForgetLevelChunkPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundLevelChunkWithLightPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundLightUpdatePacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundSectionBlocksUpdatePacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatAckPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatCommandPacket
@@ -106,14 +112,19 @@ import org.pickaxe.protocol.inventory.Hand
 import org.pickaxe.protocol.inventory.InventoryItem
 import org.pickaxe.protocol.inventory.SlotClick
 import org.pickaxe.protocol.world.BlockChange
+import org.pickaxe.protocol.world.BlockEntity
 import org.pickaxe.protocol.world.BlockFace
 import org.pickaxe.protocol.world.BlockPosition
 import org.pickaxe.protocol.world.ChunkColumn
+import org.pickaxe.protocol.world.ChunkLight
+import org.pickaxe.protocol.world.HeightmapType
+import org.pickaxe.protocol.world.LightPatch
 import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.util.BitSet
+import java.util.Locale
 import java.util.Optional
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -424,6 +435,30 @@ internal class McplConnection(
             is ClientboundForgetLevelChunkPacket ->
                 emit(ProtocolEvent.ChunkUnloaded(packet.x, packet.z))
 
+            // 光照与方块是两条独立链路：改一个方块可能先来方块变更、后来光照更新，
+            // 也可能只来其中一个，所以两者各自成一个事件。
+            is ClientboundLightUpdatePacket -> emit(
+                ProtocolEvent.LightUpdated(
+                    x = packet.x,
+                    z = packet.z,
+                    patch = lightPatch(packet.lightData, lightLayerCount("光照更新")),
+                ),
+            )
+
+            is ClientboundBlockEntityDataPacket -> emit(
+                ProtocolEvent.BlockEntityUpdated(
+                    BlockEntity(
+                        position = BlockPosition(
+                            packet.position.x,
+                            packet.position.y,
+                            packet.position.z,
+                        ),
+                        type = blockEntityKey(packet.type),
+                        data = packet.nbt?.toNbtCompound(),
+                    ),
+                ),
+            )
+
             // 方块变更：服务端下发的才是权威结果。挖掉一块方块后本地缓存要跟着变，
             // 否则 `blockStateAt` 会一直返回已经不存在的方块。
             is ClientboundBlockUpdatePacket ->
@@ -678,13 +713,29 @@ internal class McplConnection(
      * 解码在网络线程上完成：一列 24 个 section 的工作量在微秒级，远低于读超时；
      * 这里同样不能做任何可能阻塞的操作，否则会连带拖住库对 KeepAlive 的自动应答。
      *
+     * 一个 `level_chunk_with_light` 包里的四部分（section、高度图、方块实体、光照）在这里
+     * 一次组装成一列：它们是同一份世界数据的四个视图，分开保存只会让缓存出现多个真相。
+     * 光照与高度图由协议库解析好交出来，本层只做形状校验与坐标换算。
+     *
      * 失败必须带坐标与维度，否则“世界缺了一块”在现场无法定位。
      */
     private fun decodeChunk(packet: ClientboundLevelChunkWithLightPacket): ChunkColumn {
         val dimension = currentDimension
             ?: throw IllegalStateException("收到区块 (${packet.x}, ${packet.z}) 时还没有确定当前维度")
+        val blockEntities: List<BlockEntity> =
+            packet.blockEntities.map { info: BlockEntityInfo -> info.toBlockEntity(packet.x, packet.z) }
         return try {
-            ChunkDecoder.decode(packet.x, packet.z, dimension.minY, dimension.sectionCount, packet.chunkData)
+            ChunkDecoder.decode(
+                x = packet.x,
+                z = packet.z,
+                minY = dimension.minY,
+                sectionCount = dimension.sectionCount,
+                data = packet.chunkData,
+                heightmaps = heightmapsOf(packet),
+                light = ChunkLight.of(ChunkLight.layersFor(dimension.sectionCount))
+                    .withPatch(lightPatch(packet.lightData, ChunkLight.layersFor(dimension.sectionCount))),
+                blockEntities = blockEntities,
+            )
         } catch (e: IllegalArgumentException) {
             throw IllegalStateException(
                 "解码维度 ${dimension.id} 的区块 (${packet.x}, ${packet.z}) 失败：${e.message}",
@@ -692,6 +743,44 @@ internal class McplConnection(
             )
         }
     }
+
+    /** 高度图种类名与 MCPL 枚举一一对应；出现未知种类说明协议库升级了，不能静默丢弃。 */
+    private fun heightmapsOf(packet: ClientboundLevelChunkWithLightPacket): Map<HeightmapType, LongArray> =
+        packet.heightMaps.entries.associate { (type, packed) ->
+            heightmapType(type) to packed
+        }
+
+    private fun heightmapType(type: HeightmapTypes): HeightmapType = when (type) {
+        HeightmapTypes.WORLD_SURFACE_WG -> HeightmapType.WORLD_SURFACE_WG
+        HeightmapTypes.WORLD_SURFACE -> HeightmapType.WORLD_SURFACE
+        HeightmapTypes.OCEAN_FLOOR_WG -> HeightmapType.OCEAN_FLOOR_WG
+        HeightmapTypes.OCEAN_FLOOR -> HeightmapType.OCEAN_FLOOR
+        HeightmapTypes.MOTION_BLOCKING -> HeightmapType.MOTION_BLOCKING
+        HeightmapTypes.MOTION_BLOCKING_NO_LEAVES -> HeightmapType.MOTION_BLOCKING_NO_LEAVES
+    }
+
+    /**
+     * 光照包 → 增量。
+     *
+     * 两层掩码与两段数组要按**升序层号**对齐：掩码里第 n 个为 1 的位对应数组里的第 n 段，
+     * 而不是“层号即数组下标”。漏掉这一层换算的表现是整片天空光错位，且看起来像地形问题。
+     * 掩码与数组数量不一致时直接失败——那说明包本身的语义已经不对。
+     */
+    private fun lightLayerCount(context: String): Int {
+        val dimension = currentDimension
+            ?: throw IllegalStateException("收到$context 时还没有确定当前维度")
+        return ChunkLight.layersFor(dimension.sectionCount)
+    }
+
+    /** 方块实体类型：协议里是枚举序号，键名是枚举名的小写形式。 */
+    private fun blockEntityKey(type: BlockEntityType): String =
+        "minecraft:" + type.name.lowercase(Locale.ROOT)
+
+    private fun BlockEntityInfo.toBlockEntity(chunkX: Int, chunkZ: Int): BlockEntity = BlockEntity(
+        position = BlockPosition((chunkX shl 4) + x, y, (chunkZ shl 4) + z),
+        type = blockEntityKey(type),
+        data = nbt?.toNbtCompound(),
+    )
 
     /**
      * 实体生成。

@@ -26,6 +26,7 @@ import net.minestom.server.event.player.PlayerLoadedEvent
 import net.minestom.server.event.player.PlayerMoveEvent
 import net.minestom.server.event.player.PlayerSpawnEvent
 import net.minestom.server.instance.InstanceContainer
+import net.minestom.server.instance.LightingChunk
 import net.minestom.server.item.ItemStack
 import net.minestom.server.item.Material
 import net.minestom.server.item.component.EnchantmentList
@@ -236,6 +237,27 @@ public fun spawnZombie(instance: InstanceContainer, x: Double, y: Double, z: Dou
     }
 
 /**
+ * 让服务端算好 [x, y, z] 所在 section 的光照并立刻重发。
+ *
+ * Minestom 的光照是**懒计算 + 延时重发**：区块会在光照算完之前先发出去，内容是全 0；
+ * 方块变更后默认还要等 100 tick 才重发（联调通过系统属性压到 2 tick）。这只影响
+ * “什么时候算、什么时候发”，不影响算出来的值。要让用例断言“光照真的穿过协议”，
+ * 就得先让服务端算一次再要求它下发——这里调的都是服务端的公开接口，
+ * 交出去的是它自己算的光，不是伪造的数据。
+ *
+ * @return 该坐标没有已加载的区块时返回 false
+ */
+public fun pushLight(instance: InstanceContainer, x: Int, y: Int, z: Int): Boolean {
+    // getSkyLight / getBlockLight 在 section 需要更新时会触发一次重算。
+    val sky = instance.getSkyLight(x, y, z)
+    val block = instance.getBlockLight(x, y, z)
+    val chunk = instance.getChunk(x shr 4, z shr 4) as? LightingChunk ?: return false
+    chunk.sendLighting()
+    println("event=server.light pos=($x, $y, $z) sky=$sky block=$block")
+    return true
+}
+
+/**
  * 服务端侧改一只生物的血量。
  *
  * Minestom 的 `LivingEntity#setHealth` 会同步写进 `LivingEntityMeta`，下一 tick 由
@@ -428,6 +450,9 @@ public fun startHarness(port: Int = DEFAULT_PORT): InstanceContainer {
     val server = MinecraftServer.init(Auth.Offline())
 
     val instance = MinecraftServer.getInstanceManager().createInstanceContainer()
+    // Minestom 默认用 DynamicChunk，它不计算光照：发出去的区块光照全是 0。真实服务端不是这样，
+    // 因此联调实例改用 LightingChunk——这样“光照穿过协议”才是一个可核对的场景。
+    instance.setChunkSupplier { inst, chunkX, chunkZ -> LightingChunk(inst, chunkX, chunkZ) }
     instance.setGenerator(Generator { unit -> unit.modifier().fillHeight(0, GROUND_HEIGHT, Block.fromKey("stone")) })
 
     // 玩家进入 configuration 阶段前必须有出生实例。缺这一步时 ConnectionManager 会抛

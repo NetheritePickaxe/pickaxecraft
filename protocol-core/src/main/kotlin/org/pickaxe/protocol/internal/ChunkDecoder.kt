@@ -1,7 +1,10 @@
 package org.pickaxe.protocol.internal
 
+import org.pickaxe.protocol.world.BlockEntity
 import org.pickaxe.protocol.world.ChunkColumn
+import org.pickaxe.protocol.world.ChunkLight
 import org.pickaxe.protocol.world.ChunkSection
+import org.pickaxe.protocol.world.HeightmapType
 import org.pickaxe.protocol.world.PalettedContainer
 import java.nio.ByteBuffer
 
@@ -56,7 +59,16 @@ internal object ChunkDecoder {
      */
     private const val MAX_DIRECT_BITS: Int = 32
 
-    fun decode(x: Int, z: Int, minY: Int, sectionCount: Int, data: ByteArray): ChunkColumn {
+    fun decode(
+        x: Int,
+        z: Int,
+        minY: Int,
+        sectionCount: Int,
+        data: ByteArray,
+        heightmaps: Map<HeightmapType, LongArray> = emptyMap(),
+        light: ChunkLight = ChunkLight.of(ChunkLight.layersFor(sectionCount)),
+        blockEntities: List<BlockEntity> = emptyList(),
+    ): ChunkColumn {
         require(sectionCount > 0) { "区块至少包含一个 section，实际为 $sectionCount" }
 
         val cursor = ChunkCursor(ByteBuffer.wrap(data))
@@ -73,7 +85,7 @@ internal object ChunkDecoder {
         require(!cursor.hasRemaining()) {
             "解码完 $sectionCount 个 section 后仍剩余 ${cursor.remaining} 字节，区块格式与预期不符"
         }
-        return ChunkColumn(x, z, minY, sections)
+        return ChunkColumn(x, z, minY, sections, light, heightmaps, blockEntities)
     }
 
     private fun ChunkCursor.readPaletteContainer(

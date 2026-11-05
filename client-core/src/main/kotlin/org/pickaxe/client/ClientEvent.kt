@@ -5,6 +5,7 @@ import org.pickaxe.protocol.entity.EntityAttribute
 import org.pickaxe.protocol.entity.MobEffect
 import org.pickaxe.protocol.entity.PlayerAbilities
 import org.pickaxe.protocol.world.BlockChange
+import org.pickaxe.protocol.world.BlockEntity
 import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
 import java.util.UUID
@@ -71,6 +72,28 @@ public sealed interface ClientEvent {
      * 唯一直接证据。本库不做方块预测，这个事件主要是给需要严格时序的调用方对账用的。
      */
     public data class BlockAcknowledged(public val sequence: Int) : ClientEvent
+
+    /**
+     * 一列区块的光照变了（放火把、挖开地面、服务端重算）。
+     *
+     * 事件只报坐标：光照是整列属性，逐层逐格通知既慢又没必要，渲染层按列重建即可。
+     * 事件到达时缓存已合并，[Session.skyLightAt] / [Session.blockLightAt] 能查到新值。
+     *
+     * 区块不在缓存里时不会产生这个事件——那条更新在本端没有落点。
+     */
+    public data class ChunkLightUpdated(
+        public val chunkX: Int,
+        public val chunkZ: Int,
+    ) : ClientEvent
+
+    /**
+     * 一个方块实体的数据被创建或更新（箱子、告示牌、刷怪笼）。
+     *
+     * 事件到达时缓存已更新，可以用 [Session.blockEntity] 取到同一份 [BlockEntity]。
+     * 方块被换成非方块实体时**没有**对应事件：那条 [BlocksChanged] 已经说明旧实体不存在，
+     * 事件里的 `changes` 会带上这一格。
+     */
+    public data class BlockEntityChanged(public val entity: BlockEntity) : ClientEvent
 
     /**
      * 一个实体进入视野。

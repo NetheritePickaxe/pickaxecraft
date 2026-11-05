@@ -31,9 +31,11 @@ import org.pickaxe.protocol.inventory.InventoryItem
 import org.pickaxe.protocol.inventory.PlayerInventoryLayout
 import org.pickaxe.protocol.inventory.SlotClick
 import org.pickaxe.protocol.world.BlockChange
+import org.pickaxe.protocol.world.BlockEntity
 import org.pickaxe.protocol.world.BlockFace
 import org.pickaxe.protocol.world.BlockPosition
 import org.pickaxe.protocol.world.ChunkColumn
+import org.pickaxe.protocol.world.HeightmapType
 import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
 import java.util.UUID
@@ -273,6 +275,36 @@ public class Session internal constructor(
      */
     public fun biomeAt(x: Int, y: Int, z: Int): Int? =
         chunk(x shr 4, z shr 4)?.biomeAt(x, y, z)
+
+    /**
+     * 按世界坐标读取天空光等级（0–15）；区块未加载、或该层没有光照数据时返回 null。
+     *
+     * 全黑返回 0，与“没有数据”不同：前者是服务端明确算出来的结果，后者只是本端不知道。
+     *
+     * @throws IllegalArgumentException 区块已加载，但坐标超出该列的光照层范围
+     */
+    public fun skyLightAt(x: Int, y: Int, z: Int): Int? =
+        chunk(x shr 4, z shr 4)?.skyLightAt(x, y, z)
+
+    /** 按世界坐标读取方块光等级（0–15），语义与 [skyLightAt] 相同。 */
+    public fun blockLightAt(x: Int, y: Int, z: Int): Int? =
+        chunk(x shr 4, z shr 4)?.blockLightAt(x, y, z)
+
+    /**
+     * 读取某列的高度图，单位是世界 Y：该列第一格空气的 Y。
+     *
+     * 区块未加载、或服务端没有下发这张表时返回 null；哪些方块算“地表”取决于 [type]。
+     */
+    public fun heightAt(type: HeightmapType, x: Int, z: Int): Int? =
+        chunk(x shr 4, z shr 4)?.heightAt(type, x, z)
+
+    /** 按坐标取方块实体；区块未加载、或这一格没有实体时返回 null。 */
+    public fun blockEntity(position: BlockPosition): BlockEntity? =
+        chunk(position.x shr 4, position.z shr 4)?.blockEntity(position)
+
+    /** [blockEntity] 的三坐标版本。 */
+    public fun blockEntity(x: Int, y: Int, z: Int): BlockEntity? =
+        chunk(x shr 4, z shr 4)?.blockEntity(x, y, z)
 
     /** 当前跟踪的实体数量。 */
     public val entityCount: Int get() = entities.size
@@ -755,6 +787,26 @@ public class Session internal constructor(
                 if (!closing.get()) lastAcknowledgedSequenceValue = event.sequence
             }
 
+            // 光照与方块实体同样先写缓存再进事件流：消费者收到事件时一定能查到新值。
+            // 落点不存在（区块没加载）时丢弃——服务端重发整列时会带上完整数据。
+            // 与区块/实体不同，这两类事件频率低且有下游意义，因此仍走事件流。
+            is ProtocolEvent.LightUpdated -> {
+                if (!closing.get()) {
+                    chunks.computeIfPresent(chunkKey(event.x, event.z)) { _, column ->
+                        column.withLight(event.patch)
+                    }
+                }
+            }
+
+            is ProtocolEvent.BlockEntityUpdated -> {
+                if (!closing.get()) {
+                    val position = event.entity.position
+                    chunks.computeIfPresent(chunkKey(position.x shr 4, position.z shr 4)) { _, column ->
+                        column.withBlockEntity(event.entity)
+                    }
+                }
+            }
+
             // 重生会换维度：旧维度的区块与实体全部作废。清理必须发生在网络线程上，
             // 否则新维度的区块可能先写入、再被 Actor 里迟到的清理抹掉。
             // 玩家背包不清（换维度不会丢东西），打开的容器随服务端关闭包一起消失。
@@ -978,6 +1030,23 @@ public class Session internal constructor(
 
         is ProtocolEvent.BlockChangeAcknowledged -> {
             emit(ClientEvent.BlockAcknowledged(event.sequence))
+            true
+        }
+
+        // 这两条在 onProtocolEvent 里已合并进区块缓存；区块不在缓存里说明更新已丢弃，
+        // 此时也不该通知消费者“某列变了”。返回值是“继续处理后续事件”，不是“是否已应用”。
+        is ProtocolEvent.LightUpdated -> {
+            if (chunks.containsKey(chunkKey(event.x, event.z))) {
+                emit(ClientEvent.ChunkLightUpdated(event.x, event.z))
+            }
+            true
+        }
+
+        is ProtocolEvent.BlockEntityUpdated -> {
+            val position = event.entity.position
+            if (chunks.containsKey(chunkKey(position.x shr 4, position.z shr 4))) {
+                emit(ClientEvent.BlockEntityChanged(event.entity))
+            }
             true
         }
 

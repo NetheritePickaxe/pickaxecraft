@@ -432,6 +432,28 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 
 实现记录见 [M4s](plans/m4s-item-components.md)。
 
+### 5.19 M4t 已落地的具体形态：光照、高度图与方块实体
+
+- 三者都属于「一列区块的附加事实」，因此都挂在 `ChunkColumn` 上而不是新增顶层缓存：
+  `ChunkLight`（不可变四张位图 + 两串 2048 字节分层数组）、`heightmaps`（按 `HeightmapType`
+  分类的 37 个 long 快照）、`blockEntities`（不可变列表）。列整体替换，写入返回新对象。
+- `ChunkLight` 的层号有两套编号，适配层只暴露一套：数组层 = `sectionCount + 2`（上下各一层
+  越界光），world Y 换算是 `floorDiv(y - minY, 16) + 1`。这套偏移是整个实现里最容易写错的地方，
+  单测专门覆盖 `minY` 之下与顶层越界。
+- 光照更新是**补丁**而不是全量：`LightPatch` 只带掩码声明过的层，未出现的层保持原值。
+  掩码第 n 个为 1 的位对应第 n 段数组，这个索引关系由 `LightPatches` 单点负责，
+  一旦错位会表现为「光跑到别的层」，很难从现象反推。
+- 高度图值是「第一格空气的 Y − minY」，9 位一格、每 long 7 值。它是服务端下发整列时的快照，
+  `withBlock` 不重算——需要精确值等服务端重发整列，这一点写进 `heightAt` 的文档。
+- 方块实体用自建 `NbtValue` 树暴露，避免协议库的 `NbtMap` 泄漏到公共 API；枚举序号转成
+  `minecraft:<name>` 键名，未知类型保留序号不丢数据。换方块时服务端**不发删除包**，
+  所以 `withBlock` 顺带清掉同格的方块实体，否则会留下一个属于石头的箱子。
+- 事件分两层：光照与方块实体都先写旁路缓存再入队，`ChunkLightUpdated` / `BlockEntityChanged`
+  只在落点已存在时发出（区块被作废后迟到的包不入队）。这里踩过一次坑——把「只进缓存」
+  实现成 `return`，事件就永远不来。
+
+实现记录见 [M4t](plans/m4t-chunk-environment.md)。
+
 ## 6. libGDX 与平台约束
 
 共享发布产物使用 Java 21 字节码，由 `verifyBytecode`（major 65）自动断言；构建、CLI 与测试仍使用 Java 25。libGDX 官方当前推荐 JDK 17/21，因此下游图形客户端不被迫使用 Java 25；启用 Minestom 单人模式的 Desktop 组合根除外。
@@ -487,6 +509,10 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
   关窗的本地事件早于服务端处理到达，因此服务端侧状态要等一个来回。
 - 方块交互用例按“服务端 `instance.getBlock` 变成什么、客户端就该读到什么”双侧对账：
   只断言客户端事件漏掉“包没被服务端接受”，只断言服务端状态漏掉“缓存没跟上”。
+- 光照用例的证据只能来自服务端：Minestom 默认的 `DynamicChunk` 不计光照（全 0），
+  必须换 `LightingChunk` 并主动触发重算，所以断言前先读服务端侧
+  `getSkyLight`/`getBlockLight`，两侧都非 0 才算通过。高度图断言刻意换一列未被其它用例
+  动过的区块，因为它是快照，被挖过的列不会更新。
 - Minestom 测试覆盖真实状态迁移，不用自有 Mock 替代全部联调。
 - 构建门控：字节码主版本、模块依赖边界（Netty / MCProtocolLib / Minestom 不得出现在业务模块）。
 - 跨仓库门控：独立 libGDX 消费工程验证发布产物和线程桥接；Android/iOS 分别在真实运行时验证，不能用 JVM 单测替代。

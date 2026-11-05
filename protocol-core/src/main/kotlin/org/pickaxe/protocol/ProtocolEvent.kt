@@ -6,7 +6,9 @@ import org.pickaxe.protocol.entity.MobEffect
 import org.pickaxe.protocol.entity.PlayerAbilities
 import org.pickaxe.protocol.inventory.Container
 import org.pickaxe.protocol.world.BlockChange
+import org.pickaxe.protocol.world.BlockEntity
 import org.pickaxe.protocol.world.ChunkColumn
+import org.pickaxe.protocol.world.LightPatch
 import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
 import java.util.UUID
@@ -125,6 +127,27 @@ public sealed interface ProtocolEvent {
         public val x: Int,
         public val z: Int,
     ) : ProtocolEvent
+
+    /**
+     * 一列区块的光照被增量更新（放火把、挖开地面、时间变化引发的重算）。
+     *
+     * 与 [BlocksChanged] 是两条独立的下行链路：改一个方块可能先来方块变更、后来光照更新，
+     * 也可能只来其中一个。区块不在缓存里时这条更新没有落点，直接丢弃——服务端重发整列时
+     * 会带上完整光照。
+     */
+    public data class LightUpdated(
+        public val x: Int,
+        public val z: Int,
+        public val patch: LightPatch,
+    ) : ProtocolEvent
+
+    /**
+     * 一个方块实体的数据被创建或更新（箱子内容、告示牌文字、刷怪笼设置……）。
+     *
+     * [BlockEntity.data] 为 null 表示这个包没有携带 NBT。方块被换成非方块实体时服务端
+     * **不发**删除包：那条 `block_update` 已经说明旧实体不存在了，本端按方块变更清除。
+     */
+    public data class BlockEntityUpdated(public val entity: BlockEntity) : ProtocolEvent
 
     /**
      * 服务端下发的方块变更，这是世界内容的**权威结果**。

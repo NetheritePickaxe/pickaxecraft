@@ -28,6 +28,9 @@ tasks.named<VerifyForbiddenDependencies>("verifyModuleBoundaries") {
 // 因此按类分叉，代价是每个类各自启动一次 JVM。
 tasks.named<Test>("test") {
     forkEvery = 1
+    // 服务端默认在方块放置后等 100 tick 才重发光照（5 秒），联调只需确认“增量确实到了”，
+    // 不必为这个节流等满一轮；ServerProperties 在类初始化时读取系统属性，必须在这里设。
+    systemProperty("minestom.send-light-after-block-placement-delay", "2")
     // 这个模块的测试会拉起真实服务端，服务端日志就是断言依据；
     // 默认 Gradle 只把标准输出收进报告，CI 上等于看不见，因此显式放开。
     testLogging {

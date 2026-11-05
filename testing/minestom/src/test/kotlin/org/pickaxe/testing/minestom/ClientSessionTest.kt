@@ -56,6 +56,7 @@ import org.pickaxe.protocol.inventory.PlayerInventoryLayout
 import org.pickaxe.protocol.inventory.SlotClick
 import org.pickaxe.protocol.world.BlockFace
 import org.pickaxe.protocol.world.BlockPosition
+import org.pickaxe.protocol.world.HeightmapType
 import org.pickaxe.protocol.ServerAddress
 import java.net.ServerSocket
 import java.time.Duration
@@ -239,6 +240,89 @@ class ClientSessionTest {
             }
 
             assertNull(session.blockStateAt(markerX, markerY, markerZ), "关闭后不应继续持有区块")
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `区块的光照、高度图与方块实体都可读`() = runBlocking {
+        // 出生前存在的方块实体随整列区块下发；出生后再放的走增量包。两条路径都要覆盖。
+        val initialChest = BlockPosition(INITIAL_CHEST_X, GROUND_LEVEL.toInt(), INITIAL_CHEST_Z)
+        instance.setBlock(initialChest.x, initialChest.y, initialChest.z, Block.CHEST)
+        // Minestom 在区块发出时还没算完光照（发的是全 0），先让它把出生点这一层算好。
+        assertTrue(
+            withContext(Dispatchers.IO) { pushLight(instance, 0, GROUND_LEVEL.toInt() + 2, 0) },
+            "出生点所在区块应已加载，才能预计算光照",
+        )
+
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, ENVIRONMENT_USERNAME)
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+
+                // 高度图：石头平面填到 y=39，第一格空气是 y=40（= GROUND_LEVEL）。
+                // 不查出生点那一列：其它用例会在那里挖/放方块，而高度图是整列下发时的快照。
+                assertEquals(
+                    GROUND_LEVEL.toInt(),
+                    session.heightAt(HeightmapType.MOTION_BLOCKING, HEIGHTMAP_X, HEIGHTMAP_Z),
+                    "高度图应给出该列第一格空气的世界 Y",
+                )
+
+                // 光照：露天满 15、石头内部 0；查询不到数据才是 null。
+                assertEquals(
+                    15,
+                    session.skyLightAt(0, GROUND_LEVEL.toInt() + 2, 0),
+                    "露天格子的天空光应为 15",
+                )
+                assertEquals(0, session.skyLightAt(0, 20, 0), "石头内部不应有天空光")
+                assertEquals(
+                    0,
+                    session.blockLightAt(0, GROUND_LEVEL.toInt() + 2, 0),
+                    "没有光源时方块光应为 0",
+                )
+                assertNull(session.skyLightAt(0, 400, 0), "超出本列高度应返回 null 而不是 0")
+
+                // 整列带下来的方块实体：协议里它是 level_chunk_with_light 的一部分。
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    session.blockEntity(initialChest)?.type == "minecraft:chest"
+                }
+
+                // 增量路径：服务端先发 block_update，再发 block_entity_data。
+                val liveChest = BlockPosition(LIVE_CHEST_X, GROUND_LEVEL.toInt(), LIVE_CHEST_Z)
+                instance.setBlock(liveChest.x, liveChest.y, liveChest.z, Block.CHEST)
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    session.blockEntity(liveChest)?.type == "minecraft:chest"
+                }
+                // 缓存先写、事件后投递：事件查找必须等待式，查一次快照会在负载下偶发失败。
+                log.await { it is ClientEvent.BlockEntityChanged && it.entity.position == liveChest }
+
+                // 换成石头：服务端不发“删除方块实体”的包，缓存必须由方块变更清掉。
+                instance.setBlock(liveChest.x, liveChest.y, liveChest.z, Block.STONE)
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.blockEntity(liveChest) == null }
+
+                // 光照增量：火把点亮后重算并下发 update_light，方块光应从 0 变成非 0。
+                val torch = BlockPosition(TORCH_X, GROUND_LEVEL.toInt(), TORCH_Z)
+                instance.setBlock(torch.x, torch.y, torch.z, Block.TORCH)
+                assertTrue(
+                    withContext(Dispatchers.IO) { pushLight(instance, torch.x, torch.y, torch.z) },
+                    "火把所在区块应已加载",
+                )
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    val level = session.blockLightAt(torch.x, torch.y, torch.z)
+                    level != null && level > 0
+                }
+                log.await {
+                    it is ClientEvent.ChunkLightUpdated &&
+                        it.chunkX == (torch.x shr 4) && it.chunkZ == (torch.z shr 4)
+                }
+            } finally {
+                log.close()
+                session.close()
+            }
         } finally {
             client.close()
         }
@@ -1787,6 +1871,19 @@ class ClientSessionTest {
 
         /** 石头平台的顶面高度，玩家与实体都站在这一层。 */
         const val GROUND_LEVEL: Double = 40.0
+
+        /** 区块环境用例：出生前就摆好的箱子、出生后放的箱子、以及火把，都在出生区块内。 */
+        const val ENVIRONMENT_USERNAME: String = "EnvBot"
+        const val INITIAL_CHEST_X: Int = 3
+        const val INITIAL_CHEST_Z: Int = 3
+        const val LIVE_CHEST_X: Int = 5
+        const val LIVE_CHEST_Z: Int = 3
+        const val TORCH_X: Int = 7
+        const val TORCH_Z: Int = 3
+
+        /** 高度图用例的列：出生区块内、但没有别的用例在那里改方块。 */
+        const val HEIGHTMAP_X: Int = 9
+        const val HEIGHTMAP_Z: Int = 9
 
         /** 僵尸的生成位置与传送目标；都在出生点所在区块内，不触发额外区块加载。 */
         const val ZOMBIE_START_X: Double = 3.5

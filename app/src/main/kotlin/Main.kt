@@ -14,6 +14,7 @@ import org.pickaxe.protocol.inventory.InventoryItem
 import org.pickaxe.protocol.inventory.SlotClick
 import org.pickaxe.protocol.world.BlockFace
 import org.pickaxe.protocol.world.BlockPosition
+import org.pickaxe.protocol.world.HeightmapType
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.system.exitProcess
@@ -27,7 +28,7 @@ private val usage = """
 
       connect <host> [port] [--username <名称>] [--timeout <秒>] [--say <文本>]...
               [--walk <格数>] [--hold <0-8>] [--click <槽位>[:动作]]... [--close-window]
-              [--dig] [--place] [--sneak] [--sprint] [--fly]
+              [--dig] [--place] [--sneak] [--sprint] [--fly] [--light]
           离线登录并持续打印会话事件，Ctrl+C 关闭会话后退出
           --say 在出生完成后再发送一条聊天消息，可重复；服务端会把它广播回来
           --walk 在出生后沿 +X 方向走指定格数（每步 0.5 格），打印每一步的坐标
@@ -39,6 +40,8 @@ private val usage = """
                占据的格子（服务端做碰撞检查，见 plan 文档），所以偏东一格
           --sneak / --sprint / --fly 在出生后声明潜行、冲刺或请求飞行；
                飞行是否被接受要看随后服务端的 player_abilities 包
+          --light 在出生后打印本列的光照、高度图与方块实体；用来核对
+               level_chunk_with_light 的四部分是否都到了本端
 
           点击动作:
             pickup      左键拿起或放下整堆（默认）
@@ -169,6 +172,7 @@ private fun runConnect(args: List<String>): Int {
                     if (parsed.closeWindow) closeActiveWindow(session)
                     if (parsed.digBelow) digBelow(session)
                     if (parsed.placeBelow) placeBelow(session)
+                    if (parsed.reportLight) reportLight(session)
                     applyMotionFlags(session, parsed)
                 }
             }
@@ -197,6 +201,10 @@ private fun describe(event: ClientEvent): String = when (event) {
         "event=block.changed pos=${change.position} state=${change.stateId}"
     }
     is ClientEvent.BlockAcknowledged -> "event=block.ack sequence=${event.sequence}"
+    is ClientEvent.ChunkLightUpdated -> "event=light chunk=${event.chunkX},${event.chunkZ}"
+    is ClientEvent.BlockEntityChanged -> with(event.entity) {
+        "event=blockentity type=$type pos=$position keys=${data?.entries?.keys?.joinToString(",").orEmpty()}"
+    }
     is ClientEvent.EntitySpawned -> with(event.entity) {
         val who = customName?.let { " name=$it" }.orEmpty()
         "event=entity.spawned id=$id type=$type$who x=$x y=$y z=$z"
@@ -422,6 +430,10 @@ private fun describeChunk(session: Session): String {
     val column = session.chunk(x shr 4, z shr 4) ?: return "chunk=unloaded at (${x shr 4}, ${z shr 4})"
 
     val below = if (column.sectionAt(y - 1) == null) "越界" else session.blockStateAt(x, y - 1, z).toString()
+    // 光照与高度图来自同一个区块包，缺失时这里是 null 而不是 0——两者含义不同。
+    val height = session.heightAt(HeightmapType.MOTION_BLOCKING, x, z)
+    val sky = session.skyLightAt(x, y, z)
+    val block = session.blockLightAt(x, y, z)
     // 玩家列表与实体表分开统计：前者是“谁在线”，后者是“视野里有什么”。
     val players = session.players().values.map { it.name ?: it.uuid.toString() }
     val inventory = session.inventory()?.let { container ->
@@ -433,8 +445,33 @@ private fun describeChunk(session: Session): String {
     return "chunk x=${column.x} z=${column.z} minY=${column.minY} sections=${column.sectionCount} " +
         "cached=${session.loadedChunks} entities=${session.entityCount} chat=${session.chatCount} players=$players " +
         "block=($x, $y, $z):${session.blockStateAt(x, y, z)} below=$below " +
+        "sky=$sky blockLight=$block height=$height blockEntities=${column.blockEntities.size} " +
         "held=${session.heldSlot} inventory=$inventory " +
         "hp=${session.status.value.health} level=${session.status.value.level}"
+}
+
+/**
+ * 打印本列的光照、高度图与方块实体。
+ *
+ * 这三样与方块来自同一个 `level_chunk_with_light` 包，但走的是不同的解码路径：方块由本库
+ * 自己的解码器拆 section，其余三样由协议库解析、本层换算坐标。打印出来是为了能一眼看出
+ * “光照真的到了”“高度图与世界高度对得上”，而不是只相信包已经收到。
+ */
+private fun reportLight(session: Session) {
+    val position = session.world.value?.position ?: run {
+        System.err.println("跳过光照检查（位置尚未同步）")
+        return
+    }
+    val x = floor(position.x).toInt()
+    val y = floor(position.y).toInt()
+    val z = floor(position.z).toInt()
+    val column = session.chunk(x shr 4, z shr 4)
+    println(
+        "event=light pos=($x, $y, $z) sky=${session.skyLightAt(x, y, z)} " +
+            "block=${session.blockLightAt(x, y, z)} skyBelow=${session.skyLightAt(x, y - 2, z)} " +
+            "height(motion_blocking)=${session.heightAt(HeightmapType.MOTION_BLOCKING, x, z)} " +
+            "blockEntities=${column?.blockEntities?.size ?: "未加载"}",
+    )
 }
 
 /** 摘要里把物品的非默认组件一起列出来，便于肉眼核对组件补丁是否穿过协议。 */
@@ -475,6 +512,8 @@ private class ParsedArgs(
     val sneak: Boolean = false,
     val sprint: Boolean = false,
     val fly: Boolean = false,
+    /** 出生后打印本列的光照、高度图与方块实体。 */
+    val reportLight: Boolean = false,
 ) {
     fun options(): ClientOptions = ClientOptions(
         connectTimeoutMillis = timeoutSeconds * 1000,
@@ -501,6 +540,7 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
     var closeWindow = false
     var digBelow = false
     var placeBelow = false
+    var reportLight = false
     var sneak = false
     var sprint = false
     var fly = false
@@ -592,6 +632,10 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
                 fly = true
                 index += 1
             }
+            "--light" -> {
+                reportLight = true
+                index += 1
+            }
             else -> {
                 System.err.println("未知参数: $option")
                 return null
@@ -614,6 +658,7 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
             sneak = sneak,
             sprint = sprint,
             fly = fly,
+            reportLight = reportLight,
         )
     } catch (e: IllegalArgumentException) {
         System.err.println("参数不合法: ${e.message}")
