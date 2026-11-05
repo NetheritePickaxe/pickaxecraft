@@ -28,6 +28,7 @@
 - [M4p 实施记录](plans/m4p-mob-effects.md)：效果注册表不下发、一次只推一个效果、按键合并。
 - [M4q 实施记录](plans/m4q-container-properties.md)：容器属性下标不翻译、按下标累积。
 - [M4r 实施记录](plans/m4r-entity-health.md)：元数据下标依赖实体层级、分层表是版本资产、掉落物反例。
+- [M4s 实施记录](plans/m4s-item-components.md)：组件是补丁而非全量、附魔注册表动态下发。
 - [M1 实施计划](plans/m1-implementation-plan.md)：自有客户端 API、连接生命周期、联调迁移、CLI 与提前 Android 探针；末尾附实施记录与偏差。
 - [协议适配契约](protocol-contract.md)：`protocol-core` 与协议库之间哪些行为由库保证、哪些由本项目实现，以及升级检查清单。
 - [Android 反糖探针](android-dex-probe.md)：D8 实测结论（minSdk 26、重复类、`HexFormat`）与仍未验证的运行时项。
@@ -64,10 +65,11 @@ M4o 让本端能声明运动状态：`setSneaking` / `setSprinting` / `setFlying
 M4p 让药水效果可读：`Session.effects` 按键合并新增、替换与移除，`EffectKeys` 是版本资产。
 M4q 让容器数值可读：`Session.containerProperties` 按下标累积，下标含义留给知道窗口类型的调用方。
 M4r 让生物血量可读：`Session.health(entityId)` 与 `TrackedEntity.health`；下标 9 只对生物层级成立，所以先用 `LivingEntityTypes` 判定类型，掉落物等非生物留 null。
+M4s 让物品组件可读：`InventoryItem` 带耐久、无法破坏、修复代价、物品名、说明文字与附魔；组件是补丁而非全量，附魔键名来自配置阶段下发的动态注册表而不是静态表。
 
 `protocol-core` 负责协议事实转换、区块解码与资源回收，`client-core` 负责会话 Actor、有界缓冲、区块缓存与错误分类；协议库的隐含行为已写入[协议适配契约](protocol-contract.md)。
 
-Android 只完成了构建链探针（D8 可产出 dex，`minSdk` 下限 26），运行时仍属 M3 门控；其余物品组件、光照/高度图/方块实体、跨服转移、命令补全与 libGDX 消费工程仍属 M4 的后续增量。
+Android 只完成了构建链探针（D8 可产出 dex，`minSdk` 下限 26），运行时仍属 M3 门控；物品默认组件原型、光照/高度图/方块实体、跨服转移、命令补全与 libGDX 消费工程仍属 M4 的后续增量。
 
 ## 参考文档
 

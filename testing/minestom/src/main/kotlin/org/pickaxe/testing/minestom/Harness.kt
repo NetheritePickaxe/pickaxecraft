@@ -28,6 +28,10 @@ import net.minestom.server.event.player.PlayerSpawnEvent
 import net.minestom.server.instance.InstanceContainer
 import net.minestom.server.item.ItemStack
 import net.minestom.server.item.Material
+import net.minestom.server.item.component.EnchantmentList
+import net.minestom.server.item.enchant.Enchantment
+import net.minestom.server.registry.RegistryKey
+import net.minestom.server.utils.Unit as MinestomUnit
 import net.minestom.server.instance.block.Block
 import net.minestom.server.instance.generator.Generator
 import net.minestom.server.network.packet.client.play.ClientEntityActionPacket
@@ -259,6 +263,35 @@ public fun giveNamedItem(username: String, material: Material, count: Int, name:
     println("event=server.give name=$username item=${material.key()} count=$count named=$name added=$added")
     return added
 }
+
+/**
+ * 塞一把把常用组件都设满的钻石剑，用于验证客户端能完整读出物品组件。
+ *
+ * 附魔用 `RegistryKey` 而不是枚举常量：附魔是可由服务端扩展的动态注册表，键名由配置阶段
+ * 下发的 `minecraft:enchantment` 注册表还原，客户端不该硬编码一张表。
+ */
+public fun giveComponentItem(username: String): Boolean {
+    val player = MinecraftServer.getConnectionManager().getOnlinePlayerByUsername(username) ?: return false
+    val stack = ItemStack.builder(Material.DIAMOND_SWORD)
+        .set(DataComponents.CUSTOM_NAME, Component.text(COMPONENT_SWORD_NAME))
+        .set(DataComponents.ITEM_NAME, Component.text(COMPONENT_ITEM_NAME))
+        .set(DataComponents.LORE, listOf(Component.text("第一行"), Component.text("第二行")))
+        .set(DataComponents.DAMAGE, COMPONENT_DAMAGE)
+        .set(DataComponents.MAX_DAMAGE, COMPONENT_MAX_DAMAGE)
+        .set(DataComponents.REPAIR_COST, COMPONENT_REPAIR_COST)
+        .set(DataComponents.UNBREAKABLE, MinestomUnit.INSTANCE)
+        .set(DataComponents.ENCHANTMENTS, EnchantmentList(RegistryKey.of<Enchantment>("sharpness"), 3))
+        .build()
+    val added = player.inventory.addItemStack(stack)
+    println("event=server.item.components name=$username added=$added")
+    return added
+}
+
+public const val COMPONENT_SWORD_NAME: String = "试剑"
+public const val COMPONENT_ITEM_NAME: String = "钻石剑"
+public const val COMPONENT_DAMAGE: Int = 7
+public const val COMPONENT_MAX_DAMAGE: Int = 2000
+public const val COMPONENT_REPAIR_COST: Int = 2
 
 /**
  * 修改玩家的属性基值（服务端侧），并把新值打印出来。

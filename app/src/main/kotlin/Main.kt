@@ -10,6 +10,7 @@ import org.pickaxe.client.Session
 import org.pickaxe.protocol.ProtocolVersion
 import org.pickaxe.protocol.ServerAddress
 import org.pickaxe.protocol.inventory.Container
+import org.pickaxe.protocol.inventory.InventoryItem
 import org.pickaxe.protocol.inventory.SlotClick
 import org.pickaxe.protocol.world.BlockFace
 import org.pickaxe.protocol.world.BlockPosition
@@ -423,17 +424,32 @@ private fun describeChunk(session: Session): String {
     val below = if (column.sectionAt(y - 1) == null) "越界" else session.blockStateAt(x, y - 1, z).toString()
     // 玩家列表与实体表分开统计：前者是“谁在线”，后者是“视野里有什么”。
     val players = session.players().values.map { it.name ?: it.uuid.toString() }
-    val inventory = session.inventory()?.let {
-        val named = it.usedSlots.takeIf { n -> n > 0 }
-            ?.let { n -> " items=" + it.slots.filterNotNull().joinToString(",") { item -> item.key ?: "#${item.itemId}" } }
+    val inventory = session.inventory()?.let { container ->
+        val named = container.usedSlots.takeIf { n -> n > 0 }
+            ?.let { " items=" + container.slots.filterNotNull().joinToString(",", transform = ::describeItem) }
             .orEmpty()
-        "slots=${it.slots.size} used=${it.usedSlots}$named"
+        "slots=${container.slots.size} used=${container.usedSlots}$named"
     } ?: "未知"
     return "chunk x=${column.x} z=${column.z} minY=${column.minY} sections=${column.sectionCount} " +
         "cached=${session.loadedChunks} entities=${session.entityCount} chat=${session.chatCount} players=$players " +
         "block=($x, $y, $z):${session.blockStateAt(x, y, z)} below=$below " +
         "held=${session.heldSlot} inventory=$inventory " +
         "hp=${session.status.value.health} level=${session.status.value.level}"
+}
+
+/** 摘要里把物品的非默认组件一起列出来，便于肉眼核对组件补丁是否穿过协议。 */
+private fun describeItem(item: InventoryItem): String {
+    val details = buildList {
+        item.damage?.let { add("damage=$it") }
+        item.maxDamage?.let { add("maxDamage=$it") }
+        if (item.unbreakable) add("unbreakable")
+        item.repairCost?.let { add("repairCost=$it") }
+        item.enchantments.forEach { (key, level) -> add("$key=$level") }
+        item.storedEnchantments.forEach { (key, level) -> add("stored:$key=$level") }
+        if (item.lore.isNotEmpty()) add("lore=${item.lore.size}")
+    }
+    val key = item.key ?: "#${item.itemId}"
+    return if (details.isEmpty()) key else "$key(${details.joinToString(",")})"
 }
 
 /** 解析后的命令行参数。 */

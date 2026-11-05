@@ -420,6 +420,18 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 
 实现记录见 [M4r](plans/m4r-entity-health.md)。
 
+### 5.18 M4s 已落地的具体形态：物品组件
+
+- `ItemComponents` 把 `ItemStack` 完整转成 `InventoryItem`：耐久、无法破坏、修复代价、
+  物品名、说明文字、附魔与附魔书组件。组件解析是纯逻辑，可脱离连接单测。
+- 组件是**补丁**而非全量：字段缺省只表示「服务端没提」，不表示物品没有该属性；
+  完整物品原型表不在本层，这一点写进公共字段文档，避免下游拿 0 兜底。
+- 附魔键名来自配置阶段下发的动态注册表，适配层保存条目顺序（即 wire id），
+  不新增会过期的静态表；越界 id 降级为 `unknown:<id>` 而不是丢数据。
+- CLI 摘要把非空组件附在键名后面，联调逐字段与服务端设置值对账。
+
+实现记录见 [M4s](plans/m4s-item-components.md)。
+
 ## 6. libGDX 与平台约束
 
 共享发布产物使用 Java 21 字节码，由 `verifyBytecode`（major 65）自动断言；构建、CLI 与测试仍使用 Java 25。libGDX 官方当前推荐 JDK 17/21，因此下游图形客户端不被迫使用 Java 25；启用 Minestom 单人模式的 Desktop 组合根除外。

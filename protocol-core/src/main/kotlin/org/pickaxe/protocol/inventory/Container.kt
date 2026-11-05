@@ -7,17 +7,33 @@ package org.pickaxe.protocol.inventory
  * 还原的键名（如 `minecraft:stone`）。数量是服务端下发的堆叠数，空槽用 `null` 表示，
  * 而不是 `count = 0` 的物品。
  *
- * 物品组件只取一个最有用的：[customName] 是服务端显式设置的显示名（已渲染成纯文本）。
- * 附魔、耐久之类的组件仍不在本层建模——那是一张“组件 id → 值”的补丁表，
- * 解析它需要另一套注册表与类型系统，属于下游渲染与逻辑层。
+ * 组件字段全部来自 `data_components` 补丁：缺省就是「服务端没提这件事」，用 `null`、空表或
+ * `false` 表示，不能拿 0 当兜底。补丁里「带了键但值为 null」表示删除该组件，结果与缺省一致。
+ * 附魔键名来自配置阶段下发的 `minecraft:enchantment` 动态注册表，不是版本常量。
  */
 public data class InventoryItem(
     public val itemId: Int,
     public val count: Int,
     /** 物品键名（如 `minecraft:stone`）；id 超出注册表时为 null。 */
     public val key: String? = null,
-    /** 服务端设置的显示名（组件 `custom_name`，已渲染成纯文本）；没有就是 null。 */
+    /** 服务端显式设置的显示名（`custom_name`，已渲染成纯文本）；没有就是 null。 */
     public val customName: String? = null,
+    /** 物品名称组件（`item_name`），与玩家改的名不是一回事。 */
+    public val itemName: String? = null,
+    /** 物品说明文字（`lore`），按服务端给出的顺序渲染成纯文本。 */
+    public val lore: List<String> = emptyList(),
+    /** 已损耗的耐久值（`damage`）；没有该组件就是 null。 */
+    public val damage: Int? = null,
+    /** 最大耐久（`max_damage`）；没有该组件就是 null。 */
+    public val maxDamage: Int? = null,
+    /** 是否带 `unbreakable` 组件。 */
+    public val unbreakable: Boolean = false,
+    /** 铁砧累计修复次数（`repair_cost`）；没有该组件就是 null。 */
+    public val repairCost: Int? = null,
+    /** 物品身上的附魔：`键名 → 等级`。 */
+    public val enchantments: Map<String, Int> = emptyMap(),
+    /** 附魔书保存的附魔（`stored_enchantments`），与普通附魔分开存放。 */
+    public val storedEnchantments: Map<String, Int> = emptyMap(),
 )
 
 /**

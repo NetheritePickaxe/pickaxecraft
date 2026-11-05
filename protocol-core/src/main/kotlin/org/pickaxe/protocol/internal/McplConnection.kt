@@ -20,7 +20,6 @@ import org.geysermc.mcprotocollib.protocol.data.game.entity.player.HandPreferenc
 import org.geysermc.mcprotocollib.protocol.data.game.entity.player.PlayerState
 import org.geysermc.mcprotocollib.protocol.data.game.entity.player.PositionElement
 import org.geysermc.mcprotocollib.protocol.data.game.item.ItemStack
-import org.geysermc.mcprotocollib.protocol.data.game.item.component.DataComponentTypes
 import org.geysermc.mcprotocollib.protocol.data.game.level.block.BlockChangeEntry
 import org.geysermc.mcprotocollib.protocol.data.game.setting.ChatVisibility
 import org.geysermc.mcprotocollib.protocol.data.game.setting.ParticleStatus
@@ -103,7 +102,6 @@ import org.pickaxe.protocol.entity.PlayerAbilities
 import org.pickaxe.protocol.chat.ChatKind
 import org.pickaxe.protocol.chat.ChatMessage
 import org.pickaxe.protocol.inventory.Container
-import org.pickaxe.protocol.item.ItemKeys
 import org.pickaxe.protocol.inventory.Hand
 import org.pickaxe.protocol.inventory.InventoryItem
 import org.pickaxe.protocol.inventory.SlotClick
@@ -290,6 +288,14 @@ internal class McplConnection(
      */
     private var chatTypes: List<ChatFormat> = emptyList()
 
+    /**
+     * 配置阶段收到的附魔注册表；下标即物品组件里的附魔 wire id。
+     *
+     * 附魔是动态注册表，顺序由服务端决定（不是版本常量），所以键名只能从这张表还原。
+     * 缺省为空表示注册表还没到或服务端没下发，此时附魔降级为 `unknown:<id>` 而不是丢弃。
+     */
+    private var enchantmentKeys: List<String> = emptyList()
+
     /** 当前所在维度，决定区块的 section 数量与最低 Y。 */
     private var currentDimension: DimensionShape? = null
 
@@ -374,14 +380,19 @@ internal class McplConnection(
         // 越容易把服务端的等待拖成超时。
         when (packet) {
             is ClientboundRegistryDataPacket -> {
-                // 注册表条目顺序即维度 id，必须在 Login 之前读出来：区块解码依赖维度高度。
-                if (packet.registry.asString() == DimensionRegistry.REGISTRY_ID) {
+                // 注册表条目顺序即 wire id，必须在 Login 之前读出来：区块解码依赖维度高度，
+                // 物品组件的附魔键名依赖附魔注册表。
+                val registryId = packet.registry.asString()
+                if (registryId == DimensionRegistry.REGISTRY_ID) {
                     dimensions = DimensionRegistry.parse(packet.entries)
                 }
-                if (packet.registry.asString() == ChatTypeRegistry.REGISTRY_ID) {
+                if (registryId == ChatTypeRegistry.REGISTRY_ID) {
                     chatTypes = ChatTypeRegistry.parse(packet.entries)
                 }
-                emit(ProtocolEvent.RegistryData(packet.registry.asString(), packet.entries.size))
+                if (registryId == ItemComponents.ENCHANTMENT_REGISTRY_ID) {
+                    enchantmentKeys = ItemComponents.enchantmentKeys(packet.entries)
+                }
+                emit(ProtocolEvent.RegistryData(registryId, packet.entries.size))
             }
 
             is ClientboundLoginPacket -> {
@@ -1096,14 +1107,7 @@ internal class McplConnection(
      * 键名从本仓库的注册表还原；自定义名称从组件补丁里取——组件可能显式删除该键
      * （补丁语义），取不到就是 null，与「没有设置过」不可区分，两者对外的含义一致。
      */
-    private fun ItemStack.toInventoryItem(): InventoryItem = InventoryItem(
-        itemId = id,
-        count = amount,
-        key = ItemKeys.key(id),
-        customName = dataComponentsPatch
-            ?.get(DataComponentTypes.CUSTOM_NAME)
-            ?.let(ComponentText::text),
-    )
+    private fun ItemStack.toInventoryItem(): InventoryItem = ItemComponents.read(this, enchantmentKeys)
 
     private fun reportPhase() {
         val phase = when (packetProtocol.inboundState) {

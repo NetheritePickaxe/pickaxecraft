@@ -1106,6 +1106,49 @@ class ClientSessionTest {
     }
 
     @Test
+    fun `物品组件可读且附魔键名来自动态注册表`() = runBlocking {
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, COMPONENT_USERNAME)
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+                assertTrue(
+                    withContext(Dispatchers.IO) { giveComponentItem(COMPONENT_USERNAME) },
+                    "服务端应把组件齐全的剑放进背包",
+                )
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    session.inventory()?.slots.orEmpty().any {
+                        it?.key == "minecraft:diamond_sword" && it.customName == COMPONENT_SWORD_NAME
+                    }
+                }
+                val sword = assertNotNull(
+                    session.inventory()?.slots.orEmpty()
+                        .firstOrNull { it?.key == "minecraft:diamond_sword" },
+                )
+                assertEquals(COMPONENT_ITEM_NAME, sword.itemName)
+                assertEquals(listOf("第一行", "第二行"), sword.lore)
+                assertEquals(COMPONENT_DAMAGE, sword.damage)
+                assertEquals(COMPONENT_MAX_DAMAGE, sword.maxDamage)
+                assertTrue(sword.unbreakable, "unbreakable 是 Unit 组件，存在即为真")
+                assertEquals(COMPONENT_REPAIR_COST, sword.repairCost)
+                assertEquals(
+                    mapOf("minecraft:sharpness" to 3),
+                    sword.enchantments,
+                    "附魔 wire id 应由配置阶段下发的注册表还原成键名",
+                )
+                assertTrue(sword.storedEnchantments.isEmpty(), "普通武器不该有附魔书组件")
+            } finally {
+                log.close()
+                session.close()
+            }
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `实体属性可读且变化会推给本人`() = runBlocking {
         val client = MinecraftClient()
         try {
@@ -1704,6 +1747,9 @@ class ClientSessionTest {
         /** 物品键名用例：服务端塞一块带名字的石头与一颗无名钻石。 */
         const val ITEM_USERNAME: String = "ItemBot"
         const val NAMED_ITEM_NAME: String = "试金石"
+
+        /** 物品组件用例：一把把常用组件设满的钻石剑。 */
+        const val COMPONENT_USERNAME: String = "ComponentBot"
 
         /** 运动状态用例：上行包由 PlayerPacketEvent 登记，能力由服务端权威下发。 */
         const val MOTION_USERNAME: String = "MotionBot"
