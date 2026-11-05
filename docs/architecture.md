@@ -500,10 +500,10 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 渲染实现全部位于外部 libGDX 客户端，本仓库不引入相关依赖。下游采用以下基线：
 
 - 渲染代码以 libGDX `GL20` / OpenGL ES 2.0 为共同基线，优先保证 Desktop、Android 与 iOS 可复用；不得把 GLES、ANGLE 或 Vulkan 类型传入客户端核心。
-- Desktop 使用 `gdx-lwjgl3-angle` + `GLEmulation.ANGLE_GLES20` 做接入验证，目标是在 Windows/Linux 上由 ANGLE Vulkan 后端执行。macOS 走 ANGLE Metal，Android 优先原生 GLES，iOS 评估 libGDX MetalANGLE；不能把“使用 ANGLE”等同于“正在使用 Vulkan”。
-- ANGLE 上游虽支持更高版本 GLES 到 Vulkan 的翻译，但 libGDX 官方 ANGLE 扩展目前只承诺 GLES 2.0，并有平台 natives/加载问题。Vulkan 兼容必须通过运行时 renderer/vendor、实际后端和渲染测试结果证明，不能由依赖名称推断。
+- Windows/Linux 的 Vulkan 路线接入第三方 `Dgzt/gdx-lwjgl3-angle-vulkan`（`Lwjgl3VulkanApplication` + `GLEmulation.ANGLE_GLES32`，由 ANGLE 翻译到 Vulkan），官方 `gdx-lwjgl3-angle` 作为回退；macOS 走官方 ANGLE→Metal，Android 优先原生 GLES，iOS 评估 libGDX MetalANGLE；不能把“使用 ANGLE”等同于“正在使用 Vulkan”。
+- 官方 ANGLE 扩展只承诺 GLES 2.0，且 `ANGLELoader` 仅解压加载 libEGL/libGLESv2、没有任何后端选择 API——Windows 打包 natives 官方只验证过 D3D11，这是 Desktop 改用第三方后端的原因。该库是单人维护的薄封装（CC0），需锁版本并跟随其版本矩阵升级；Vulkan 兼容仍必须通过运行时 renderer/vendor、实际后端和渲染测试结果证明，不能由依赖名称推断。
 - MC Java 26.2 已提供实验性 Vulkan 后端，要求 Vulkan 1.2、dynamic rendering 与 push descriptors，但默认仍为 OpenGL。下游跟踪的是这一双后端与回退方向：保留 GLES/ANGLE 可用路径，验证 Vulkan 路径，不在初版强制原生 Vulkan。
-- GLES 经 ANGLE 在 Vulkan 上运行不等于拥有原版 Vulkan 渲染器的功能或性能。若后续原版效果无法由 GLES 2.0 表达，再在外部客户端单独评估 GLES 3.x 或原生 Vulkan 后端，不重写核心库。
+- GLES 经 ANGLE 在 Vulkan 上运行不等于拥有原版 Vulkan 渲染器的功能或性能。若后续原版效果无法由 GLES 2.0 表达，先利用 Desktop Vulkan 路径已具备的 GLES 3.x 能力，再评估原生 Vulkan 后端，不重写核心库。
 
 | 平台 | 当前决策 | 验证门控 |
 | --- | --- | --- |

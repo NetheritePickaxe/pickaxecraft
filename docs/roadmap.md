@@ -149,7 +149,7 @@ M1 只要求进入 GAME，不要求玩家出生、传送/区块确认或世界�
 - 编写接入示例，明确 API 尚处实验阶段的兼容政策。
 - 建立最小 libGDX 消费示例（`samples:libgdx-viewer`，不发布、headless），验证“公共 API 足以产出可渲染数据”；
   真正上屏（着色器、相机、区块流式加载）在外部客户端仓库，渲染实现不回流到本仓库。
-- 下游以 GL20/GLES 2.0 为共同渲染基线，接入 `gdx-lwjgl3-angle` 并实测 ANGLE Vulkan 路径；保留可工作的回退后端。macOS/Android/iOS 分别按 ANGLE Metal、原生 GLES、MetalANGLE 路线验证，不能由 Desktop 结果直接推断。
+- 下游以 GL20/GLES 2.0 为共同渲染基线；Windows/Linux 接入第三方 `gdx-lwjgl3-angle-vulkan`（`ANGLE_GLES32`→Vulkan）并以官方 `gdx-lwjgl3-angle` 回退。macOS/Android/iOS 分别按 ANGLE Metal、原生 GLES、MetalANGLE 路线验证，不能由 Desktop 结果直接推断。
 
 ### 验收标准
 
@@ -158,7 +158,7 @@ M1 只要求进入 GAME，不要求玩家出生、传送/区块确认或世界�
 - 慢事件消费者不会破坏 KeepAlive 等协议义务，也不会导致无界内存增长。
 - Minestom 集成测试覆盖已公开的稳定行为。
 - libGDX 消费示例无需依赖协议库内部类型即可把区块网格化；编译类路径由 `verifyModuleBoundaries` 断言不含 Netty/协议库/Minestom。
-- 下游用运行时信息与渲染结果证明 ANGLE 的实际后端；Vulkan 路径、回退路径和上下文重建均通过测试前，不宣称 Vulkan 已支持。
+- 下游用运行时信息与渲染结果证明 ANGLE 的实际后端；Vulkan 路径（含第三方后端）、回退路径和上下文重建均通过测试前，不宣称 Vulkan 已支持。
 
 ### 实际进展：M4a 区块内容（2026-11-04）
 
