@@ -108,6 +108,32 @@ public class MinecraftClient(
         }
     }
 
+    /**
+     * 跟随上一次转移请求：关闭 [from]，连到服务端指定的地址，返回新会话。
+     *
+     * 转移**不是状态迁移**：玩家数据、维度、背包都由新服务端重新下发，本库只负责
+     * “关掉旧连接、用同一个用户名建一条新连接”。因此返回的是一个全新的 [Session]，
+     * 旧会话上的 [Session.transferRequest] 仍然留着目标地址，便于调用方事后核对。
+     *
+     * 没收到过转移请求时抛 [IllegalStateException]；目标地址非法时抛
+     * [IllegalArgumentException]（不合法就不要再连，避免把解析错误伪装成连接失败）。
+     */
+    public suspend fun followTransfer(
+        from: Session,
+        username: String = from.username,
+    ): Session {
+        ensureOpen()
+        val request = from.transferRequest.value
+            ?: throw IllegalStateException("该会话没有收到转移请求")
+        val address = try {
+            request.address
+        } catch (e: IllegalArgumentException) {
+            throw IllegalArgumentException("服务端给出的转移地址不合法：$request", e)
+        }
+        from.close()
+        return connect(address, username)
+    }
+
     /** 关闭客户端、其活动会话与所有协程。重复调用无副作用。 */
     override fun close() {
         if (!closed.compareAndSet(false, true)) return

@@ -472,6 +472,25 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 
 实现记录见 [M4u](plans/m4u-command-completion.md)。
 
+### 5.21 M4v 已落地的具体形态：跨服转移
+
+- 协议层只做一件事：把转移包变成 `ProtocolEvent.TransferRequested(host, port)`。**不建连接**——
+  这正是 M1 关闭 `FOLLOW_TRANSFERS` 的原因：库自己建的那个会话不归本项目管理，也关不掉。
+- 一层只负责“上报”，另一层负责“执行”，界线是 `Session` 与 `MinecraftClient`：
+  `Session.transferRequest` 是只读快照（事件之外的旁路，晚订阅者也能读到），
+  `MinecraftClient.followTransfer(session)` 才真正“关旧会话 → 连新地址 → 返回新会话”。
+- 转移**不结束会话**：Minestom 只发包不踢人，原版客户端是收到后自己断开的。
+  所以“等服务端断开再换服”会永远等下去——把转移当成一次普通的断开处理是错的。
+  设计上的推论是：`ClientEvent.TransferRequested` 是行动信号，不是终态的一部分。
+- 转移目标是**原样转达**的服务端事实，不在收包时校验：`TransferRequest.address` 才做
+  `ServerAddress` 的校验。若在收包处校验，一个坏包就会结束整个会话——代价远大于收益。
+- `transferRequest` 不随会话结束清空。会话因转移而关闭后，调用方正是靠它回答“接下来连哪里”；
+  断开的文本原因只是一句翻译键（`disconnect.transfer` 与服务端自定义文案都见过），不能当判据。
+- 联调用例刻意把目标指向**同一个服务端**：Minestom 是进程级单例，一个 JVM 里跑不了第二个实例；
+  同名重连还能顺带证明旧连接真的关掉了（服务端侧会看到第二次 `player.configuring` 与 `player.spawned`）。
+
+实现记录见 [M4v](plans/m4v-cross-server-transfer.md)。
+
 ## 6. libGDX 与平台约束
 
 共享发布产物使用 Java 21 字节码，由 `verifyBytecode`（major 65）自动断言；构建、CLI 与测试仍使用 Java 25。libGDX 官方当前推荐 JDK 17/21，因此下游图形客户端不被迫使用 Java 25；启用 Minestom 单人模式的 Desktop 组合根除外。

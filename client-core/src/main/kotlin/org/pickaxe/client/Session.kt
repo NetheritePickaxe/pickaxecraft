@@ -105,6 +105,16 @@ public class Session internal constructor(
     /** 本端最后一次声明的运动按键；发送后本地立即推进，服务端不回包。 */
     public val movementInput: StateFlow<MovementInput> = mutableMovementInput.asStateFlow()
 
+    private val mutableTransferRequest = MutableStateFlow<TransferRequest?>(null)
+
+    /**
+     * 服务端最近一次要求转到的目标；没收到过时为 null。
+     *
+     * **不随会话结束清空**：会话因转移而断开后，调用方正是靠它决定“接着连哪里”。
+     * 一次连接可能收到多次，后一次覆盖前一次。
+     */
+    public val transferRequest: StateFlow<TransferRequest?> = mutableTransferRequest.asStateFlow()
+
     private val mutableCommands = MutableStateFlow<CommandTree?>(null)
 
     /**
@@ -975,6 +985,14 @@ public class Session internal constructor(
                 if (!closing.get()) mutableCommands.value = event.tree
             }
 
+            // 转移请求是行动信号而不是可缓存状态：先写 StateFlow 让晚到的订阅者也能读到，
+            // 再照常排队上报事件。它不清空——会话因转移断开后，调用方正是靠它决定连哪里。
+            is ProtocolEvent.TransferRequested -> {
+                if (!closing.get()) {
+                    mutableTransferRequest.value = TransferRequest(event.host, event.port)
+                }
+            }
+
             // 补全回答是**一对一的请求/响应**，不是可缓存状态：在网络线程上直接交给等待方，
             // 不经过 Actor 的事件队列——消费者慢一点也照样能拿到答案。事件仍然照常排队上报。
             is ProtocolEvent.CommandSuggestionsReceived -> {
@@ -1183,6 +1201,11 @@ public class Session internal constructor(
 
         is ProtocolEvent.CommandSuggestionsReceived -> {
             emit(ClientEvent.CommandSuggestionsReceived(event.suggestions))
+            true
+        }
+
+        is ProtocolEvent.TransferRequested -> {
+            emit(ClientEvent.TransferRequested(event.host, event.port))
             true
         }
 

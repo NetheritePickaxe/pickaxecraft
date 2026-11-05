@@ -31,6 +31,7 @@ import org.geysermc.mcprotocollib.protocol.data.game.setting.SkinPart
 import org.geysermc.mcprotocollib.protocol.data.status.ServerStatusInfo
 import org.geysermc.mcprotocollib.protocol.data.status.handler.ServerInfoHandler
 import org.geysermc.mcprotocollib.protocol.data.status.handler.ServerPingTimeHandler
+import org.geysermc.mcprotocollib.protocol.packet.common.clientbound.ClientboundTransferPacket
 import org.geysermc.mcprotocollib.protocol.packet.common.serverbound.ServerboundClientInformationPacket
 import org.geysermc.mcprotocollib.protocol.packet.configuration.clientbound.ClientboundRegistryDataPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundCommandSuggestionsPacket
@@ -467,6 +468,11 @@ internal class McplConnection(
 
             is ClientboundCommandSuggestionsPacket ->
                 emit(ProtocolEvent.CommandSuggestionsReceived(commandSuggestions(packet)))
+
+            // 转移：只上报目标地址。协议库的自动跟随已关闭（见 attach() 里的 FOLLOW_TRANSFERS），
+            // 所以这里之后连接状态不变——换服是上层的决定，本层不替它建连接。
+            is ClientboundTransferPacket ->
+                emit(ProtocolEvent.TransferRequested(packet.host, packet.port))
 
             // 方块变更：服务端下发的才是权威结果。挖掉一块方块后本地缓存要跟着变，
             // 否则 `blockStateAt` 会一直返回已经不存在的方块。

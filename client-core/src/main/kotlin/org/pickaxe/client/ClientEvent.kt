@@ -242,6 +242,20 @@ public sealed interface ClientEvent {
         public val suggestions: CommandSuggestions,
     ) : ClientEvent
 
+    /**
+     * 服务端要求把本端转移到另一个地址，[Session.transferRequest] 已更新。
+     *
+     * 这是**行动信号**：协议层不会自动换服，会话也不会因此关闭。调用方可以选择
+     * [MinecraftClient.followTransfer] 由本库完成“关闭旧会话 → 连接新地址”，
+     * 也可以自己决定何时、用哪个用户名重连。
+     *
+     * 一次连接可能收到多次，后一次覆盖前一次；配置阶段的转移同样上报。
+     */
+    public data class TransferRequested(
+        public val host: String,
+        public val port: Int,
+    ) : ClientEvent
+
     /** 正常关闭：调用方主动关闭，或服务端按协议收尾。 */
     public data object Closed : ClientEvent
 

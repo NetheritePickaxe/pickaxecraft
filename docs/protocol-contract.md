@@ -91,11 +91,21 @@ Intention → StatusRequest → StatusResponse → PingRequest → PongResponse 
 
 ### 2.7 转移包会绕过会话生命周期
 
-`FOLLOW_TRANSFERS` 默认为 true 时，`ClientboundTransferPacket` 会让库**在回调里新建一个
-`ClientNetworkSession` 并 `connect(true)`**，那个会话不归本项目管理，也无法被上层关闭。
+`FOLLOW_TRANSFERS` 默认为 true 时，`ClientboundTransferPacket`
+会让库**在回调里新建一个 `ClientNetworkSession` 并 `connect(true)`**，那个会话不归本项目管理，
+也无法被上层关闭。
 
-**本项目的做法**：显式设置 `FOLLOW_TRANSFERS = false`。转移表现为一次普通断开，
-是否支持由后续版本决定，而不是留一个失控的会话。
+**本项目的做法**：显式设置 `FOLLOW_TRANSFERS = false`。转移包于是只留下一条事实
+（`ProtocolEvent.TransferRequested`），连接状态不变；要不要换服、什么时候换，由上层决定
+（`MinecraftClient.followTransfer`）。
+
+**转移包不结束会话。** 服务端可以只发一个包就不再有下文（Minestom 的
+`PlayerConnection#transfer` 就是如此），原版客户端是收到后**自己**断开的。
+所以「等断开事件再处理转移」这条路走不通：等不到。把转移当成一次普通的断开，
+还会得到一个错误的结论——连接明明还在。
+
+包在配置阶段与 play 阶段都会出现（`ClientListener` 两个分支各有一份相同的逻辑），
+两处都要处理；登录时被代理转移正是常见场景。
 
 ### 2.8 地址解析
 
@@ -505,6 +515,7 @@ parser 的取值顺序是版本资产：本层按**名字**而不是序号映射
 | 光照与方块实体穿过协议：整列下发与增量两条路径 | `ClientSessionTest.区块的光照、高度图与方块实体都可读` |
 | 命令树的节点下标、参数类型/属性、重定向与字面量路径 | `CommandTreeParsingTest`（13 例，含参数类型表与协议库取值对账） |
 | 命令树与补全穿过协议：顶层命令、参数类型、候选过滤、替换区间、无回包情形 | `ClientSessionTest.命令树与补全由服务端给出` |
+| 转移包只上报地址、不改变会话，换服由调用方显式发起 | `ClientSessionTest.转移请求只上报地址，换服由调用方决定` |
 | `chat_type` 注册表的 NBT 形状与下标解析 | `ChatTypeRegistryTest`（9 例） |
 | 事件溢出终止而非丢弃 | `ClientSessionTest.事件缓冲写满时终止会话而不是静默丢弃` |
 | 出生：自动应答传送到位并收到区块 | `ClientSessionTest.登录后完成出生并进入世界`（客户端事件） |
@@ -531,4 +542,6 @@ parser 的取值顺序是版本资产：本层按**名字**而不是序号映射
    会先失败）、参数属性类是否新增字段、`ClientboundCommandsPacket` 的标志位是否变化。
 8. 若上游开始自带区块解码，或调色板线格式变化（例如重新带回 long 数组长度前缀），
    先跑 `ChunkDecoderTest` 与 `ClientSessionTest.出生后读到的方块状态与服务端一致`。
-9. 更新本文与 `docs/architecture.md` 中受影响的描述。
+9. 核对转移：`ClientboundTransferPacket` 是否仍在 `packet.common`、是否仍有配置阶段分支；
+   `FOLLOW_TRANSFERS` 的默认值若变成 false，本项目的显式设置就变成了纯文档作用。
+10. 更新本文与 `docs/architecture.md` 中受影响的描述。

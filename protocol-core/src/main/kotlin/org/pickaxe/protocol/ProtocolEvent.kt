@@ -355,6 +355,21 @@ public sealed interface ProtocolEvent {
         public val suggestions: CommandSuggestions,
     ) : ProtocolEvent
 
+    /**
+     * 服务端要求把本端转移到另一个地址。
+     *
+     * 这是**指令而不是状态**：会话本身不会因此改变，是否换服、何时换服由上层决定
+     * （[org.pickaxe.protocol.ProtocolConnection] 关闭了协议库的自动跟随，
+     * 见 `docs/protocol-contract.md` 2.7）。
+     *
+     * 转移包在配置阶段与 play 阶段都可能出现，两个阶段都会上报；
+     * 一次连接可能收到多次，后一次覆盖前一次。
+     */
+    public data class TransferRequested(
+        public val host: String,
+        public val port: Int,
+    ) : ProtocolEvent
+
     /** 会话终止，且这是本次连接唯一一次终止通知。 */
     public data class Closed(public val reason: ProtocolCloseReason) : ProtocolEvent
 }

@@ -49,6 +49,7 @@ import org.pickaxe.client.MinecraftClient
 import org.pickaxe.client.Position
 import org.pickaxe.client.Session
 import org.pickaxe.client.SessionState
+import org.pickaxe.client.TransferRequest
 import org.pickaxe.protocol.ProtocolVersion
 import org.pickaxe.protocol.chat.ChatKind
 import org.pickaxe.protocol.chat.ChatMessage
@@ -860,6 +861,70 @@ class ClientSessionTest {
                 )
             } finally {
                 log.close()
+                session.close()
+            }
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `转移请求只上报地址，换服由调用方决定`() = runBlocking {
+        // 转移是一条“去连那个地址”的指令，不是连接状态的变化：协议库的自动跟随已关闭，
+        // 收到包之后本会话必须原地不动。换服是一条新连接，必须是调用方的显式动作——
+        // 否则本库会替调用方建一条它管不到的会话（M1 踩过的坑，见 protocol-contract 2.7）。
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, TRANSFER_USERNAME)
+            val log = EventLog(this, session)
+            var next: Session? = null
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+
+                assertTrue(
+                    sendTransfer(TRANSFER_USERNAME, DEFAULT_HOST, port),
+                    "服务端应能找到该玩家",
+                )
+
+                log.await { it is ClientEvent.TransferRequested }
+                val event = log.snapshot().filterIsInstance<ClientEvent.TransferRequested>().single()
+                assertEquals(DEFAULT_HOST, event.host)
+                assertEquals(port, event.port, "端口原样转达，不做补全")
+                // 坏地址只在真正要连的时候才报错：收包阶段不该因为一个坏包结束会话。
+                assertFailsWith<IllegalArgumentException> { TransferRequest(DEFAULT_HOST, 0).address }
+                assertEquals(
+                    TransferRequest(DEFAULT_HOST, port),
+                    session.transferRequest.value,
+                    "转移目标要能从状态里读到，晚订阅的调用方不必依赖事件",
+                )
+
+                // 关键断言：库没有替调用方换服。会话还是同一个、还在 play，客户端也仍持有它。
+                delay(200)
+                assertEquals(SessionState.PLAY, session.state.value, "收到转移请求不应改变会话状态")
+
+                // 真正的换服：关旧会话 → 连新地址 → 返回新会话。
+                // 目标刻意指向同一个服务端，这样“能连上、能进世界”是可验证的，
+                // 而不需要在一个 JVM 里跑第二个 Minestom（它是进程级单例）。
+                next = client.followTransfer(session)
+                assertEquals(DEFAULT_HOST, next.address.host)
+                assertEquals(port, next.address.port)
+                assertEquals(SessionState.PLAY, next.state.value, "新会话必须真的进入 play")
+                assertEquals(SessionState.CLOSED, session.state.value, "旧会话应当已经关闭")
+
+                // 转移目标不随会话结束清空：事后核对“为什么断开”靠它，
+                // 而不是靠断开的文本原因（那只是一句翻译键）。
+                assertEquals(TransferRequest(DEFAULT_HOST, port), session.transferRequest.value)
+
+                // 新会话是完整会话而不是半截连接：能重新收到区块。
+                val nextLog = EventLog(this, next)
+                try {
+                    nextLog.await { it is ClientEvent.ChunksReceived }
+                } finally {
+                    nextLog.close()
+                }
+            } finally {
+                log.close()
+                next?.close()
                 session.close()
             }
         } finally {
@@ -1935,6 +2000,9 @@ class ClientSessionTest {
 
         /** 命令树与补全用例：候选由服务端的回调按前缀过滤。 */
         const val COMMAND_USERNAME: String = "CommandBot"
+
+        /** 转移用例：同名重连，用来验证旧会话真的关掉了。 */
+        const val TRANSFER_USERNAME: String = "TransferBot"
 
         /** 服务端不回包时的等待上限：只为证明“没有答案”不会挂住调用方。 */
         const val NO_ANSWER_TIMEOUT_MILLIS: Long = 800

@@ -1,6 +1,7 @@
 package org.pickaxe.app
 
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.runBlocking
 import org.pickaxe.client.ClientEvent
 import org.pickaxe.client.ClientException
@@ -30,7 +31,7 @@ private val usage = """
       connect <host> [port] [--username <名称>] [--timeout <秒>] [--say <文本>]...
               [--walk <格数>] [--hold <0-8>] [--click <槽位>[:动作]]... [--close-window]
               [--dig] [--place] [--sneak] [--sprint] [--fly] [--light]
-              [--commands] [--complete <文本>]...
+              [--commands] [--complete <文本>]... [--exec <命令>]... [--follow-transfer]
           离线登录并持续打印会话事件，Ctrl+C 关闭会话后退出
           --say 在出生完成后再发送一条聊天消息，可重复；服务端会把它广播回来
           --walk 在出生后沿 +X 方向走指定格数（每步 0.5 格），打印每一步的坐标
@@ -46,6 +47,9 @@ private val usage = """
                level_chunk_with_light 的四部分是否都到了本端
           --commands 在出生后打印服务端下发的命令树摘要（节点数、顶层命令名）
           --complete 在出生后请求一次补全，可重复；候选由服务端算，含前导斜杠
+          --exec 在出生后执行一条命令（带前导斜杠），可重复；用来触发需要权限的动作
+          --follow-transfer 收到跨服转移请求后真的换服：关旧会话、连新地址，
+               并打印 event=transfer.connected；不加时只打印请求，连接保持不动
 
           点击动作:
             pickup      左键拿起或放下整堆（默认）
@@ -77,6 +81,14 @@ private const val EXIT_USAGE: Int = 2
 
 /** 运行期失败：连接被拒、服务端断开、超时。 */
 private const val EXIT_FAILED: Int = 1
+
+/**
+ * `--follow-transfer` 最多跟随几次。
+ *
+ * 两个互相转移的服务端会形成回环，命令行不是编排器——跟一次就够说明问题，
+ * 剩下的交给调用方的策略（真实下游会按自己的规则决定是否继续）。
+ */
+private const val MAX_FOLLOWED_TRANSFERS: Int = 1
 
 public fun main(args: Array<String>) {
     val command = args.firstOrNull()
@@ -140,50 +152,50 @@ private fun runConnect(args: List<String>): Int {
 
     return try {
         runBlocking {
-            val session = client.connect(parsed.address, parsed.username)
-            println(
-                "state=${session.state.value} user=${parsed.username} " +
-                    "server=${parsed.address.host}:${parsed.address.port}",
-            )
-            var chunkReported = false
-            // 待发的聊天消息：出生完成（位置已同步且首批区块到达）后一次发出，
-            // 避免在 configuration 阶段写包被服务端当作协议错误断开。
-            val pendingSays = ArrayDeque(parsed.says)
-            session.events.collect { event ->
-                println(describe(event))
-                // 重生换维度后重新打印一次摘要：同一行输出在新旧维度之间应当明显不同。
-                if (event is ClientEvent.Respawned) chunkReported = false
-                // 首批区块到齐后打印一次世界摘要：这是“区块真的解出来了”的现场证据。
-                if (!chunkReported && event is ClientEvent.ChunksReceived && session.world.value?.position != null) {
-                    chunkReported = true
-                    println(describeChunk(session))
-                    for (text in pendingSays) {
-                        // 校验规则由库决定（长度上限、单行），命令行不重复一份；不合法就报出来继续跑。
-                        try {
-                            session.sendChat(text)
-                            println("event=chat.sent text=$text")
-                        } catch (e: IllegalArgumentException) {
-                            System.err.println("聊天内容不合法: ${e.message}")
-                        }
-                    }
-                    pendingSays.clear()
-                    parsed.holdSlot?.let { slot ->
-                        session.selectHotbarSlot(slot)
-                        println("event=held.sent slot=$slot item=${session.heldItem()}")
-                    }
-                    parsed.walkDistance?.let { distance -> walkForward(session, distance) }
-                    for (click in parsed.clicks) { clickSlot(session, click) }
-                    if (parsed.closeWindow) closeActiveWindow(session)
-                    if (parsed.digBelow) digBelow(session)
-                    if (parsed.placeBelow) placeBelow(session)
-                    if (parsed.reportLight) reportLight(session)
-                    if (parsed.listCommands) reportCommands(session)
-                    for (text in parsed.completions) reportCompletion(session, text)
-                    applyMotionFlags(session, parsed)
+            var session = client.connect(parsed.address, parsed.username)
+            var activeParsed = parsed
+            var followed = 0
+            var exitCode = 0
+            while (true) {
+                println(
+                    "state=${session.state.value} user=${session.username} " +
+                        "server=${session.address.host}:${session.address.port}",
+                )
+                // 一直消费到会话结束；正常运行时会一直挂着，只有断开或服务端踢人时才返回。
+                val transfer = collectSession(session, activeParsed)
+                if (!parsed.followTransfer || transfer == null) break
+                if (followed >= MAX_FOLLOWED_TRANSFERS) {
+                    System.err.println("转移次数达到上限 $MAX_FOLLOWED_TRANSFERS，停止跟随")
+                    exitCode = EXIT_FAILED
+                    break
                 }
+                followed += 1
+                session = try {
+                    client.followTransfer(session)
+                } catch (e: ClientException) {
+                    System.err.println("转移连接失败: ${e.message}")
+                    exitCode = EXIT_FAILED
+                    break
+                }
+                println(
+                    "event=transfer.connected user=${session.username} " +
+                        "server=${session.address.host}:${session.address.port}",
+                )
+                // 一次性动作只对第一次会话有意义：换服之后重发聊天、重新挖方块都不是“跟随转移”
+                // 该做的事，会把现场证据搅乱。只读的观察动作（光照、命令树、补全）保留。
+                activeParsed = activeParsed.copy(
+                    says = emptyList(),
+                    walkDistance = null,
+                    holdSlot = null,
+                    clicks = emptyList(),
+                    commands = emptyList(),
+                    closeWindow = false,
+                    digBelow = false,
+                    placeBelow = false,
+                )
             }
+            exitCode
         }
-        0
     } catch (e: ClientException) {
         System.err.println("连接失败: ${e.message}")
         EXIT_FAILED
@@ -192,6 +204,72 @@ private fun runConnect(args: List<String>): Int {
         // 关闭过程中 JVM 可能已在退出，移除失败无害。
         runCatching { Runtime.getRuntime().removeShutdownHook(hook) }
     }
+}
+
+/**
+ * 消费一个会话的全部事件，返回期间收到的最后一次转移请求。
+ *
+ * 只有会话结束时才会返回——这也是“转移之后要不要接着干点什么”的判定点：
+ * 转移包本身不会结束会话，服务端也不一定会断开（原版客户端是自己断的）。
+ */
+private suspend fun collectSession(
+    session: Session,
+    parsed: ParsedArgs,
+): ClientEvent.TransferRequested? {
+    var transfer: ClientEvent.TransferRequested? = null
+    var chunkReported = false
+    // 待发的聊天消息：出生完成（位置已同步且首批区块到达）后一次发出，
+    // 避免在 configuration 阶段写包被服务端当作协议错误断开。
+    val pendingSays = ArrayDeque(parsed.says)
+    session.events
+        // 用 transformWhile 而不是 collect：跟随转移时需要在收到请求的那一刻切断收集，
+        // 而 collect 没法提前结束。切断后这个会话就不再被消费——本来也要换成新会话了。
+        .transformWhile { event ->
+            println(describe(event))
+            if (event is ClientEvent.TransferRequested) transfer = event
+            // 重生换维度后重新打印一次摘要：同一行输出在新旧维度之间应当明显不同。
+            if (event is ClientEvent.Respawned) chunkReported = false
+            // 首批区块到齐后打印一次世界摘要：这是“区块真的解出来了”的现场证据。
+            if (!chunkReported && event is ClientEvent.ChunksReceived && session.world.value?.position != null) {
+                chunkReported = true
+                println(describeChunk(session))
+                for (text in pendingSays) {
+                    // 校验规则由库决定（长度上限、单行），命令行不重复一份；不合法就报出来继续跑。
+                    try {
+                        session.sendChat(text)
+                        println("event=chat.sent text=$text")
+                    } catch (e: IllegalArgumentException) {
+                        System.err.println("聊天内容不合法: ${e.message}")
+                    }
+                }
+                pendingSays.clear()
+                parsed.holdSlot?.let { slot ->
+                    session.selectHotbarSlot(slot)
+                    println("event=held.sent slot=$slot item=${session.heldItem()}")
+                }
+                parsed.walkDistance?.let { distance -> walkForward(session, distance) }
+                for (click in parsed.clicks) { clickSlot(session, click) }
+                if (parsed.closeWindow) closeActiveWindow(session)
+                if (parsed.digBelow) digBelow(session)
+                if (parsed.placeBelow) placeBelow(session)
+                if (parsed.reportLight) reportLight(session)
+                for (command in parsed.commands) {
+                    // 执行结果只能从服务端的后续回包看出来（例如转移请求、聊天回显），
+                    // 这里只报告“已发出”，不对执行成败下结论。
+                    session.sendCommand(command)
+                    println("event=command.sent text=$command")
+                }
+                if (parsed.listCommands) reportCommands(session)
+                for (text in parsed.completions) reportCompletion(session, text)
+                applyMotionFlags(session, parsed)
+            }
+            emit(event)
+            // 转移包不会结束会话，服务端也不一定会断开（原版客户端是自己断的），
+            // 所以“要不要换服”这个决定必须在这里落地，否则只能等下一条永远不来的事件。
+            !(parsed.followTransfer && event is ClientEvent.TransferRequested)
+        }
+        .collect { }
+    return transfer
 }
 
 private fun describe(event: ClientEvent): String = when (event) {
@@ -213,6 +291,7 @@ private fun describe(event: ClientEvent): String = when (event) {
     is ClientEvent.CommandSuggestionsReceived -> with(event.suggestions) {
         "event=suggestions id=$transactionId start=$start length=$length matches=$matches"
     }
+    is ClientEvent.TransferRequested -> "event=transfer host=${event.host} port=${event.port}"
     is ClientEvent.BlockEntityChanged -> with(event.entity) {
         "event=blockentity type=$type pos=$position keys=${data?.entries?.keys?.joinToString(",").orEmpty()}"
     }
@@ -537,7 +616,7 @@ private fun describeItem(item: InventoryItem): String {
 }
 
 /** 解析后的命令行参数。 */
-private class ParsedArgs(
+private data class ParsedArgs(
     val address: ServerAddress,
     val username: String,
     val timeoutSeconds: Long,
@@ -565,6 +644,10 @@ private class ParsedArgs(
     val listCommands: Boolean = false,
     /** 出生后要补全的输入行（含前导斜杠），按命令行顺序。 */
     val completions: List<String> = emptyList(),
+    /** 出生后要执行的命令（含前导斜杠），按命令行顺序。 */
+    val commands: List<String> = emptyList(),
+    /** 收到转移请求后是否真的换服。 */
+    val followTransfer: Boolean = false,
 ) {
     fun options(): ClientOptions = ClientOptions(
         connectTimeoutMillis = timeoutSeconds * 1000,
@@ -593,6 +676,8 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
     var placeBelow = false
     var reportLight = false
     var listCommands = false
+    var followTransfer = false
+    val execCommands = ArrayList<String>()
     val completions = ArrayList<String>()
     var sneak = false
     var sprint = false
@@ -701,6 +786,18 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
                 completions += value
                 index += 2
             }
+            "--exec" -> {
+                if (value == null) {
+                    System.err.println("--exec 缺少取值")
+                    return null
+                }
+                execCommands += value
+                index += 2
+            }
+            "--follow-transfer" -> {
+                followTransfer = true
+                index += 1
+            }
             else -> {
                 System.err.println("未知参数: $option")
                 return null
@@ -726,6 +823,8 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
             reportLight = reportLight,
             listCommands = listCommands,
             completions = completions,
+            commands = execCommands,
+            followTransfer = followTransfer,
         )
     } catch (e: IllegalArgumentException) {
         System.err.println("参数不合法: ${e.message}")

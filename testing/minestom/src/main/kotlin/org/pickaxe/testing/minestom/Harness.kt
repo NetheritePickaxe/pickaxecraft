@@ -71,6 +71,9 @@ public const val DEFAULT_PORT: Int = 25565
  */
 public const val ECHO_COMMAND_NAME: String = "pickaxe"
 
+/** 转移命令：把执行者转移到本 harness 自己，用来验证完整换服链路。 */
+public const val TRANSFER_COMMAND_NAME: String = "pickaxetransfer"
+
 /** echo 命令回给执行者的固定文本；客户端以系统消息读到它。 */
 public const val ECHO_COMMAND_REPLY: String = "pickaxe-ok"
 
@@ -95,6 +98,9 @@ private const val GROUND_HEIGHT: Int = 40
  * `serverProcess` 为 null 抛 NPE，恰好会在“首次启动”这个最需要它的时刻崩掉。
  */
 private var harnessStarted: Boolean = false
+
+/** 最近一次启动使用的端口；转移命令要回到同一个服务端。 */
+private var harnessPort: Int = DEFAULT_PORT
 
 /**
  * 服务端侧的玩家里程碑，供联调用例断言“协议链路真的走通了”。
@@ -588,10 +594,28 @@ public fun startHarness(port: Int = DEFAULT_PORT): InstanceContainer {
     }
     MinecraftServer.getCommandManager().register(EchoCommand())
     MinecraftServer.getCommandManager().register(SuggestColorCommand())
+    MinecraftServer.getCommandManager().register(TransferCommand())
 
+    harnessPort = port
     server.start(InetSocketAddress(DEFAULT_HOST, port))
     harnessStarted = true
     return instance
+}
+
+/**
+ * 转移命令：`/<名字>`，把执行者转移到本 harness 自己。
+ *
+ * 转移目标指向自己而不是另一个服务端，是因为 Minestom 是进程级单例，一个 JVM 里
+ * 跑不了第二个服务端；同名重连正好还能证明旧连接确实关掉了。
+ */
+private class TransferCommand : Command(TRANSFER_COMMAND_NAME) {
+    init {
+        setDefaultExecutor { sender, _ ->
+            val player = sender as? Player ?: return@setDefaultExecutor
+            player.sendPacket(TransferPacket(DEFAULT_HOST, harnessPort))
+            println("event=server.transfer name=${player.username} host=$DEFAULT_HOST port=$harnessPort")
+        }
+    }
 }
 
 /** 显式停止服务端；未启动或重复调用都无副作用。 */
