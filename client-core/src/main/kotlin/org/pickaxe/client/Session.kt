@@ -170,6 +170,26 @@ public class Session internal constructor(
     private val entities = ConcurrentHashMap<Int, TrackedEntity>()
 
     /**
+     * 载具 → 乘客列表，按键整份覆盖。
+     *
+     * 协议只有这一条按载具下发的完整列表，没有“某人上车/下车”的增量包，因此这里是覆盖语义。
+     * 列表里的 id 可能包含还没被跟踪的实体（同一载具里的其他乘客不在本端视野时也会出现），
+     * 所以它独立于 [entities] 存放，不要求两边都能对上。
+     */
+    private val passengers = ConcurrentHashMap<Int, List<Int>>()
+
+    private val mutableVehicle = MutableStateFlow<Int?>(null)
+
+    /**
+     * 本端当前乘坐的载具实体 id；没在载具上时为 null。
+     *
+     * 判据是“自己的实体 id 出现在某个载具的乘客列表里”——协议没有上/下车包，
+     * 空列表就是下车。骑乘时不要用 [moveTo] / [look]，改用 [steerVehicle]：
+     * 原版客户端在载具上也根本不发玩家位置包。
+     */
+    public val vehicle: StateFlow<Int?> = mutableVehicle.asStateFlow()
+
+    /**
      * 会话私有的玩家列表，键是玩家档案 UUID。
      *
      * 与区块、实体同样走缓存：登录时服务端会一次性下发全服玩家，逐个发事件会把
@@ -266,6 +286,8 @@ public class Session internal constructor(
             // 区块与实体都属于本次会话；不清理会让已关闭的会话继续持有整个出生点视野。
             chunks.clear()
             entities.clear()
+            passengers.clear()
+            mutableVehicle.value = null
             players.clear()
             containers.clear()
             heldSlotIndex = 0
@@ -370,6 +392,14 @@ public class Session internal constructor(
      * [WorldSnapshot.position]。
      */
     public fun entities(): Map<Int, TrackedEntity> = HashMap(entities)
+
+    /**
+     * 某个载具当前的乘客实体 id 列表；不是载具或没收到过列表时返回空列表。
+     *
+     * 列表可能包含还没被跟踪的实体 id：协议只给 id，不保证本端已经收到它们的生成包。
+     * 想拿乘客的坐标/类型，得先确认 [entity] 非空。
+     */
+    public fun passengers(vehicleId: Int): List<Int> = passengers[vehicleId] ?: emptyList()
 
     /** 玩家列表中的条目数，含本端玩家自己。 */
     public val playerCount: Int get() = players.size
@@ -653,10 +683,15 @@ public class Session internal constructor(
      *
      * 落地标记 [onGround] 由调用方判断：无头客户端不做碰撞检测，默认 `false`。
      *
+     * **骑乘时不能用**：原版客户端在载具上根本不发玩家位置包，服务端也只按载具移动包改
+     * 载具坐标。这里直接拒绝而不是发出去被忽略——静默失效会让调用方以为自己在动。
+     * 骑乘时请用 [steerVehicle]。
+     *
      * @throws IllegalArgumentException 任一坐标为 NaN 或无穷
-     * @throws IllegalStateException 会话尚未进入 play，或已经关闭
+     * @throws IllegalStateException 会话尚未进入 play、已经关闭，或正在骑乘
      */
     public fun moveTo(position: Position, onGround: Boolean = false) {
+        checkOnFoot("移动")
         playConnection("移动").moveTo(position.x, position.y, position.z, position.yaw, position.pitch, onGround)
     }
 
@@ -666,11 +701,33 @@ public class Session internal constructor(
      * 协议里的朝向包不带坐标，因此这条路径不要求已经收到过位置同步；但它**不会**改变
      * 位置，想同时移动请用 [moveTo]。
      *
+     * 骑乘时同样不能用：载具的朝向只能随 [steerVehicle] 一起声明。
+     *
      * @throws IllegalArgumentException 任一角度为 NaN 或无穷
-     * @throws IllegalStateException 会话尚未进入 play，或已经关闭
+     * @throws IllegalStateException 会话尚未进入 play、已经关闭，或正在骑乘
      */
     public fun look(yaw: Float, pitch: Float, onGround: Boolean = false) {
+        checkOnFoot("转向")
         playConnection("转向").look(yaw, pitch, onGround)
+    }
+
+    /**
+     * 声明载具移动到了 [position]，并把该位置与朝向发给服务端。
+     *
+     * 骑乘时这是唯一合法的“我在动”表达方式：`move_vehicle` 是绝对坐标（不像实体移动包
+     * 是相对量），包不带实体 id，只对当前载具成立。服务端接受时不回包，权威纠正走
+     * `move_vehicle`（下行），表现为 [ClientEvent.PassengersChanged] 之外无事件、
+     * 但 [entity] 里载具快照的坐标会被改写。
+     *
+     * 不在载具上时发送是非法的：这不是“会被忽略”，而是会让服务端把一个不在载具上的玩家
+     * 当成载具来移动。因此这里直接失败。
+     *
+     * @throws IllegalArgumentException 坐标或角度非法
+     * @throws IllegalStateException 会话尚未进入 play、已经关闭，或当前不在载具上
+     */
+    public fun steerVehicle(position: Position, onGround: Boolean = false) {
+        playConnection("载具移动")
+            .steerVehicle(position.x, position.y, position.z, position.yaw, position.pitch, onGround)
     }
 
     /**
@@ -826,6 +883,17 @@ public class Session internal constructor(
      * 当作协议错误断开，那是最难定位的一类失败。关闭与未进入 play 用同一类异常（都是
      * “现在不能发”），但消息里带上当前状态，便于区分是没连上还是已经结束。
      */
+    /**
+     * 骑乘时不允许走玩家位置/朝向通道。
+     *
+     * 判据用 [vehicle] 而不是适配层的映射：调用方看到的是同一个 [ClientEvent.VehicleChanged]，
+     * 两边的一致性由那条事件保证；适配层另有自己的检查，防止绕过本类直接发。
+     */
+    private fun checkOnFoot(what: String) {
+        val riding = mutableVehicle.value ?: return
+        throw IllegalStateException("正在乘坐载具 $riding，不能发送$what；骑乘时请用 steerVehicle")
+    }
+
     private fun playConnection(what: String): ProtocolConnection {
         check(state.value == SessionState.PLAY) {
             "会话当前为 ${state.value}，只有进入 play 后才能发送$what"
@@ -891,6 +959,10 @@ public class Session internal constructor(
                 if (!closing.get()) {
                     chunks.clear()
                     entities.clear()
+                    // 乘客关系跟着旧维度的实体一起作废：新维度里的载具是新 id，
+                    // 留着旧列表会让 vehicle 指向一个已经不存在的实体。
+                    passengers.clear()
+                    mutableVehicle.value = null
                     containers.keys.removeIf { it != Container.PLAYER_WINDOW_ID }
                     entityAttributes.clear()
                     entityEffects.clear()
@@ -917,6 +989,20 @@ public class Session internal constructor(
                     event.ids.forEach(entities::remove)
                     event.ids.forEach(entityAttributes::remove)
                     event.ids.forEach(entityEffects::remove)
+                    // 载具被移除时服务端不保证补一条空乘客列表，缓存不能留着它。
+                    event.ids.forEach(passengers::remove)
+                }
+            }
+
+            // 乘客列表是整份替换，直接覆盖缓存；与其它世界数据一样先写缓存再进事件流，
+            // 消费者收到 PassengersChanged 时 passengers() 已经是新值。
+            is ProtocolEvent.PassengersChanged -> {
+                if (!closing.get()) {
+                    if (event.passengerIds.isEmpty()) {
+                        passengers.remove(event.vehicleId)
+                    } else {
+                        passengers[event.vehicleId] = event.passengerIds
+                    }
                 }
             }
 
@@ -1026,6 +1112,8 @@ public class Session internal constructor(
         actor?.cancel()
         chunks.clear()
         entities.clear()
+        passengers.clear()
+        mutableVehicle.value = null
         players.clear()
         containers.clear()
         heldSlotIndex = 0
@@ -1157,7 +1245,14 @@ public class Session internal constructor(
         }
 
         is ProtocolEvent.EntityRemoved -> {
+            val ridden = mutableVehicle.value
             emit(ClientEvent.EntityRemoved(event.ids))
+            // 载具被移除（死亡、离开视野）等同于下车：没有这条，vehicle 会一直指着一个
+            // 已经不存在的实体，而服务端未必补发空乘客列表。
+            if (ridden != null && ridden in event.ids) {
+                mutableVehicle.value = null
+                emit(ClientEvent.VehicleChanged(null))
+            }
             true
         }
 
@@ -1228,6 +1323,37 @@ public class Session internal constructor(
 
         // 位置增量已在 onProtocolEvent 里写入缓存，不进事件流。
         is ProtocolEvent.EntityUpdated -> true
+
+        // 骑乘时服务端用 `move_vehicle` 表达“你在哪”。它每秒都会来，和实体移动一样
+        // 只推进快照、不进事件流；载具实体自己的坐标由适配层的 EntityUpdated 更新。
+        // 只取位置，朝向仍用本端的：乘客可以转头看别处，那不是载具的朝向。
+        is ProtocolEvent.VehicleMoved -> {
+            mutableWorld.update {
+                val current = it ?: return@update it
+                val position = current.position ?: return@update current
+                current.copy(position = position.copy(x = event.x, y = event.y, z = event.z))
+            }
+            true
+        }
+
+        // 乘客列表已在 onProtocolEvent 里写入缓存。这里只做「我在哪个载具上」的推导：
+        // 协议没有上/下车包，判据只能是「自己的实体 id 出现在某条乘客列表里」。
+        is ProtocolEvent.PassengersChanged -> {
+            val self = mutableWorld.value?.entityId
+            val current = mutableVehicle.value
+            val next = when {
+                self != null && self in event.passengerIds -> event.vehicleId
+                // 载具发来空列表（或把自己排除掉的列表）就是下车；别的载具的列表不动我自己。
+                current == event.vehicleId -> null
+                else -> current
+            }
+            emit(ClientEvent.PassengersChanged(event.vehicleId, event.passengerIds))
+            if (next != current) {
+                mutableVehicle.value = next
+                emit(ClientEvent.VehicleChanged(next))
+            }
+            true
+        }
 
         is ProtocolEvent.PlayerListChanged -> {
             emit(ClientEvent.PlayerListChanged(event.updated, event.removed))
@@ -1366,6 +1492,8 @@ public class Session internal constructor(
         if (!finished.compareAndSet(false, true)) return
         chunks.clear()
         entities.clear()
+        passengers.clear()
+        mutableVehicle.value = null
         players.clear()
         containers.clear()
         heldSlotIndex = 0

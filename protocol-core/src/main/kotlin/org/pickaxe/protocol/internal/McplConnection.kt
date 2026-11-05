@@ -53,9 +53,11 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.Clie
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundMoveEntityPosPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundMoveEntityPosRotPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundMoveEntityRotPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundMoveVehiclePacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundRemoveEntitiesPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundRotateHeadPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundSetEquipmentPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundSetPassengersPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundSetEntityDataPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.ClientboundTeleportEntityPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundPlayerAbilitiesPacket
@@ -93,6 +95,7 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.inventory.S
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.level.ServerboundAcceptTeleportationPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.player.ServerboundSetCarriedItemPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.level.ServerboundChunkBatchReceivedPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.level.ServerboundMoveVehiclePacket
 import org.pickaxe.protocol.ProtocolCloseReason
 import org.pickaxe.protocol.ProtocolEvent
 import org.pickaxe.protocol.ProtocolFailureKind
@@ -259,6 +262,17 @@ internal class McplConnection(
      */
     @Volatile
     private var selfEntityId: Int = -1
+
+    /**
+     * 本端正在乘坐的载具实体 id；null 表示没在载具上。
+     *
+     * 这份映射只存在于适配层：下行的 `move_vehicle` **不带实体 id**，它一出现
+     * 就只可能指本端当前的载具。没有它，那个包里的坐标无处落地。
+     *
+     * 由网络线程写、调用线程读，因此需要可见性保证。
+     */
+    @Volatile
+    private var selfVehicleId: Int? = null
 
     /**
      * 本端声明的运动按键，整体替换。
@@ -496,6 +510,47 @@ internal class McplConnection(
                 for (id in packet.entityIds) {
                     entityAttributes.remove(id)
                     effects.remove(id)
+                }
+                // 载具被移除时服务端不一定会补一条空乘客列表；不清掉这份映射，
+                // 后续的 `move_vehicle` 会落到一个已经不存在的实体上。
+                val ridden = selfVehicleId
+                if (ridden != null && ridden in packet.entityIds) selfVehicleId = null
+            }
+
+            // 乘客列表是**整份替换**：没有“上/下”包，空列表就是下车。
+            is ClientboundSetPassengersPacket -> {
+                val passengerIds = packet.passengerIds.toList()
+                if (selfEntityId in passengerIds) {
+                    selfVehicleId = packet.entityId
+                } else if (selfVehicleId == packet.entityId) {
+                    selfVehicleId = null
+                }
+                emit(ProtocolEvent.PassengersChanged(packet.entityId, passengerIds))
+            }
+
+            // `move_vehicle` 不带实体 id：它只可能指本端当前乘坐的载具，因此靠上面的映射
+            // 落地。坐标是绝对量（不像实体移动包是 1/4096 的相对量）。
+            is ClientboundMoveVehiclePacket -> {
+                val vehicleId = selfVehicleId
+                if (vehicleId != null) {
+                    updateEntity(vehicleId) { entity ->
+                        entity.copy(
+                            x = packet.position.x,
+                            y = packet.position.y,
+                            z = packet.position.z,
+                            yaw = packet.yRot,
+                            pitch = packet.xRot,
+                        )
+                    }
+                    emit(
+                        ProtocolEvent.VehicleMoved(
+                            x = packet.position.x,
+                            y = packet.position.y,
+                            z = packet.position.z,
+                            yaw = packet.yRot,
+                            pitch = packet.xRot,
+                        ),
+                    )
                 }
             }
 
@@ -1324,6 +1379,29 @@ internal class McplConnection(
         Movement.requireAngles(yaw, pitch)
         val current = pose.get()
         applyPose(current.copy(yaw = yaw, pitch = pitch, onGround = onGround), current, "转向")
+    }
+
+    /**
+     * 声明载具移动到了指定位置与朝向（骑乘时替代 `moveTo` / `look`）。
+     *
+     * 两个协议事实决定了这里的形状：
+     *
+     * - **骑乘时不能发玩家位置包**。原版客户端在 `isPassenger()` 时直接跳过位置同步，
+     *   服务端也只会按 `move_vehicle` 改载具位置；发了玩家位置包等于宣称自己在走路。
+     * - 坐标是**绝对量**，不像实体移动包是 1/4096 的相对量，因此这里不做叠加。
+     *
+     * 包本身不带实体 id（下行的同名包也不带），所以调用方不必传入载具 id。
+     *
+     * @throws IllegalArgumentException 坐标或角度非法
+     * @throws IllegalStateException 当前不在载具上，或尚未进入 play
+     */
+    fun steerVehicle(x: Double, y: Double, z: Double, yaw: Float, pitch: Float, onGround: Boolean) {
+        Movement.requirePosition(x, y, z)
+        Movement.requireAngles(yaw, pitch)
+        check(selfVehicleId != null) { "当前没有乘坐载具，不能发送载具移动包" }
+        sendInPlay("载具移动") {
+            ServerboundMoveVehiclePacket(Vector3d.from(x, y, z), yaw, pitch, onGround)
+        }
     }
 
     /** 比较、发包、推进本地姿态；状态完全一致时不发任何包。 */

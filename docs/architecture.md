@@ -491,6 +491,28 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 
 实现记录见 [M4v](plans/m4v-cross-server-transfer.md)。
 
+### 5.22 M4w/M4x 已落地的具体形态：消费示例与骑乘
+
+`Session` 之外的两块：
+
+- **消费示例**（`samples:libgdx-viewer`）：`ChunkMeshBuilder` 只产出 `MeshData` 数组，
+  `SolidQuery` 是最小输入；示例不发布、无模块依赖它，编译类路径由 `verifyModuleBoundaries`
+  断言不含 Netty/协议库/Minestom。上下屏之间的那段仍是外部客户端的职责。
+- **骑乘**：`Session.vehicle` 是「自己的实体 id 在某个载具的乘客列表里」这一事实的缓存，
+  `Session.passengers(id)` 是原始列表；`ClientEvent.PassengersChanged` 报原始事实，
+  `ClientEvent.VehicleChanged` 报派生结论（上车/下车），两者成对出现。
+
+骑乘带来的三条约束写在协议契约 2.31，这里只记设计后果：
+
+- 适配层要单独保存「我在骑哪个实体」：`move_vehicle` 双向都不带 id，没有这份映射，
+  下行坐标无处落地。会话层的 `vehicle` 不能替代它——一个是收包依据，一个是对外快照。
+- 骑乘时 `moveTo` / `look` **直接失败**。发出去不会报错、只会被服务端忽略，而调用方
+  会以为自己动了；显式失败比静默失效容易排查得多。
+- 下行的载具坐标只推进位置、不改朝向：乘客可以转头看别处，载具的朝向是另一件事。
+  `world.position` 因此“跟着载具走但保留自己的视角”。
+
+实现记录见 [M4x](plans/m4x-riding.md)。
+
 ## 6. libGDX 与平台约束
 
 共享发布产物使用 Java 21 字节码，由 `verifyBytecode`（major 65）自动断言；构建、CLI 与测试仍使用 Java 25。libGDX 官方当前推荐 JDK 17/21，因此下游图形客户端不被迫使用 Java 25；启用 Minestom 单人模式的 Desktop 组合根除外。

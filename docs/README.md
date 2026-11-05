@@ -33,6 +33,7 @@
 - [M4u 实施记录](plans/m4u-command-completion.md)：命令树下标不可重排、补全的替换区间、没有回包不等于空候选。
 - [M4v 实施记录](plans/m4v-cross-server-transfer.md)：转移包不结束会话、目标地址原样转达、换服是一条新连接。
 - [M4w 实施记录](plans/m4w-libgdx-sample.md)：`MeshData` 而非 `Mesh`、`SolidQuery` 而非区块类型、headless 也要 natives。
+- [M4x 实施记录](plans/m4x-riding.md)：上/下车只有乘客列表、载具包不带实体 id、骑乘时封住玩家位置包。
 - [M3 Android 运行时验证（门控中）](plans/m3-android-runtime.md)：阻塞事实、逐条判据与解除条件。
 - [M1 实施计划](plans/m1-implementation-plan.md)：自有客户端 API、连接生命周期、联调迁移、CLI 与提前 Android 探针；末尾附实施记录与偏差。
 - [协议适配契约](protocol-contract.md)：`protocol-core` 与协议库之间哪些行为由库保证、哪些由本项目实现，以及升级检查清单。
@@ -74,7 +75,7 @@ M4s 让物品组件可读：`InventoryItem` 带耐久、无法破坏、修复代
 
 `protocol-core` 负责协议事实转换、区块解码与资源回收，`client-core` 负责会话 Actor、有界缓冲、区块缓存与错误分类；协议库的隐含行为已写入[协议适配契约](protocol-contract.md)。
 
-Android 只完成了构建链探针（D8 可产出 dex，`minSdk` 下限 26），运行时仍属 M3 门控；物品默认组件原型仍属 M4 的后续增量。
+Android 只完成了构建链探针（D8 可产出 dex，`minSdk` 下限 26），运行时仍属 M3 门控；物品组件原型的默认值还原、拖拽与创造模式整堆操作、挖掘进度的服务端认可仍属 M4 的后续增量。
 
 ## 参考文档
 

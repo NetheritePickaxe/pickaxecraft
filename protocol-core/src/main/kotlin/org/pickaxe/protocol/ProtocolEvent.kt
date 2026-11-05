@@ -206,6 +206,36 @@ public sealed interface ProtocolEvent {
     public data class EntityRemoved(public val ids: List<Int>) : ProtocolEvent
 
     /**
+     * 某个载具的乘客列表发生变化。
+     *
+     * 协议**没有**「上载具」「下载具」这两个包：只有这一条按载具下发的完整列表。
+     * 空列表就是下车，本端成为乘客的判据是「自己的实体 id 出现在某条列表里」。
+     * 列表是整份替换而不是增量，因此按 [vehicleId] 覆盖即可。
+     */
+    public data class PassengersChanged(
+        public val vehicleId: Int,
+        public val passengerIds: List<Int>,
+    ) : ProtocolEvent
+
+    /**
+     * 服务端下发的**载具**坐标与朝向（`move_vehicle`）。
+     *
+     * 包本身不带实体 id，因此这里也不带：它只可能指本端当前乘坐的载具。
+     * 坐标是绝对量，与实体移动包的 1/4096 相对量不同。骑乘时服务端用这个包而不是
+     * 玩家位置包来表达“你在哪”，所以上层要拿它推进自己的位置快照。
+     *
+     * 与 [EntityUpdated] 会同时发生：后者更新载具实体的快照（朝向、位置），
+     * 这条只是把同一个权威坐标单独报出来，供会话层更新“玩家在哪”。
+     */
+    public data class VehicleMoved(
+        public val x: Double,
+        public val y: Double,
+        public val z: Double,
+        public val yaw: Float,
+        public val pitch: Float,
+    ) : ProtocolEvent
+
+    /**
      * 收到一条聊天消息：系统、玩家或伪装三种来源统一成 [ChatMessage]。
      *
      * 这是**用户可见的即时事实**，不是可重建的状态：它不进任何缓存覆盖，适配层

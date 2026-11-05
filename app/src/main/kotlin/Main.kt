@@ -8,6 +8,7 @@ import org.pickaxe.client.ClientException
 import org.pickaxe.client.ClientOptions
 import org.pickaxe.client.CompletionResult
 import org.pickaxe.client.MinecraftClient
+import org.pickaxe.client.Position
 import org.pickaxe.client.Session
 import org.pickaxe.protocol.ProtocolVersion
 import org.pickaxe.protocol.ServerAddress
@@ -31,7 +32,8 @@ private val usage = """
       connect <host> [port] [--username <名称>] [--timeout <秒>] [--say <文本>]...
               [--walk <格数>] [--hold <0-8>] [--click <槽位>[:动作]]... [--close-window]
               [--dig] [--place] [--sneak] [--sprint] [--fly] [--light]
-              [--commands] [--complete <文本>]... [--exec <命令>]... [--follow-transfer]
+              [--commands] [--complete <文本>]... [--exec <命令>]... [--steer x,y,z]
+              [--follow-transfer]
           离线登录并持续打印会话事件，Ctrl+C 关闭会话后退出
           --say 在出生完成后再发送一条聊天消息，可重复；服务端会把它广播回来
           --walk 在出生后沿 +X 方向走指定格数（每步 0.5 格），打印每一步的坐标
@@ -48,6 +50,8 @@ private val usage = """
           --commands 在出生后打印服务端下发的命令树摘要（节点数、顶层命令名）
           --complete 在出生后请求一次补全，可重复；候选由服务端算，含前导斜杠
           --exec 在出生后执行一条命令（带前导斜杠），可重复；用来触发需要权限的动作
+          --steer 上车后把载具移到 <x,y,z>（朝向沿用载具当前值）；骑乘时玩家位置包不可用，
+               因此这个动作只能等 VehicleChanged 之后发
           --follow-transfer 收到跨服转移请求后真的换服：关旧会话、连新地址，
                并打印 event=transfer.connected；不加时只打印请求，连接保持不动
 
@@ -221,12 +225,33 @@ private suspend fun collectSession(
     // 待发的聊天消息：出生完成（位置已同步且首批区块到达）后一次发出，
     // 避免在 configuration 阶段写包被服务端当作协议错误断开。
     val pendingSays = ArrayDeque(parsed.says)
+    // --steer 只能在骑乘状态下发：包不带实体 id，服务端只按“你正坐着的那个载具”解释它。
+    var pendingSteer = parsed.steer
     session.events
         // 用 transformWhile 而不是 collect：跟随转移时需要在收到请求的那一刻切断收集，
         // 而 collect 没法提前结束。切断后这个会话就不再被消费——本来也要换成新会话了。
         .transformWhile { event ->
             println(describe(event))
             if (event is ClientEvent.TransferRequested) transfer = event
+            if (event is ClientEvent.VehicleChanged) {
+                val vehicleId = event.vehicleId
+                if (vehicleId == null) {
+                    println("event=ride state=off")
+                } else {
+                    println("event=ride state=on vehicle=$vehicleId riders=${session.passengers(vehicleId)}")
+                    val target = pendingSteer
+                    if (target != null) {
+                        pendingSteer = null
+                        // 朝向沿用载具当前值：--steer 只表达位置，不假装自己知道载具朝向。
+                        val vehicle = session.entity(vehicleId)
+                        session.steerVehicle(
+                            target.copy(yaw = vehicle?.yaw ?: 0f, pitch = vehicle?.pitch ?: 0f),
+                            onGround = true,
+                        )
+                        println("event=vehicle.steered x=${target.x} y=${target.y} z=${target.z}")
+                    }
+                }
+            }
             // 重生换维度后重新打印一次摘要：同一行输出在新旧维度之间应当明显不同。
             if (event is ClientEvent.Respawned) chunkReported = false
             // 首批区块到齐后打印一次世界摘要：这是“区块真的解出来了”的现场证据。
@@ -292,6 +317,8 @@ private fun describe(event: ClientEvent): String = when (event) {
         "event=suggestions id=$transactionId start=$start length=$length matches=$matches"
     }
     is ClientEvent.TransferRequested -> "event=transfer host=${event.host} port=${event.port}"
+    is ClientEvent.PassengersChanged -> "event=passengers vehicle=${event.vehicleId} riders=${event.passengerIds}"
+    is ClientEvent.VehicleChanged -> "event=vehicle id=${event.vehicleId ?: "-"}"
     is ClientEvent.BlockEntityChanged -> with(event.entity) {
         "event=blockentity type=$type pos=$position keys=${data?.entries?.keys?.joinToString(",").orEmpty()}"
     }
@@ -646,6 +673,8 @@ private data class ParsedArgs(
     val completions: List<String> = emptyList(),
     /** 出生后要执行的命令（含前导斜杠），按命令行顺序。 */
     val commands: List<String> = emptyList(),
+    /** 上车后要把载具移到的坐标；null 表示不发。 */
+    val steer: Position? = null,
     /** 收到转移请求后是否真的换服。 */
     val followTransfer: Boolean = false,
 ) {
@@ -676,6 +705,7 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
     var placeBelow = false
     var reportLight = false
     var listCommands = false
+    var steer: Position? = null
     var followTransfer = false
     val execCommands = ArrayList<String>()
     val completions = ArrayList<String>()
@@ -786,6 +816,15 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
                 completions += value
                 index += 2
             }
+            "--steer" -> {
+                val target = value?.let(::parseSteer)
+                if (target == null) {
+                    System.err.println("--steer 需要 x,y,z")
+                    return null
+                }
+                steer = target
+                index += 2
+            }
             "--exec" -> {
                 if (value == null) {
                     System.err.println("--exec 缺少取值")
@@ -824,6 +863,7 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
             listCommands = listCommands,
             completions = completions,
             commands = execCommands,
+            steer = steer,
             followTransfer = followTransfer,
         )
     } catch (e: IllegalArgumentException) {
@@ -838,6 +878,19 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
  * 动作名与协议里的点击类型一一对应，但不暴露协议名：`swap<N>` 里的 N 是快捷栏下标，
  * 不是窗口槽位——这两套编号在窗口 0 里差 36，混用会静默点到别的格子。
  */
+/**
+ * 解析 `--steer` 的 `<x>,<y>,<z>`。
+ *
+ * 朝向不在这里给：载具的朝向由服务端权威下发，动作发生时才读得到，启动阶段没有值可填。
+ */
+private fun parseSteer(value: String): Position? {
+    val parts = value.split(',')
+    if (parts.size != 3) return null
+    val numbers = parts.map { it.trim().toDoubleOrNull() ?: return null }
+    if (numbers.any { !it.isFinite() }) return null
+    return Position(numbers[0], numbers[1], numbers[2], 0f, 0f)
+}
+
 private fun parseClick(value: String): ClickArg? {
     val parts = value.split(':', limit = 2)
     val slot = parts[0].toIntOrNull()

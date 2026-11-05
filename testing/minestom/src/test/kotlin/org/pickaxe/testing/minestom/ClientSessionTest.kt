@@ -869,6 +869,110 @@ class ClientSessionTest {
     }
 
     @Test
+    fun `骑乘时乘客关系可读，载具移动走独立包`() = runBlocking {
+        // 协议里既没有“上车”也没有“下车”包，`move_vehicle` 又不带实体 id：两件事都只能从
+        // “某个载具的乘客列表里有我”推出来。因此这里按顺序验证三段事实：
+        // 乘客列表到达 → 玩家位置包被封住 → 载具坐标由载具包推进（上行与下行各一次）。
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, RIDE_USERNAME)
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                val self = assertNotNull(
+                    withTimeout(EVENT_TIMEOUT_MILLIS) { session.world.first { it?.entityId != null } },
+                    "进入世界后才能确定自己的实体 id",
+                ).entityId
+
+                session.sendCommand("/$RIDE_COMMAND_NAME")
+                log.await { it is ClientEvent.VehicleChanged && it.vehicleId != null }
+                val vehicleId = assertNotNull(session.vehicle.value, "上车后应记录载具 id")
+
+                // 乘客列表是整份替换，判据是“列表里有自己的实体 id”。
+                val passengers = log.snapshot().filterIsInstance<ClientEvent.PassengersChanged>().last()
+                assertEquals(vehicleId, passengers.vehicleId, "事件应指明是哪个载具的列表")
+                assertEquals(listOf(self), passengers.passengerIds, "自己应当出现在乘客列表里")
+                assertEquals(listOf(self), session.passengers(vehicleId), "缓存应与事件给出同一份列表")
+                assertEquals(RIDE_ENTITY_TYPE, session.entity(vehicleId)?.type, "载具应已被跟踪成实体")
+                assertTrue(
+                    withContext(Dispatchers.IO) { awaitRide(RIDE_USERNAME, MILESTONE_TIMEOUT) },
+                    "服务端应确认这次上车",
+                )
+
+                // 骑乘时玩家位置包是非法的：原版客户端在载具上根本不发它们，服务端也只按
+                // 载具包改坐标。这里要的是显式失败，而不是发出去被悄悄忽略。
+                val blocked = assertFailsWith<IllegalStateException> {
+                    session.moveTo(Position(1.0, RIDE_GROUND_Y, 1.0, 0f, 0f))
+                }
+                assertTrue(
+                    blocked.message.orEmpty().contains("steerVehicle"),
+                    "错误信息应指向载具通道，实际为 ${blocked.message}",
+                )
+
+                // 上行：绝对坐标。服务端侧看到的就是发出去的值，Minestom 随后把它应用到载具上。
+                val steer = Position(2.5, RIDE_GROUND_Y, 0.5, 90f, 0f)
+                session.steerVehicle(steer, onGround = true)
+                assertTrue(
+                    withContext(Dispatchers.IO) {
+                        awaitVehicleMove(RIDE_USERNAME, MILESTONE_TIMEOUT) { move ->
+                            abs(move.x - steer.x) < 1e-9 &&
+                                abs(move.y - steer.y) < 1e-9 &&
+                                abs(move.z - steer.z) < 1e-9 &&
+                                abs(move.yaw - steer.yaw) < 1e-9 &&
+                                move.onGround
+                        }
+                    },
+                    "服务端应收到载具移动包，实际观察到 ${observedVehicleMoves(RIDE_USERNAME)}",
+                )
+                assertTrue(
+                    withContext(Dispatchers.IO) {
+                        awaitRidePosition(RIDE_USERNAME, MILESTONE_TIMEOUT) { pos ->
+                            abs(pos.x() - steer.x) < 1e-6 && abs(pos.z() - steer.z) < 1e-6
+                        }
+                    },
+                    "服务端应把载具移到包里给的坐标，实际为 ${ridePosition(RIDE_USERNAME)}",
+                )
+
+                // 下行：Minestom 从不纠正载具，所以由 harness 发一个真实形状的权威包。
+                // 本端要把它折到载具快照上，同时推进“我在哪”——骑乘时没有别的来源。
+                val yawBefore = session.world.value!!.position!!.yaw
+                session.sendCommand("/$RIDE_COMMAND_NAME move")
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    session.entity(vehicleId)?.let { abs(it.x - RIDE_PUSH_X) < 1e-6 } == true
+                }
+                with(session.entity(vehicleId)!!) {
+                    assertEquals(RIDE_PUSH_Y, y, 1e-6, "载具快照应按权威包更新")
+                    assertEquals(RIDE_PUSH_YAW, yaw, 1e-4f, "载具朝向同样来自权威包")
+                }
+                with(session.world.value!!.position!!) {
+                    assertEquals(RIDE_PUSH_X, x, 1e-6, "骑乘时“我在哪”跟着载具走")
+                    assertEquals(RIDE_PUSH_Z, z, 1e-6)
+                    assertEquals(yawBefore, yaw, 1e-4f, "朝向仍归乘客自己，不该被载具包改掉")
+                }
+
+                // 下车就是一条空列表：没有单独的“下车包”，也没有回执。
+                session.sendCommand("/$RIDE_COMMAND_NAME stop")
+                log.await { it is ClientEvent.VehicleChanged && it.vehicleId == null }
+                assertNull(session.vehicle.value, "下车后不该还挂在载具上")
+                assertTrue(session.passengers(vehicleId).isEmpty(), "空列表应从缓存里移除这个载具")
+                assertTrue(
+                    withContext(Dispatchers.IO) { awaitDismount(RIDE_USERNAME, MILESTONE_TIMEOUT) },
+                    "服务端应确认这次下车",
+                )
+
+                // 下车后玩家位置包恢复可用：这正是“骑乘时封住”的对照面。
+                val onFoot = session.world.value!!.position!!
+                session.moveTo(Position(onFoot.x + 1.0, onFoot.y, onFoot.z, onFoot.yaw, onFoot.pitch))
+            } finally {
+                log.close()
+                session.close()
+            }
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `转移请求只上报地址，换服由调用方决定`() = runBlocking {
         // 转移是一条“去连那个地址”的指令，不是连接状态的变化：协议库的自动跟随已关闭，
         // 收到包之后本会话必须原地不动。换服是一条新连接，必须是调用方的显式动作——
@@ -1916,6 +2020,10 @@ class ClientSessionTest {
         const val MOVE_DISTANCE: Double = 2.0
         const val LOOK_YAW: Float = 90f
         const val LOOK_PITCH: Float = 15f
+
+        /** 骑乘用例：载具类型与地面高度都由 harness 侧给定，客户端只读结果。 */
+        const val RIDE_USERNAME: String = "RideBot"
+        const val RIDE_GROUND_Y: Double = 40.0
 
         /** 服务端强制传送的目标：与出生点同区块，避开“移动进未加载区块”的分支。 */
         const val CORRECTION_X: Double = 5.5

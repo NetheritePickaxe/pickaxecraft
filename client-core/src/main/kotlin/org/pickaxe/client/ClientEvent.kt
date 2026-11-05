@@ -144,6 +144,26 @@ public sealed interface ClientEvent {
     ) : ClientEvent
 
     /**
+     * 载具 [vehicleId] 的乘客列表变成 [passengerIds]。
+     *
+     * 一个服务端包对应一个事件，列表是**整份**而不是增量：协议里没有“某人上车/下车”的包，
+     * 只有这条按载具下发的完整列表，空列表表示这个载具上现在没人。
+     */
+    public data class PassengersChanged(
+        public val vehicleId: Int,
+        public val passengerIds: List<Int>,
+    ) : ClientEvent
+
+    /**
+     * 本端的上/下载具状态变了。[vehicleId] 为 `null` 表示已经下车。
+     *
+     * 这是从 [PassengersChanged] 推出来的派生事实：判据是“自己的实体 id 是否出现在某个载具的
+     * 乘客列表里”。下游每次都自己比一遍容易漏掉“列表整份替换”这一点，因此单独投递；
+     * 它与 [PassengersChanged] 成对出现，同一个包里先发前者。
+     */
+    public data class VehicleChanged(public val vehicleId: Int?) : ClientEvent
+
+    /**
      * 玩家列表发生变化。
      *
      * 一个服务端包对应一个事件：[updated] 是新增或有字段变化的条目，[removed] 是被移出

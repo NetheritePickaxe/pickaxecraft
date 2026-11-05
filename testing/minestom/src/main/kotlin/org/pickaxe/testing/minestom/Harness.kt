@@ -10,6 +10,7 @@ import net.minestom.server.command.builder.arguments.ArgumentType
 import net.minestom.server.command.builder.suggestion.SuggestionEntry
 import net.minestom.server.coordinate.Pos
 import net.minestom.server.component.DataComponents
+import net.minestom.server.entity.Entity
 import net.minestom.server.entity.EntityCreature
 import net.minestom.server.entity.EntityType
 import net.minestom.server.entity.LivingEntity
@@ -40,9 +41,11 @@ import net.minestom.server.network.packet.client.play.ClientEntityActionPacket
 import net.minestom.server.network.packet.client.play.ClientInputPacket
 import net.minestom.server.network.packet.client.play.ClientPlayerAbilitiesPacket
 import net.minestom.server.network.packet.client.play.ClientTabCompletePacket
+import net.minestom.server.network.packet.client.play.ClientVehicleMovePacket
 import net.minestom.server.network.packet.server.common.TransferPacket
 import net.minestom.server.network.packet.server.play.BlockEntityDataPacket
 import net.minestom.server.network.packet.server.play.EntityEffectPacket
+import net.minestom.server.network.packet.server.play.VehicleMovePacket
 import net.minestom.server.network.packet.server.play.PlayerAbilitiesPacket
 import net.minestom.server.network.packet.server.play.RemoveEntityEffectPacket
 import net.minestom.server.network.packet.server.play.TabCompletePacket
@@ -70,6 +73,29 @@ public const val DEFAULT_PORT: Int = 25565
  * 因此在 harness 里注册一个最小命令：执行即登记事实并回一条固定文本。
  */
 public const val ECHO_COMMAND_NAME: String = "pickaxe"
+
+/** 骑乘命令：把执行者放上/放下一艘船，用来验证载具与乘客链路。 */
+public const val RIDE_COMMAND_NAME: String = "pickaxeride"
+
+/**
+ * 骑乘命令用的载具类型名，客户端读到的 `TrackedEntity.type` 就是它。
+ *
+ * 26.2 里船按木种拆分，没有中性的 `BOAT`；橡木船是最普通的那个，选它只是取一个
+ * “能载人的普通实体”，本用例不关心船的材质。
+ */
+public const val RIDE_ENTITY_TYPE: String = "OAK_BOAT"
+
+/**
+ * 服务端“权威”下发的载具坐标，供 `/pickaxeride move` 使用。
+ *
+ * Minestom 自己从不下发 `move_vehicle`（它的载具移动只接受上行、不纠正），所以这里
+ * 由 harness 直接发一个真实形状的包：要验证的是本端如何解释它，不是 Minestom 的载具物理。
+ */
+public const val RIDE_PUSH_X: Double = 6.5
+public const val RIDE_PUSH_Y: Double = 40.0
+public const val RIDE_PUSH_Z: Double = 0.5
+public const val RIDE_PUSH_YAW: Float = 180f
+public const val RIDE_PUSH_PITCH: Float = 5f
 
 /** 转移命令：把执行者转移到本 harness 自己，用来验证完整换服链路。 */
 public const val TRANSFER_COMMAND_NAME: String = "pickaxetransfer"
@@ -123,6 +149,9 @@ private val milestones = ConcurrentHashMap<String, ConcurrentHashMap<PlayerMiles
  * 只是键的形状不同。用例据此断言服务端侧结果，而不是只看客户端自己的回显。
  */
 private val facts = ConcurrentHashMap<String, CompletableFuture<Unit>>()
+
+/** 玩家名 → 当前乘坐的载具实体；下车后移除。 */
+private val riders = ConcurrentHashMap<String, Entity>()
 
 private fun fact(key: String): CompletableFuture<Unit> = facts.computeIfAbsent(key) { CompletableFuture() }
 
@@ -217,6 +246,60 @@ public fun awaitPlayerMove(username: String, timeout: Duration, predicate: (Obse
     }
     return observedMoves(username).any(predicate)
 }
+
+/**
+ * 服务端观察到的一次载具移动（`move_vehicle` 上行）。
+ *
+ * 只记录包里的值：Minestom 的内置监听器在 `PlayerPacketEvent` **之后**才把坐标应用到
+ * 载具上，所以这里证明的是“包确实到了、值确实是这些”，落点另用 [ridePosition] 核对。
+ */
+public data class ObservedVehicleMove(
+    val x: Double,
+    val y: Double,
+    val z: Double,
+    val yaw: Float,
+    val pitch: Float,
+    val onGround: Boolean,
+)
+
+private val vehicleMoves = ConcurrentHashMap<String, java.util.concurrent.CopyOnWriteArrayList<ObservedVehicleMove>>()
+
+/** 某玩家到目前为止被观察到的载具移动；没有时返回空列表。 */
+public fun observedVehicleMoves(username: String): List<ObservedVehicleMove> =
+    vehicleMoves[username]?.toList().orEmpty()
+
+/** 等待某玩家出现一次满足条件的载具移动；超时返回 false。 */
+public fun awaitVehicleMove(username: String, timeout: Duration, predicate: (ObservedVehicleMove) -> Boolean): Boolean {
+    val deadline = System.nanoTime() + timeout.toNanos()
+    while (System.nanoTime() < deadline) {
+        if (observedVehicleMoves(username).any(predicate)) return true
+        Thread.sleep(5)
+    }
+    return observedVehicleMoves(username).any(predicate)
+}
+
+/** 某玩家当前乘坐的载具坐标；不在载具上或载具已消失时返回 null。 */
+public fun ridePosition(username: String): Pos? = riders[username]?.position
+
+/** 等待服务端把载具移动到满足条件的位置（即 Minestom 真的应用了上行包）；超时返回 false。 */
+public fun awaitRidePosition(username: String, timeout: Duration, predicate: (Pos) -> Boolean): Boolean {
+    val deadline = System.nanoTime() + timeout.toNanos()
+    while (System.nanoTime() < deadline) {
+        ridePosition(username)?.let { if (predicate(it)) return true }
+        Thread.sleep(5)
+    }
+    return ridePosition(username)?.let(predicate) == true
+}
+
+/** 等待服务端把某玩家放上了载具；超时返回 false。 */
+public fun awaitRide(username: String, timeout: Duration): Boolean =
+    awaitFact(rideFactKey(username, "mount"), timeout)
+
+/** 等待服务端把某玩家从载具上放下来；超时返回 false。 */
+public fun awaitDismount(username: String, timeout: Duration): Boolean =
+    awaitFact(rideFactKey(username, "dismount"), timeout)
+
+private fun rideFactKey(username: String, kind: String): String = "ride|$kind|$username"
 
 private fun chatFactKey(username: String, message: String): String = "chat|$username|$message"
 
@@ -585,6 +668,25 @@ public fun startHarness(port: Int = DEFAULT_PORT): InstanceContainer {
                 recordFact(packetFactKey(name, "flying.$flying"))
                 println("event=player.abilities name=$name flying=$flying")
             }
+            is ClientVehicleMovePacket -> {
+                val position = packet.position()
+                vehicleMoves.computeIfAbsent(name) { java.util.concurrent.CopyOnWriteArrayList() }
+                    .add(
+                        ObservedVehicleMove(
+                            x = position.x(),
+                            y = position.y(),
+                            z = position.z(),
+                            yaw = position.yaw(),
+                            pitch = position.pitch(),
+                            onGround = packet.onGround(),
+                        ),
+                    )
+                println(
+                    "event=player.vehicle name=$name x=${position.x()} y=${position.y()} " +
+                        "z=${position.z()} yaw=${position.yaw()} pitch=${position.pitch()} " +
+                        "onGround=${packet.onGround()}",
+                )
+            }
             is ClientTabCompletePacket -> {
                 recordFact(packetFactKey(name, "suggest.${packet.text()}"))
                 println("event=player.suggest name=$name transaction=${packet.transactionId()} text=${packet.text()}")
@@ -595,11 +697,56 @@ public fun startHarness(port: Int = DEFAULT_PORT): InstanceContainer {
     MinecraftServer.getCommandManager().register(EchoCommand())
     MinecraftServer.getCommandManager().register(SuggestColorCommand())
     MinecraftServer.getCommandManager().register(TransferCommand())
+    MinecraftServer.getCommandManager().register(RideCommand())
 
     harnessPort = port
     server.start(InetSocketAddress(DEFAULT_HOST, port))
     harnessStarted = true
     return instance
+}
+
+/**
+ * 骑乘命令：`/<名字>` 上船，`/<名字> stop` 下船。
+ *
+ * 载具就在玩家脚下生成，不用真实载具物理——本命令要验证的是「乘客关系走协议」，
+ * 不是船会不会浮起来。
+ */
+private class RideCommand : Command(RIDE_COMMAND_NAME) {
+    init {
+        addSyntax({ sender, _ -> dismount(sender) }, ArgumentType.Literal("stop"))
+        addSyntax({ sender, _ -> pushVehicle(sender) }, ArgumentType.Literal("move"))
+        setDefaultExecutor { sender, _ -> mount(sender) }
+    }
+
+    private fun mount(sender: CommandSender) {
+        val player = sender as? Player ?: return
+        val instance = player.instance
+        val vehicle = Entity(EntityType.OAK_BOAT)
+        vehicle.setInstance(instance, player.position)
+        vehicle.addPassenger(player)
+        riders[player.username] = vehicle
+        println(
+            "event=server.ride name=${player.username} vehicle=${vehicle.entityId} " +
+                "type=$RIDE_ENTITY_TYPE passengers=${vehicle.getPassengers().map { it.entityId }}",
+        )
+        recordFact(rideFactKey(player.username, "mount"))
+    }
+
+    /** 以服务端身份下发一次权威载具坐标；客户端应把它折到载具快照与自己的位置上。 */
+    private fun pushVehicle(sender: CommandSender) {
+        val player = sender as? Player ?: return
+        val position = Pos(RIDE_PUSH_X, RIDE_PUSH_Y, RIDE_PUSH_Z, RIDE_PUSH_YAW, RIDE_PUSH_PITCH)
+        player.sendPacket(VehicleMovePacket(position))
+        println("event=server.vehicle.move name=${player.username} pos=$position")
+    }
+
+    private fun dismount(sender: CommandSender) {
+        val player = sender as? Player ?: return
+        val vehicle = riders.remove(player.username) ?: return
+        vehicle.removePassenger(player)
+        println("event=server.ride.stop name=${player.username} vehicle=${vehicle.entityId}")
+        recordFact(rideFactKey(player.username, "dismount"))
+    }
 }
 
 /**

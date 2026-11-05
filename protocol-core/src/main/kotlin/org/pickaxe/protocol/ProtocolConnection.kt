@@ -127,6 +127,25 @@ public class ProtocolConnection private constructor(
     }
 
     /**
+     * 声明载具移动到了指定位置与朝向。
+     *
+     * 坐标是绝对量；包不带实体 id，只对「当前乘坐的载具」成立。
+     *
+     * @throws IllegalArgumentException 坐标或角度非法
+     * @throws IllegalStateException 当前不在载具上，或尚未进入 play
+     */
+    public fun steerVehicle(
+        x: Double,
+        y: Double,
+        z: Double,
+        yaw: Float,
+        pitch: Float,
+        onGround: Boolean = false,
+    ) {
+        connection.steerVehicle(x, y, z, yaw, pitch, onGround)
+    }
+
+    /**
      * 切换快捷栏选中格（0–8）。
      *
      * 本端不预设结果：服务端会用 `set_held_slot` 回一条，表现为
