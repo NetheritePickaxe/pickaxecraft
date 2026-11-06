@@ -89,6 +89,22 @@ public class ProtocolConnection private constructor(
     }
 
     /**
+     * 发送一条插件消息。
+     *
+     * 插件消息是裸字节通道：渠道名（`namespace:path`）由双方约定，payload 的含义本层
+     * 不解释。想声明品牌串时用 `minecraft:register` 等约定渠道；自定义渠道直接写自己的。
+     *
+     * 成功没有回执：服务端是否处理该消息由其插件决定，静默忽略是正常现象。
+     *
+     * @throws IllegalArgumentException 渠道名不是完整 `namespace:path` 形式的 resource
+     *   location，或 payload 超过 32767 字节
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    public fun sendPluginMessage(channel: String, data: ByteArray) {
+        connection.sendPluginMessage(channel, data)
+    }
+
+    /**
      * 把本端位置与朝向声明给服务端。
      *
      * 只发送与上一状态不同的分量（协议里 `pos`、`rot`、`pos_rot` 是三个包）；坐标与朝向

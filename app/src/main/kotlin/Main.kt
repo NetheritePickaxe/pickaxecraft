@@ -10,6 +10,7 @@ import org.pickaxe.client.CompletionResult
 import org.pickaxe.client.MinecraftClient
 import org.pickaxe.client.Position
 import org.pickaxe.client.Session
+import org.pickaxe.protocol.PluginMessages
 import org.pickaxe.protocol.ProtocolVersion
 import org.pickaxe.protocol.ServerAddress
 import org.pickaxe.protocol.inventory.Container
@@ -33,7 +34,7 @@ private val usage = """
               [--walk <格数>] [--hold <0-8>] [--click <槽位>[:动作]]... [--close-window]
               [--dig] [--place] [--sneak] [--sprint] [--fly] [--light]
               [--commands] [--complete <文本>]... [--exec <命令>]... [--steer x,y,z]
-              [--follow-transfer]
+              [--plugin <渠道>] [--follow-transfer]
           离线登录并持续打印会话事件，Ctrl+C 关闭会话后退出
           --say 在出生完成后再发送一条聊天消息，可重复；服务端会把它广播回来
           --walk 在出生后沿 +X 方向走指定格数（每步 0.5 格），打印每一步的坐标
@@ -50,6 +51,8 @@ private val usage = """
           --commands 在出生后打印服务端下发的命令树摘要（节点数、顶层命令名）
           --complete 在出生后请求一次补全，可重复；候选由服务端算，含前导斜杠
           --exec 在出生后执行一条命令（带前导斜杠），可重复；用来触发需要权限的动作
+          --plugin 在出生后向指定渠道发一条空 payload 的插件消息，可重复；
+              渠道必须是 namespace:path 形式，回包（如有）会以 event=plugin 打印
           --steer 上车后把载具移到 <x,y,z>（朝向沿用载具当前值）；骑乘时玩家位置包不可用，
                因此这个动作只能等 VehicleChanged 之后发
           --follow-transfer 收到跨服转移请求后真的换服：关旧会话、连新地址，
@@ -193,6 +196,7 @@ private fun runConnect(args: List<String>): Int {
                     holdSlot = null,
                     clicks = emptyList(),
                     commands = emptyList(),
+                    pluginChannels = emptyList(),
                     closeWindow = false,
                     digBelow = false,
                     placeBelow = false,
@@ -286,6 +290,15 @@ private suspend fun collectSession(
                 }
                 if (parsed.listCommands) reportCommands(session)
                 for (text in parsed.completions) reportCompletion(session, text)
+                for (channel in parsed.pluginChannels) {
+                    try {
+                        // 空 payload 是合法探针：有些渠道靠“收到消息”本身触发行为，内容不重要。
+                        session.sendPluginMessage(channel, ByteArray(0))
+                        println("event=plugin.sent channel=$channel")
+                    } catch (e: IllegalArgumentException) {
+                        System.err.println("插件消息不合法: ${e.message}")
+                    }
+                }
                 applyMotionFlags(session, parsed)
             }
             emit(event)
@@ -317,6 +330,16 @@ private fun describe(event: ClientEvent): String = when (event) {
         "event=suggestions id=$transactionId start=$start length=$length matches=$matches"
     }
     is ClientEvent.TransferRequested -> "event=transfer host=${event.host} port=${event.port}"
+    is ClientEvent.PluginMessageReceived -> with(event.message) {
+        if (channel == PluginMessages.BRAND_CHANNEL) {
+            "event=plugin channel=$channel bytes=${data.size} brand=${PluginMessages.parseBrand(data) ?: "-"}"
+        } else {
+            // 字节内容通常不是文本，只打印可打印的 ASCII 预览，避免把二进制糊进日志。
+            val text = String(data, Charsets.UTF_8)
+            val utf8 = if (data.isNotEmpty() && text.all { it.code in 0x20..0x7E }) " utf8=$text" else ""
+            "event=plugin channel=$channel bytes=${data.size}$utf8"
+        }
+    }
     is ClientEvent.PassengersChanged -> "event=passengers vehicle=${event.vehicleId} riders=${event.passengerIds}"
     is ClientEvent.VehicleChanged -> "event=vehicle id=${event.vehicleId ?: "-"}"
     is ClientEvent.BlockEntityChanged -> with(event.entity) {
@@ -564,7 +587,8 @@ private fun describeChunk(session: Session): String {
         "block=($x, $y, $z):${session.blockStateAt(x, y, z)} below=$below " +
         "sky=$sky blockLight=$block height=$height blockEntities=${column.blockEntities.size} " +
         "held=${session.heldSlot} inventory=$inventory " +
-        "hp=${session.status.value.health} level=${session.status.value.level}"
+        "hp=${session.status.value.health} level=${session.status.value.level} " +
+        "brand=${session.serverBrand.value ?: "-"}"
 }
 
 /**
@@ -678,6 +702,8 @@ private data class ParsedArgs(
     val completions: List<String> = emptyList(),
     /** 出生后要执行的命令（含前导斜杠），按命令行顺序。 */
     val commands: List<String> = emptyList(),
+    /** 出生后要发送插件消息的渠道（空 payload），按命令行顺序。 */
+    val pluginChannels: List<String> = emptyList(),
     /** 上车后要把载具移到的坐标；null 表示不发。 */
     val steer: Position? = null,
     /** 收到转移请求后是否真的换服。 */
@@ -713,6 +739,7 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
     var steer: Position? = null
     var followTransfer = false
     val execCommands = ArrayList<String>()
+    val pluginChannels = ArrayList<String>()
     val completions = ArrayList<String>()
     var sneak = false
     var sprint = false
@@ -838,6 +865,20 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
                 execCommands += value
                 index += 2
             }
+            "--plugin" -> {
+                if (value == null) {
+                    System.err.println("--plugin 缺少取值")
+                    return null
+                }
+                try {
+                    PluginMessages.requireValidChannel(value)
+                } catch (e: IllegalArgumentException) {
+                    System.err.println("--plugin 渠道不合法: ${e.message}")
+                    return null
+                }
+                pluginChannels += value
+                index += 2
+            }
             "--follow-transfer" -> {
                 followTransfer = true
                 index += 1
@@ -868,6 +909,7 @@ private fun parseArgs(args: List<String>): ParsedArgs? {
             listCommands = listCommands,
             completions = completions,
             commands = execCommands,
+            pluginChannels = pluginChannels,
             steer = steer,
             followTransfer = followTransfer,
         )

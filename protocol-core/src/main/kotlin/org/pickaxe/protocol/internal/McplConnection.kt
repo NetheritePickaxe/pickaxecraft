@@ -3,6 +3,7 @@ package org.pickaxe.protocol.internal
 import io.netty.channel.EventLoopGroup
 import io.netty.handler.timeout.TimeoutException
 import io.netty.util.concurrent.DefaultThreadFactory
+import net.kyori.adventure.key.Key
 import net.kyori.adventure.text.Component
 import org.geysermc.mcprotocollib.network.BuiltinFlags
 import org.geysermc.mcprotocollib.network.event.session.ConnectedEvent
@@ -31,8 +32,10 @@ import org.geysermc.mcprotocollib.protocol.data.game.setting.SkinPart
 import org.geysermc.mcprotocollib.protocol.data.status.ServerStatusInfo
 import org.geysermc.mcprotocollib.protocol.data.status.handler.ServerInfoHandler
 import org.geysermc.mcprotocollib.protocol.data.status.handler.ServerPingTimeHandler
+import org.geysermc.mcprotocollib.protocol.packet.common.clientbound.ClientboundCustomPayloadPacket
 import org.geysermc.mcprotocollib.protocol.packet.common.clientbound.ClientboundTransferPacket
 import org.geysermc.mcprotocollib.protocol.packet.common.serverbound.ServerboundClientInformationPacket
+import org.geysermc.mcprotocollib.protocol.packet.common.serverbound.ServerboundCustomPayloadPacket
 import org.geysermc.mcprotocollib.protocol.packet.configuration.clientbound.ClientboundRegistryDataPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundCommandSuggestionsPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundCommandsPacket
@@ -101,6 +104,8 @@ import org.pickaxe.protocol.ProtocolEvent
 import org.pickaxe.protocol.ProtocolFailureKind
 import org.pickaxe.protocol.ProtocolListener
 import org.pickaxe.protocol.ProtocolPhase
+import org.pickaxe.protocol.PluginMessage
+import org.pickaxe.protocol.PluginMessages
 import org.pickaxe.protocol.ServerAddress
 import org.pickaxe.protocol.ServerStatus
 import org.pickaxe.protocol.chat.ChatFormat
@@ -487,6 +492,11 @@ internal class McplConnection(
             // 所以这里之后连接状态不变——换服是上层的决定，本层不替它建连接。
             is ClientboundTransferPacket ->
                 emit(ProtocolEvent.TransferRequested(packet.host, packet.port))
+
+            // 插件消息：裸字节透传。该包在配置阶段（服务端品牌串）与 play 阶段都可能出现，
+            // 两个阶段都上报；MCPL 对它不做任何自动应答，这里也无须补答。
+            is ClientboundCustomPayloadPacket ->
+                emit(ProtocolEvent.PluginMessageReceived(PluginMessage(packet.channel.asString(), packet.data)))
 
             // 方块变更：服务端下发的才是权威结果。挖掉一块方块后本地缓存要跟着变，
             // 否则 `blockStateAt` 会一直返回已经不存在的方块。
@@ -1350,6 +1360,25 @@ internal class McplConnection(
      */
     fun requestCommandSuggestions(transactionId: Int, text: String) {
         sendInPlay("命令补全") { ServerboundCommandSuggestionPacket(transactionId, text) }
+    }
+
+    /**
+     * 发送一条插件消息。
+     *
+     * 发送前做本地校验：渠道名必须是完整 `namespace:path` 形式，payload 不得超过
+     * 32767 字节（原版客户端的同一条上限）。校验失败在发送前抛错——超出上限的消息
+     * 服务端必然拒收，先发出去再等踢线只会让失败更难定位。
+     *
+     * 成功没有回执：服务端收没收到、怎么解释，都由该渠道自己的约定决定。
+     */
+    fun sendPluginMessage(channel: String, data: ByteArray) {
+        PluginMessages.requireValidChannel(channel)
+        require(data.size <= PluginMessages.MAX_PAYLOAD_SIZE) {
+            "插件消息 payload 超过 ${PluginMessages.MAX_PAYLOAD_SIZE} 字节上限，实际为 ${data.size}"
+        }
+        sendInPlay("插件消息") {
+            ServerboundCustomPayloadPacket(Key.key(channel), data.copyOf())
+        }
     }
 
     /**

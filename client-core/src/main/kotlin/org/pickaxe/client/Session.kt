@@ -15,6 +15,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import org.pickaxe.protocol.PluginMessage
+import org.pickaxe.protocol.PluginMessages
 import org.pickaxe.protocol.ProtocolCloseReason
 import org.pickaxe.protocol.ProtocolConnection
 import org.pickaxe.protocol.ProtocolEvent
@@ -114,6 +116,16 @@ public class Session internal constructor(
      * 一次连接可能收到多次，后一次覆盖前一次。
      */
     public val transferRequest: StateFlow<TransferRequest?> = mutableTransferRequest.asStateFlow()
+
+    private val mutableServerBrand = MutableStateFlow<String?>(null)
+
+    /**
+     * 服务端在 `minecraft:brand` 渠道里声明的品牌串；没收到过或解析失败时为 null。
+     *
+     * 品牌串通常在配置阶段随插件消息到达，进 play 前就已经有值。解析只取一遍：
+     * 坏消息不改旧值，原始字节仍通过 [ClientEvent.PluginMessageReceived] 上报。
+     */
+    public val serverBrand: StateFlow<String?> = mutableServerBrand.asStateFlow()
 
     private val mutableCommands = MutableStateFlow<CommandTree?>(null)
 
@@ -635,6 +647,22 @@ public class Session internal constructor(
     }
 
     /**
+     * 发送一条插件消息。
+     *
+     * 插件消息是裸字节通道：渠道名（`namespace:path`）与 payload 的含义都由渠道约定决定，
+     * 本库只透传。成功没有回执——服务端静默忽略是正常现象。
+     *
+     * 非挂起函数：写入网络是异步的，返回不代表服务端已收到。
+     *
+     * @throws IllegalArgumentException 渠道名不是完整 `namespace:path` 形式的 resource
+     *   location，或 payload 超过 32767 字节
+     * @throws IllegalStateException 会话尚未进入 play，或已经关闭
+     */
+    public fun sendPluginMessage(channel: String, data: ByteArray) {
+        playConnection("插件消息").sendPluginMessage(channel, data)
+    }
+
+    /**
      * 请求服务端补全 [text] 对应的命令候选，最多等 [timeoutMillis] 毫秒。
      *
      * [text] 必须是**完整输入行**（含前导斜杠，例如 `/gamemode cr`）：服务端按它自己
@@ -1079,6 +1107,14 @@ public class Session internal constructor(
                 }
             }
 
+            // 品牌串是会话级快照：网络线程直接解析并写入 StateFlow（通常在配置阶段到达，
+            // 早于事件消费者启动）。坏消息不改旧值，原始字节照常进事件流供下游对账。
+            is ProtocolEvent.PluginMessageReceived -> {
+                if (!closing.get() && event.message.channel == PluginMessages.BRAND_CHANNEL) {
+                    PluginMessages.parseBrand(event.message.data)?.let { mutableServerBrand.value = it }
+                }
+            }
+
             // 补全回答是**一对一的请求/响应**，不是可缓存状态：在网络线程上直接交给等待方，
             // 不经过 Actor 的事件队列——消费者慢一点也照样能拿到答案。事件仍然照常排队上报。
             is ProtocolEvent.CommandSuggestionsReceived -> {
@@ -1301,6 +1337,12 @@ public class Session internal constructor(
 
         is ProtocolEvent.TransferRequested -> {
             emit(ClientEvent.TransferRequested(event.host, event.port))
+            true
+        }
+
+        // 品牌已在 onProtocolEvent 里写入 StateFlow，这里只上报原始消息。
+        is ProtocolEvent.PluginMessageReceived -> {
+            emit(ClientEvent.PluginMessageReceived(event.message))
             true
         }
 

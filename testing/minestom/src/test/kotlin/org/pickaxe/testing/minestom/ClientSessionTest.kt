@@ -72,6 +72,7 @@ import java.util.BitSet
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.abs
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
@@ -1529,6 +1530,63 @@ class ClientSessionTest {
     }
 
     @Test
+    fun `插件消息逐字节回环且品牌可读`() = runBlocking {
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, PLUGIN_USERNAME)
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+
+                // Minestom 在配置阶段就把品牌串发到 minecraft:brand；进 play 时应该已经能读到。
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.serverBrand.value != null }
+                assertEquals("Minestom", session.serverBrand.value, "品牌串应来自配置阶段的插件消息")
+
+                // 下行：服务端发自定义渠道，客户端收到的字节必须逐字节相同。
+                // payload 里放 0x00 与高位字节，防「能过字符串通道但过不了字节通道」的假阳性。
+                val payload = byteArrayOf(0x00, 0x01, 0x7F, 0x80.toByte(), 0xFF.toByte(), 0x42)
+                assertTrue(
+                    withContext(Dispatchers.IO) {
+                        sendPluginMessage(PLUGIN_USERNAME, PLUGIN_CHANNEL, payload)
+                    },
+                    "服务端应找到该玩家并下发插件消息",
+                )
+                log.await { it is ClientEvent.PluginMessageReceived && it.message.channel == PLUGIN_CHANNEL }
+                val received = log.snapshot()
+                    .filterIsInstance<ClientEvent.PluginMessageReceived>()
+                    .first { it.message.channel == PLUGIN_CHANNEL }
+                assertContentEquals(payload, received.message.data, "下行的 payload 应逐字节相同")
+
+                // 上行：客户端原样发回，服务端在 PlayerPluginMessageEvent 里看到同一份字节。
+                session.sendPluginMessage(PLUGIN_CHANNEL, payload)
+                assertTrue(
+                    withContext(Dispatchers.IO) {
+                        awaitPlayerPluginMessage(PLUGIN_USERNAME, Duration.ofSeconds(10)) {
+                            it.channel == PLUGIN_CHANNEL && it.data.contentEquals(payload)
+                        }
+                    },
+                    "服务端应收到客户端发回的同一份 channel 与字节",
+                )
+
+                // 品牌串是普通插件消息的特例：服务端改发一次，客户端的解析必须跟着更新。
+                assertTrue(
+                    withContext(Dispatchers.IO) { sendBrand(PLUGIN_USERNAME, HARNESS_BRAND) },
+                    "服务端应能改发品牌串",
+                )
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    session.serverBrand.value == HARNESS_BRAND
+                }
+            } finally {
+                log.close()
+                session.close()
+            }
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `实体属性可读且变化会推给本人`() = runBlocking {
         val client = MinecraftClient()
         try {
@@ -2140,6 +2198,11 @@ class ClientSessionTest {
         const val PROTOTYPE_SWORD_MAX_DAMAGE: Int = 1561
         val PROTOTYPE_ITEM_KEYS: Set<String> =
             setOf("minecraft:diamond_sword", "minecraft:stone", "minecraft:ender_pearl")
+
+        /** 插件消息用例：自定义渠道逐字节回环，品牌串由 Minestom 在配置阶段下发。 */
+        const val PLUGIN_USERNAME: String = "PluginBot"
+        const val PLUGIN_CHANNEL: String = "pickaxecraft:test"
+        const val HARNESS_BRAND: String = "PickaxeHarness"
 
         /** 运动状态用例：上行包由 PlayerPacketEvent 登记，能力由服务端权威下发。 */
         const val MOTION_USERNAME: String = "MotionBot"

@@ -26,6 +26,7 @@ import net.minestom.server.event.player.PlayerChatEvent
 import net.minestom.server.event.player.PlayerFinishDiggingEvent
 import net.minestom.server.event.player.PlayerLoadedEvent
 import net.minestom.server.event.player.PlayerMoveEvent
+import net.minestom.server.event.player.PlayerPluginMessageEvent
 import net.minestom.server.event.player.PlayerSpawnEvent
 import net.minestom.server.instance.InstanceContainer
 import net.minestom.server.instance.LightingChunk
@@ -42,6 +43,7 @@ import net.minestom.server.network.packet.client.play.ClientInputPacket
 import net.minestom.server.network.packet.client.play.ClientPlayerAbilitiesPacket
 import net.minestom.server.network.packet.client.play.ClientTabCompletePacket
 import net.minestom.server.network.packet.client.play.ClientVehicleMovePacket
+import net.minestom.server.network.packet.server.common.PluginMessagePacket
 import net.minestom.server.network.packet.server.common.TransferPacket
 import net.minestom.server.network.packet.server.play.BlockEntityDataPacket
 import net.minestom.server.network.packet.server.play.EntityEffectPacket
@@ -281,6 +283,37 @@ public fun awaitVehicleMove(username: String, timeout: Duration, predicate: (Obs
 /** 某玩家当前乘坐的载具坐标；不在载具上或载具已消失时返回 null。 */
 public fun ridePosition(username: String): Pos? = riders[username]?.position
 
+/**
+ * 服务端观察到的一次上行插件消息。
+ *
+ * [data] 是事件里那份字节数组的副本：客户端发回的字节能否逐字节对得上，
+ * 正是插件消息链路的验收标准。
+ */
+public class ObservedPluginMessage(public val channel: String, data: ByteArray) {
+    public val data: ByteArray = data.copyOf()
+
+    override fun toString(): String = "ObservedPluginMessage(channel=$channel, ${data.size} bytes)"
+}
+
+private val pluginMessages = ConcurrentHashMap<String, java.util.concurrent.CopyOnWriteArrayList<ObservedPluginMessage>>()
+
+/** 某玩家到目前为止被观察到的上行插件消息；没有时返回空列表。 */
+public fun observedPluginMessages(username: String): List<ObservedPluginMessage> =
+    pluginMessages[username]?.toList().orEmpty()
+
+/** 等待某玩家发出一条满足条件的插件消息；超时返回 false。 */
+public fun awaitPlayerPluginMessage(
+    username: String,
+    timeout: Duration,
+    predicate: (ObservedPluginMessage) -> Boolean,
+): Boolean {
+    val deadline = System.nanoTime() + timeout.toNanos()
+    while (System.nanoTime() < deadline) {
+        if (observedPluginMessages(username).any(predicate)) return true
+        Thread.sleep(5)
+    }
+    return observedPluginMessages(username).any(predicate)
+}
 /** 等待服务端把载具移动到满足条件的位置（即 Minestom 真的应用了上行包）；超时返回 false。 */
 public fun awaitRidePosition(username: String, timeout: Duration, predicate: (Pos) -> Boolean): Boolean {
     val deadline = System.nanoTime() + timeout.toNanos()
@@ -521,6 +554,27 @@ public fun sendTransfer(username: String, host: String, port: Int): Boolean {
     return true
 }
 
+/**
+ * 下发一次插件消息（原样字节）。
+ *
+ * 品牌串用 [PluginMessagePacket.brandPacket] 或把 `data` 传成 varint 前缀编码的字符串；
+ * 这里不代做编码——下游要验证的正是「客户端对裸字节的解码是否正确」。
+ */
+public fun sendPluginMessage(username: String, channel: String, data: ByteArray): Boolean {
+    val player = onlinePlayer(username) ?: return false
+    player.sendPacket(PluginMessagePacket(channel, data))
+    println("event=server.plugin name=$username channel=$channel bytes=${data.size}")
+    return true
+}
+
+/** 下发一次 `minecraft:brand` 品牌消息（varint 长度前缀 + UTF-8，由 Minestom 编码）。 */
+public fun sendBrand(username: String, brand: String): Boolean {
+    val player = onlinePlayer(username) ?: return false
+    player.sendPacket(PluginMessagePacket.brandPacket(brand))
+    println("event=server.brand name=$username brand=$brand")
+    return true
+}
+
 /** 回复一次命令补全；matches 的顺序与内容由服务端侧写死，客户端只负责读。 */
 public fun sendTabComplete(
     username: String,
@@ -706,6 +760,16 @@ public fun startHarness(port: Int = DEFAULT_PORT): InstanceContainer {
             }
             else -> Unit
         }
+    }
+    // 上行插件消息：PlayerPluginMessageEvent 是「客户端发了这条 channel + 字节」的直接证据。
+    MinecraftServer.getGlobalEventHandler().addListener(PlayerPluginMessageEvent::class.java) { event ->
+        val name = event.player.username
+        pluginMessages.computeIfAbsent(name) { java.util.concurrent.CopyOnWriteArrayList() }
+            .add(ObservedPluginMessage(event.identifier, event.message))
+        println(
+            "event=player.plugin name=$name channel=${event.identifier} bytes=${event.message.size} " +
+                "utf8=${event.messageString}",
+        )
     }
     MinecraftServer.getCommandManager().register(EchoCommand())
     MinecraftServer.getCommandManager().register(SuggestColorCommand())

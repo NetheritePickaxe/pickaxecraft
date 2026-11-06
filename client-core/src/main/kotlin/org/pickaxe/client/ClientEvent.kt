@@ -1,5 +1,6 @@
 package org.pickaxe.client
 
+import org.pickaxe.protocol.PluginMessage
 import org.pickaxe.protocol.chat.ChatMessage
 import org.pickaxe.protocol.command.CommandSuggestions
 import org.pickaxe.protocol.command.CommandTree
@@ -275,6 +276,13 @@ public sealed interface ClientEvent {
         public val host: String,
         public val port: Int,
     ) : ClientEvent
+
+    /**
+     * 收到一条插件消息；`minecraft:brand` 的解析结果见 [Session.serverBrand]。
+     *
+     * 消息体原样透传，渠道语义由下游解释；同一消息在配置阶段与 play 阶段都可能到达。
+     */
+    public data class PluginMessageReceived(public val message: PluginMessage) : ClientEvent
 
     /** 正常关闭：调用方主动关闭，或服务端按协议收尾。 */
     public data object Closed : ClientEvent

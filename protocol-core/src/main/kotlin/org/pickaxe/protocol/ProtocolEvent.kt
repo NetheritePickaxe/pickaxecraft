@@ -400,6 +400,14 @@ public sealed interface ProtocolEvent {
         public val port: Int,
     ) : ProtocolEvent
 
+    /**
+     * 收到一条插件消息（`custom_payload`，配置与 play 阶段都可能出现）。
+     *
+     * 消息体原样透传，本层只代读 `minecraft:brand`（见 [PluginMessages.parseBrand]）；
+     * 其它渠道的语义由下游按渠道约定解释。渠道名不做校验：服务端是权威，坏渠道也是事实。
+     */
+    public data class PluginMessageReceived(public val message: PluginMessage) : ProtocolEvent
+
     /** 会话终止，且这是本次连接唯一一次终止通知。 */
     public data class Closed(public val reason: ProtocolCloseReason) : ProtocolEvent
 }
