@@ -41,15 +41,15 @@
 
 ## 核心结论
 
-PickaxeCraft 是一个 **Minecraft Java 版客户端核心库**，首要联调目标是 Minestom。Headless 库是第一阶段；最终产品是在独立仓库中使用 libGDX 开发的轻量化图形客户端，本仓库不承担渲染与 UI。
+PickaxeCraft 是一个 **Minecraft Java 版客户端核心库**，首要联调目标是 Minestom。Headless 库是第一阶段；最终产品是独立仓库开发的轻量化图形客户端（桌面基于 LWJGL3，移动端以 libGDX 为平台壳），本仓库不承担渲染与 UI。
 
 - 协议、分帧、压缩、加密与状态机由 MCProtocolLib 提供，本项目不重写协议。
 - 项目自己负责会话 Actor、事件流、注册表与世界模型，这部分才是产品差异所在。
 - `protocol-core` 是唯一的协议适配层：Netty 与 MCProtocolLib 的类型不得穿透到上层模块。
-- 构建、CLI 与测试使用 Java 25；共享发布产物使用 Java 21 字节码，供 libGDX Desktop 和移动宿主消费。
+- 构建、CLI 与测试使用 Java 25；共享发布产物使用 Java 21 字节码，供桌面（LWJGL3）与移动宿主消费。
 - 平台优先级为 Desktop → Android → iOS；Android 与 iOS 均需运行时 spike，Web/HTML5 明确不做。
-- 图形客户端只依赖公共 API；libGDX、OpenGL 与宿主平台类型不得进入核心库。
-- 下游渲染以 GL20/GLES 2.0 + ANGLE 为共同基线；Windows/Linux 用第三方 `gdx-lwjgl3-angle-vulkan` 走 ANGLE→Vulkan（GLES 3.2）并以官方扩展回退，macOS 走 ANGLE Metal；跟踪 MC 26.2 的 Vulkan 演进，但不把实验性原生 Vulkan 作为初版硬要求。
+- 图形客户端只依赖公共 API；libGDX、GL/Vulkan 与宿主平台类型不得进入核心库。
+- 下游渲染完全自研，不使用 libGDX graphics API：桌面走 LWJGL3 双后端（OpenGL 默认 + 实验性 Vulkan），与 MC 26.2 同构；libGDX 仅在 Android/iOS 作平台壳（生命周期、上下文、输入、文件 IO），渲染直调平台 GLES 绑定。
 - 核心库不集成 Minestom；`testing:minestom` 仅是测试宿主。可选单人游戏由外部 Desktop/Java 25 客户端集成 Minestom，不能迫使共享产物升级为 Java 25。
 - PacketEvents、Minosoft 只作为行为参照与排错资料。
 
@@ -86,7 +86,6 @@ Android 只完成了构建链探针（D8 可产出 dex，`minSdk` 下限 26）�
 - [Minosoft](https://github.com/Bixilon/Minosoft)
 - [libGDX 的 JVM 语言与平台兼容说明](https://libgdx.com/wiki/jvm-langs/using-libgdx-with-other-jvm-languages)
 - [libGDX 开发环境与 JDK 基线](https://libgdx.com/wiki/start/setup)
-- [libGDX ANGLE 接入与限制](https://libgdx.com/wiki/graphics/opengl-es-support/angle)
-- [gdx-lwjgl3-angle-vulkan（第三方 ANGLE→Vulkan 后端）](https://github.com/Dgzt/gdx-lwjgl3-angle-vulkan)
+- [LWJGL3（桌面图形入口：GLFW + GL/Vulkan 绑定）](https://www.lwjgl.org/)
 - [ANGLE 上游后端支持矩阵](https://chromium.googlesource.com/angle/angle/+/main/README.md)
 - [MC Java 26.2 的 Vulkan 支持与回退策略](https://www.minecraft.net/zh-hans/article/minecraft-java-edition-26-2)

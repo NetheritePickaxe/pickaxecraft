@@ -16,7 +16,7 @@ PickaxeCraft 是可嵌入其他程序的 Minecraft Java 版客户端核心库，
 - 跑通 Handshake、Status、Login、Configuration、Play 的完整连接链路。
 - 支持 Minestom 离线模式登录、KeepAlive、传送确认、区块批次确认和基础移动。
 - Desktop、Android 与 iOS 宿主尽可能复用同一份 Java 21 共享实现；Android 与 iOS 必须分别通过运行时验证。
-- 为独立 libGDX 客户端提供不依赖 UI 工具箱的事件、命令和只读世界模型。
+- 为独立图形客户端提供不依赖 UI 工具箱的事件、命令和只读世界模型。
 - 为后续世界同步、在线认证和协议扩展保留清楚边界。
 
 ### 本仓库非目标
@@ -88,7 +88,7 @@ Java 21 字节码不代表完整 JDK 21 API 在 Android 上可用：`protocol-co
 ## 4. 分层与数据流
 
 ```text
-调用方 / CLI / 独立 libGDX 客户端（外部仓库）
+调用方 / CLI / 独立图形客户端（外部仓库）
                          |
                     client-core
          会话状态机、事件、注册表、世界模型
@@ -513,19 +513,18 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 
 实现记录见 [M4x](plans/m4x-riding.md)。
 
-## 6. libGDX 与平台约束
+## 6. 图形宿主与平台约束
 
-共享发布产物使用 Java 21 字节码，由 `verifyBytecode`（major 65）自动断言；构建、CLI 与测试仍使用 Java 25。libGDX 官方当前推荐 JDK 17/21，因此下游图形客户端不被迫使用 Java 25；启用 Minestom 单人模式的 Desktop 组合根除外。
+共享发布产物使用 Java 21 字节码，由 `verifyBytecode`（major 65）自动断言；构建、CLI 与测试仍使用 Java 25。libGDX 只在移动端宿主作为平台壳出现，其 JDK 17/21 基线只约束 Android/iOS 宿主；桌面宿主直接基于 LWJGL3，无 libGDX 依赖与 JDK 限制，启用 Minestom 单人模式的组合根仍使用 Java 25。
 
-### 6.1 下游渲染路线：GLES + ANGLE，跟踪原版 Vulkan 演进
+### 6.1 下游渲染路线：自研渲染器，桌面双后端对齐原版
 
-渲染实现全部位于外部 libGDX 客户端，本仓库不引入相关依赖。下游采用以下基线：
+渲染实现全部位于外部图形客户端，本仓库不引入相关依赖。下游采用以下基线：
 
-- 渲染代码以 libGDX `GL20` / OpenGL ES 2.0 为共同基线，优先保证 Desktop、Android 与 iOS 可复用；不得把 GLES、ANGLE 或 Vulkan 类型传入客户端核心。
-- Windows/Linux 的 Vulkan 路线接入第三方 `Dgzt/gdx-lwjgl3-angle-vulkan`（`Lwjgl3VulkanApplication` + `GLEmulation.ANGLE_GLES32`，由 ANGLE 翻译到 Vulkan），官方 `gdx-lwjgl3-angle` 作为回退；macOS 走官方 ANGLE→Metal，Android 优先原生 GLES，iOS 评估 libGDX MetalANGLE；不能把“使用 ANGLE”等同于“正在使用 Vulkan”。
-- 官方 ANGLE 扩展只承诺 GLES 2.0，且 `ANGLELoader` 仅解压加载 libEGL/libGLESv2、没有任何后端选择 API——Windows 打包 natives 官方只验证过 D3D11，这是 Desktop 改用第三方后端的原因。该库是单人维护的薄封装（CC0），需锁版本并跟随其版本矩阵升级；Vulkan 兼容仍必须通过运行时 renderer/vendor、实际后端和渲染测试结果证明，不能由依赖名称推断。
-- MC Java 26.2 已提供实验性 Vulkan 后端，要求 Vulkan 1.2、dynamic rendering 与 push descriptors，但默认仍为 OpenGL。下游跟踪的是这一双后端与回退方向：保留 GLES/ANGLE 可用路径，验证 Vulkan 路径，不在初版强制原生 Vulkan。
-- GLES 经 ANGLE 在 Vulkan 上运行不等于拥有原版 Vulkan 渲染器的功能或性能。若后续原版效果无法由 GLES 2.0 表达，先利用 Desktop Vulkan 路径已具备的 GLES 3.x 能力，再评估原生 Vulkan 后端，不重写核心库。
+- 渲染器完全自研，不使用 libGDX 的 graphics API；渲染代码面向自维护的最小 GL 调用面，以 GLES 2.0/3.0 语义为共同子集，优先保证 Desktop、Android 与 iOS 可复用。桌面 GL 后端承担 ES 与 desktop 方言的轻量转换；不得把 GL、GLES 或 Vulkan 类型传入客户端核心。
+- 桌面（Windows/Linux/macOS）不依赖 libGDX：LWJGL3（GLFW + GL/Vulkan 绑定）是图形入口。OpenGL 为默认可用路径与回退，实验性 Vulkan 为演进目标，与 MC Java 26.2 的双后端策略同构——保留可工作的 OpenGL，验证 Vulkan，不把实验性 Vulkan 作为初版硬要求，也不因 OpenGL 可用而冻结 Vulkan 演进。
+- 移动端 libGDX 仅作平台壳（生命周期、GL 上下文与丢失重建、输入、文件 IO、RoboVM 宿主），渲染代码直调平台 GLES 绑定：Android 优先原生 GLES（Android 10+ 可切系统 ANGLE），iOS 评估 MetalANGLE。此前两轮桌面 ANGLE 路线（官方 `gdx-lwjgl3-angle`、第三方 `gdx-lwjgl3-angle-vulkan`）废止，ANGLE 结论只保留用于移动端。
+- Vulkan 兼容必须通过运行时 renderer/vendor、实际后端和渲染测试结果证明，不能由依赖名称推断。GLES 语义子集在桌面 GL 上运行也不等于拥有原版渲染器的功能或性能；若原版效果超出子集表达力，先在桌面评估 GLES 3.x 或原生 Vulkan 路径，不重写核心库。
 
 | 平台 | 当前决策 | 验证门控 |
 | --- | --- | --- |
@@ -609,6 +608,6 @@ headless 也需要 natives：`gdx-platform:natives-desktop` 必须作为 `runtim
 - 第二个协议版本：先引入版本目录与独立适配，不把 `if (version...)` 扩散到会话逻辑。
 - 在线认证：独立认证适配，OAuth 设备流程、令牌存储与加密会话分离。
 - Android/iOS 支持：以各自 spike 结果为前提，通过后再决定是否需要独立的传输层或降级方案。
-- 渲染或 GUI：已确定由独立 libGDX 客户端实现，只能依赖客户端公共模型，不得进入 `client-core` 或 `protocol-core`。
+- 渲染或 GUI：已确定由独立图形客户端实现，只能依赖客户端公共模型，不得进入 `client-core` 或 `protocol-core`。
 - Web 支持：当前已否决；只有新的产品需求足以覆盖独立技术栈与验证成本时才重新评估。
 - 性能优化：以分配、吞吐、延迟或内存测量为依据，并保留可理解的安全实现作为行为参照。

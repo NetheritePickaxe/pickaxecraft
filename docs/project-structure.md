@@ -1,6 +1,6 @@
 # 项目结构
 
-状态：M0–M2 已完成（连接链路与出生），M4a–M4i 已完成（区块内容、实体跟踪、重生换维度、玩家身份、聊天读写、移动上行、背包只读、自身状态与装备）；Headless 为第一阶段，独立 libGDX 客户端为长期下游
+状态：M0–M2 已完成（连接链路与出生），M4a–M4i 已完成（区块内容、实体跟踪、重生换维度、玩家身份、聊天读写、移动上行、背包只读、自身状态与装备）；Headless 为第一阶段，独立图形客户端为长期下游
 日期：2026-11-04
 
 ## 1. 结构原则
@@ -105,7 +105,7 @@ Android 尚未验证。已知风险与待验证项见 `docs/architecture.md` 第
 ## 4. 依赖方向
 
 ```text
-独立 libGDX 客户端（外部仓库） ──┐
+独立图形客户端（外部仓库） ─────┐
 samples:libgdx-viewer（示例） ────┼─► client-core ──► protocol-core ──► MCProtocolLib ──► Netty
 app（CLI） ───────────────────────┘
 外部 desktop-singleplayer（可选，Java 25） ──► client-core + Minestom
