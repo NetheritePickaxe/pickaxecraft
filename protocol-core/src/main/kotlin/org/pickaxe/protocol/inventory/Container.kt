@@ -7,8 +7,10 @@ package org.pickaxe.protocol.inventory
  * 还原的键名（如 `minecraft:stone`）。数量是服务端下发的堆叠数，空槽用 `null` 表示，
  * 而不是 `count = 0` 的物品。
  *
- * 组件字段全部来自 `data_components` 补丁：缺省就是「服务端没提这件事」，用 `null`、空表或
- * `false` 表示，不能拿 0 当兜底。补丁里「带了键但值为 null」表示删除该组件，结果与缺省一致。
+ * 组件字段分两类：**状态型**字段（名字、说明、耐久损耗、附魔……）来自 `data_components` 补丁，
+ * 缺省就是「服务端没提这件事」，用 `null`、空表或 `false` 表示，不能拿 0 当兜底；
+ * **固有属性**（[maxDamage]、[maxStackSize]）是「原型默认值 + 补丁覆盖」合并后的结果——
+ * 补丁只带与原型不同的项，所以钻石剑的耐久来自本仓库的物品原型表，不是补丁。
  * 附魔键名来自配置阶段下发的 `minecraft:enchantment` 动态注册表，不是版本常量。
  */
 public data class InventoryItem(
@@ -24,8 +26,20 @@ public data class InventoryItem(
     public val lore: List<String> = emptyList(),
     /** 已损耗的耐久值（`damage`）；没有该组件就是 null。 */
     public val damage: Int? = null,
-    /** 最大耐久（`max_damage`）；没有该组件就是 null。 */
+    /**
+     * 该物品类型能承受的耐久（原型默认值与补丁合并后的结果）。
+     *
+     * null 表示不可损坏（石头、木棍）或物品 id 未知；两者都是「没有耐久上限」，
+     * 与「还不知道能修几次」不是一回事。
+     */
     public val maxDamage: Int? = null,
+    /**
+     * 堆叠上限（原型默认值与补丁合并后的结果）。
+     *
+     * 常见值是 1（工具）、16（末影珍珠）、64（方块）；null 表示物品 id 未知，
+     * 或服务端显式删除了 `max_stack_size` 组件（此时本层不猜默认值）。
+     */
+    public val maxStackSize: Int? = null,
     /** 是否带 `unbreakable` 组件。 */
     public val unbreakable: Boolean = false,
     /** 铁砧累计修复次数（`repair_cost`）；没有该组件就是 null。 */

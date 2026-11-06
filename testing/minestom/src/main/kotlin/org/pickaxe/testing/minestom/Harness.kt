@@ -388,6 +388,19 @@ public fun giveNamedItem(username: String, material: Material, count: Int, name:
 }
 
 /**
+ * 塞入一个**不设任何组件**的物品。
+ *
+ * 与 [giveNamedItem] 的区别是连名字都不设：组件补丁为空，服务端只会下发 id 与数量，
+ * 耐久与堆叠上限只能由客户端查自己的物品原型表补齐——这是验证原型合并的入口。
+ */
+public fun givePlainItem(username: String, material: Material, count: Int): Boolean {
+    val player = MinecraftServer.getConnectionManager().getOnlinePlayerByUsername(username) ?: return false
+    val added = player.inventory.addItemStack(ItemStack.of(material, count))
+    println("event=server.give.plain name=$username item=${material.key()} count=$count added=$added")
+    return added
+}
+
+/**
  * 塞一把把常用组件都设满的钻石剑，用于验证客户端能完整读出物品组件。
  *
  * 附魔用 `RegistryKey` 而不是枚举常量：附魔是可由服务端扩展的动态注册表，键名由配置阶段

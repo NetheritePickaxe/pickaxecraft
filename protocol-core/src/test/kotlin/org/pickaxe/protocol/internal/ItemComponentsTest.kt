@@ -43,7 +43,8 @@ class ItemComponentsTest {
         assertEquals("石头", item.itemName)
         assertEquals(listOf("第一行", "第二行"), item.lore)
         assertEquals(7, item.damage)
-        assertEquals(1561, item.maxDamage)
+        assertEquals(1561, item.maxDamage, "补丁带值就覆盖原型")
+        assertEquals(64, item.maxStackSize, "补丁没提堆叠上限，取自原型表")
         assertTrue(item.unbreakable)
         assertEquals(2, item.repairCost)
         assertEquals(mapOf("minecraft:sharpness" to 3, "minecraft:mending" to 1), item.enchantments)
@@ -51,7 +52,31 @@ class ItemComponentsTest {
     }
 
     @Test
-    fun `补丁里显式删除组件与缺省等价`() {
+    fun `原型派生字段区分没提与显式删除`() {
+        // 只改了附魔的钻石剑：补丁里没有 max_damage，耐久必须来自原型表。
+        val enchanted = ItemComponents.read(
+            ItemStack(964, 1, DataComponents(HashMap()).apply {
+                put(DataComponentTypes.ENCHANTMENTS, ItemEnchantments(mapOf(0 to 3)))
+            }),
+            enchantmentKeys,
+        )
+        assertEquals(1561, enchanted.maxDamage)
+        assertEquals(1, enchanted.maxStackSize)
+
+        // 显式删除组件：这个物品确实没有该组件，不回退原型，也不猜默认值。
+        val stripped = ItemComponents.read(
+            ItemStack(964, 1, DataComponents(HashMap()).apply {
+                removeExplicitly(DataComponentTypes.MAX_DAMAGE)
+                removeExplicitly(DataComponentTypes.MAX_STACK_SIZE)
+            }),
+            enchantmentKeys,
+        )
+        assertNull(stripped.maxDamage)
+        assertNull(stripped.maxStackSize)
+    }
+
+    @Test
+    fun `状态型组件显式删除与缺省等价`() {
         val patch = DataComponents(HashMap()).apply {
             removeExplicitly(DataComponentTypes.CUSTOM_NAME)
             removeExplicitly(DataComponentTypes.UNBREAKABLE)
@@ -77,13 +102,14 @@ class ItemComponentsTest {
     }
 
     @Test
-    fun `没有组件补丁的物品字段全部为默认`() {
+    fun `没有组件补丁时状态字段为空而原型字段来自原型表`() {
         val item = ItemComponents.read(ItemStack(1), enchantmentKeys)
         assertNull(item.customName)
         assertNull(item.itemName)
         assertTrue(item.lore.isEmpty())
         assertNull(item.damage)
-        assertNull(item.maxDamage)
+        assertNull(item.maxDamage, "石头不可损坏")
+        assertEquals(64, item.maxStackSize)
         assertFalse(item.unbreakable)
         assertNull(item.repairCost)
         assertTrue(item.enchantments.isEmpty())

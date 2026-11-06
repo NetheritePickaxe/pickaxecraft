@@ -48,3 +48,7 @@
   harness 里直接 `RegistryKey.of<Enchantment>("sharpness")` 更合适。
 - `Unit` 组件在服务端是 `net.minestom.server.utils.Unit`，在协议库是同名的另一个类；
   Kotlin 里要用 import 别名，别和 `kotlin.Unit` 混在一起。
+- 本文「还原完整原型不建模」的结论已被 [M4y](m4y-item-prototypes.md) 推翻：原型表由 Minestom
+  注册表导出成 `ItemPrototypes`，`maxDamage` / `maxStackSize` 现在返回合并后的值。当时用
+  补丁值 2000 而不是默认值做联调，反而掩盖了「普通钻石剑读到 null」的问题——`giveComponentItem`
+  因此仍在，但原型语义改由不设任何组件的 `givePlainItem` 用例覆盖。

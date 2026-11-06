@@ -1487,6 +1487,48 @@ class ClientSessionTest {
     }
 
     @Test
+    fun `物品原型默认值可读`() = runBlocking {
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, PROTOTYPE_USERNAME)
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+                // 三件物品都不设任何组件：服务端只会下发 id 与数量，耐久与堆叠上限只能由
+                // 客户端查自己的物品原型表补齐。
+                assertTrue(
+                    withContext(Dispatchers.IO) {
+                        givePlainItem(PROTOTYPE_USERNAME, Material.DIAMOND_SWORD, 1) &&
+                            givePlainItem(PROTOTYPE_USERNAME, Material.STONE, 3) &&
+                            givePlainItem(PROTOTYPE_USERNAME, Material.ENDER_PEARL, 2)
+                    },
+                    "服务端应把三件物品放进背包",
+                )
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    val keys = session.inventory()?.slots.orEmpty().mapNotNull { it?.key }.toSet()
+                    keys.containsAll(PROTOTYPE_ITEM_KEYS)
+                }
+                val slots = session.inventory()?.slots.orEmpty()
+                val sword = assertNotNull(slots.firstOrNull { it?.key == "minecraft:diamond_sword" })
+                assertEquals(PROTOTYPE_SWORD_MAX_DAMAGE, sword.maxDamage, "钻石剑的耐久来自原型表，不是补丁")
+                assertEquals(1, sword.maxStackSize)
+                val stone = assertNotNull(slots.firstOrNull { it?.key == "minecraft:stone" })
+                assertNull(stone.maxDamage, "石头不可损坏，不该拿 0 或原型值兜底")
+                assertEquals(64, stone.maxStackSize)
+                val pearl = assertNotNull(slots.firstOrNull { it?.key == "minecraft:ender_pearl" })
+                assertNull(pearl.maxDamage)
+                assertEquals(16, pearl.maxStackSize)
+            } finally {
+                log.close()
+                session.close()
+            }
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `实体属性可读且变化会推给本人`() = runBlocking {
         val client = MinecraftClient()
         try {
@@ -2092,6 +2134,12 @@ class ClientSessionTest {
 
         /** 物品组件用例：一把把常用组件设满的钻石剑。 */
         const val COMPONENT_USERNAME: String = "ComponentBot"
+
+        /** 物品原型用例：三件都不设组件的物品，耐久与堆叠上限只能来自客户端原型表。 */
+        const val PROTOTYPE_USERNAME: String = "PrototypeBot"
+        const val PROTOTYPE_SWORD_MAX_DAMAGE: Int = 1561
+        val PROTOTYPE_ITEM_KEYS: Set<String> =
+            setOf("minecraft:diamond_sword", "minecraft:stone", "minecraft:ender_pearl")
 
         /** 运动状态用例：上行包由 PlayerPacketEvent 登记，能力由服务端权威下发。 */
         const val MOTION_USERNAME: String = "MotionBot"

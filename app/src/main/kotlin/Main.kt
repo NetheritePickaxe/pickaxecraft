@@ -627,11 +627,13 @@ private suspend fun reportCompletion(session: Session, text: String) {
     }
 }
 
-/** 摘要里把物品的非默认组件一起列出来，便于肉眼核对组件补丁是否穿过协议。 */
+/** 摘要里把物品的非默认组件一起列出来，便于肉眼核对组件补丁与原型默认值。 */
 private fun describeItem(item: InventoryItem): String {
     val details = buildList {
         item.damage?.let { add("damage=$it") }
         item.maxDamage?.let { add("maxDamage=$it") }
+        // 64 是绝大多数物品的堆叠上限，只把例外列出来，摘要才不会被填满。
+        item.maxStackSize?.takeIf { it != DEFAULT_STACK_SIZE }?.let { add("maxStack=$it") }
         if (item.unbreakable) add("unbreakable")
         item.repairCost?.let { add("repairCost=$it") }
         item.enchantments.forEach { (key, level) -> add("$key=$level") }
@@ -641,6 +643,9 @@ private fun describeItem(item: InventoryItem): String {
     val key = item.key ?: "#${item.itemId}"
     return if (details.isEmpty()) key else "$key(${details.joinToString(",")})"
 }
+
+/** 协议里没有堆叠上限组件的物品按 64 计，摘要据此决定是否展示这一项。 */
+private const val DEFAULT_STACK_SIZE: Int = 64
 
 /** 解析后的命令行参数。 */
 private data class ParsedArgs(

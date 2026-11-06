@@ -37,3 +37,17 @@ tasks.named<Test>("test") {
         showStandardStreams = true
     }
 }
+
+// 版本资产导出：只显式运行，不挂 build —— 生成文件属于源码，不能让构建静默改写它。
+// 升级 mcprotocollib/minestom 后跑一次，用 diff 判断上游改了什么。
+tasks.register<JavaExec>("exportItemPrototypes") {
+    group = "asset"
+    description = "从 Minestom 物品注册表重导出 protocol-core 的 ItemPrototypes.kt"
+    mainClass.set("org.pickaxe.testing.minestom.asset.ExportAssetsKt")
+    classpath = sourceSets["main"].runtimeClasspath
+    args(
+        "item-prototypes",
+        rootProject.file("protocol-core/src/main/kotlin/org/pickaxe/protocol/item/ItemPrototypes.kt").absolutePath,
+        "Minestom ${libs.versions.minestom.get()}",
+    )
+}
