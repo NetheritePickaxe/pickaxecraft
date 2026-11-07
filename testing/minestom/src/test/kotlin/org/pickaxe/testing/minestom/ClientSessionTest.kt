@@ -59,6 +59,8 @@ import org.pickaxe.protocol.command.CommandArgumentType
 import org.pickaxe.protocol.command.CommandNodeKind
 import org.pickaxe.protocol.command.CommandTextMode
 import org.pickaxe.protocol.inventory.Container
+import org.pickaxe.protocol.inventory.CreativeItem
+import org.pickaxe.protocol.inventory.DragButton
 import org.pickaxe.protocol.inventory.PlayerInventoryLayout
 import org.pickaxe.protocol.inventory.SlotClick
 import org.pickaxe.protocol.world.BlockFace
@@ -1587,6 +1589,113 @@ class ClientSessionTest {
     }
 
     @Test
+    fun `拖拽与创造模式按服务端权威对账`() = runBlocking {
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, CREATIVE_USERNAME)
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+
+                // 门控：模式未知或不是创造时，创造写入 API 必须本地拒绝而不是发出去被忽略。
+                assertFailsWith<IllegalStateException> {
+                    session.setCreativeSlot(DRAG_SOURCE_SLOT, CreativeItem(STONE_ITEM_ID, 1))
+                }
+                assertFailsWith<IllegalStateException> { session.grabMaxStack(DRAG_SOURCE_SLOT) }
+
+                // 切创造：Minestom 广播玩家列表的 UPDATE_GAME_MODE（本人也在内），
+                // gameMode 应随之刷新——登录快照不会自己变。
+                assertTrue(
+                    withContext(Dispatchers.IO) { setGameMode(CREATIVE_USERNAME, "CREATIVE") },
+                    "服务端应能把玩家切成创造模式",
+                )
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.gameMode.value == "CREATIVE" }
+
+                // 创造写入：快捷栏第 0 格放 12 块石头；服务端事件与客户端单槽更新双侧对账。
+                session.setCreativeSlot(DRAG_SOURCE_SLOT, CreativeItem(STONE_ITEM_ID, 12))
+                assertTrue(
+                    withContext(Dispatchers.IO) {
+                        awaitCreativeAction(CREATIVE_USERNAME, DRAG_SOURCE_SLOT, MILESTONE_TIMEOUT)
+                    },
+                    "服务端应收到对源槽位的创造写入",
+                )
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    session.inventory()?.slots?.getOrNull(DRAG_SOURCE_SLOT)?.count == 12
+                }
+
+                // 左键拖拽均分：拿起 12 个，拖到 3 格，每格 4 个；客户端与服务端背包对账。
+                session.clickSlot(DRAG_SOURCE_SLOT, SlotClick.Pickup())
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.cursorItem()?.count == 12 }
+                session.drag(listOf(DRAG_TARGET_FIRST, DRAG_TARGET_FIRST + 1, DRAG_TARGET_FIRST + 2), DragButton.LEFT)
+                assertTrue(
+                    withContext(Dispatchers.IO) { awaitPlayerPacket(CREATIVE_USERNAME, "drag.2", MILESTONE_TIMEOUT) },
+                    "服务端应收到左键拖拽的 end 包",
+                )
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    val slots = session.inventory()?.slots.orEmpty()
+                    (0..2).all { slots.getOrNull(DRAG_TARGET_FIRST + it)?.count == 4 }
+                }
+                assertNull(session.cursorItem(), "光标应被均分完")
+                for (i in 0..2) {
+                    val serverItem = withContext(Dispatchers.IO) {
+                        serverInventorySlot(CREATIVE_USERNAME, DRAG_TARGET_FIRST + i)
+                    }
+                    assertEquals(4, serverItem?.amount(), "服务端第 $i 格应分到 4 个石头")
+                }
+
+                // 右键拖拽每槽 1 个：换两格干净的槽，光标剩 5 个。
+                session.setCreativeSlot(DRAG_SOURCE_SLOT, CreativeItem(STONE_ITEM_ID, 7))
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    session.inventory()?.slots?.getOrNull(DRAG_SOURCE_SLOT)?.count == 7
+                }
+                session.clickSlot(DRAG_SOURCE_SLOT, SlotClick.Pickup())
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.cursorItem()?.count == 7 }
+                session.drag(listOf(DRAG_TARGET_FIRST + 3, DRAG_TARGET_FIRST + 4), DragButton.RIGHT)
+                assertTrue(
+                    withContext(Dispatchers.IO) { awaitPlayerPacket(CREATIVE_USERNAME, "drag.6", MILESTONE_TIMEOUT) },
+                    "服务端应收到右键拖拽的 end 包",
+                )
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.cursorItem()?.count == 5 }
+                assertEquals(1, session.inventory()?.slots?.getOrNull(DRAG_TARGET_FIRST + 3)?.count)
+                assertEquals(1, session.inventory()?.slots?.getOrNull(DRAG_TARGET_FIRST + 4)?.count)
+                assertEquals(
+                    1,
+                    withContext(Dispatchers.IO) {
+                        serverInventorySlot(CREATIVE_USERNAME, DRAG_TARGET_FIRST + 3)?.amount()
+                    },
+                    "服务端该格应各分到 1 个",
+                )
+
+                // 创造取整堆：Minestom 的 middleClick 是 TODO 空桩（两个实现都返回 false），
+                // 端到端结算无法对账——动作映射由 ContainerClicksTest 钉住，门控在上面已验证，
+                // 这里不再断言一个上游没实现的行为。
+
+                // 清空：null 写入后，客户端与服务端的这一格都变回空。
+                session.setCreativeSlot(DRAG_TARGET_FIRST + 6, CreativeItem(STONE_ITEM_ID, 3))
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    session.inventory()?.slots?.getOrNull(DRAG_TARGET_FIRST + 6)?.count == 3
+                }
+                session.setCreativeSlot(DRAG_TARGET_FIRST + 6, null)
+                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    session.inventory()?.slots?.getOrNull(DRAG_TARGET_FIRST + 6) == null
+                }
+                assertTrue(
+                    withContext(Dispatchers.IO) {
+                        serverInventorySlot(CREATIVE_USERNAME, DRAG_TARGET_FIRST + 6)?.isAir ?: false
+                    },
+                    "服务端该格也应被清空",
+                )
+            } finally {
+                log.close()
+                session.close()
+            }
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `实体属性可读且变化会推给本人`() = runBlocking {
         val client = MinecraftClient()
         try {
@@ -2203,6 +2312,12 @@ class ClientSessionTest {
         const val PLUGIN_USERNAME: String = "PluginBot"
         const val PLUGIN_CHANNEL: String = "pickaxecraft:test"
         const val HARNESS_BRAND: String = "PickaxeHarness"
+
+        /** 拖拽与创造模式用例：石头 id 来自物品表（`minecraft:stone`，与原型表同源）。 */
+        const val CREATIVE_USERNAME: String = "CreativeBot"
+        const val STONE_ITEM_ID: Int = 1
+        const val DRAG_SOURCE_SLOT: Int = 36 // 快捷栏第 0 格（窗口编号）
+        const val DRAG_TARGET_FIRST: Int = 9 // 主背包第一行
 
         /** 运动状态用例：上行包由 PlayerPacketEvent 登记，能力由服务端权威下发。 */
         const val MOTION_USERNAME: String = "MotionBot"

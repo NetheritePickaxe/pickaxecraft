@@ -32,6 +32,8 @@ import org.pickaxe.protocol.entity.MobEffect
 import org.pickaxe.protocol.entity.MovementInput
 import org.pickaxe.protocol.entity.PlayerAbilities
 import org.pickaxe.protocol.inventory.Container
+import org.pickaxe.protocol.inventory.CreativeItem
+import org.pickaxe.protocol.inventory.DragButton
 import org.pickaxe.protocol.inventory.Hand
 import org.pickaxe.protocol.inventory.InventoryItem
 import org.pickaxe.protocol.inventory.PlayerInventoryLayout
@@ -109,6 +111,9 @@ public class Session internal constructor(
 
     private val mutableTransferRequest = MutableStateFlow<TransferRequest?>(null)
 
+    /** 玩家档案 UUID → 列表条目；见 [players]。 */
+    private var ownUuid: UUID? = null
+
     /**
      * 服务端最近一次要求转到的目标；没收到过时为 null。
      *
@@ -126,6 +131,17 @@ public class Session internal constructor(
      * 坏消息不改旧值，原始字节仍通过 [ClientEvent.PluginMessageReceived] 上报。
      */
     public val serverBrand: StateFlow<String?> = mutableServerBrand.asStateFlow()
+
+    private val mutableGameMode = MutableStateFlow<String?>(null)
+
+    /**
+     * 自己当前的游戏模式；尚未收到时为 null。
+     *
+     * 两个来源，都是服务端的权威声明：出生时来自登录包，之后跟随玩家列表里自己那条的
+     * `UPDATE_GAME_MODE`（中途改模式走这条路径，登录快照不会刷新）。创造模式的写入
+     * API（[grabMaxStack] / [setCreativeSlot]）以此门控，不知道模式就不发包。
+     */
+    public val gameMode: StateFlow<String?> = mutableGameMode.asStateFlow()
 
     private val mutableCommands = MutableStateFlow<CommandTree?>(null)
 
@@ -821,6 +837,68 @@ public class Session internal constructor(
     }
 
     /**
+     * 在当前活动窗口（有打开的容器时是它，否则是玩家背包）发起一次拖拽。
+     *
+     * 拖拽在协议里是 begin → 每个目标槽一条 add → end 三段包，服务端只在 end 收到后
+     * 一次性结算：左键把光标上的整堆均分到各格，右键每格放 1 个。本方法一次调用连发
+     * 全部包，三段共用活动窗口快照的 `stateId` 与点击前光标。
+     *
+     * **结果不由本端预测**：调用后各格内容不变，等服务端的权威内容更新（[container]
+     * 与 [cursorItem] 随之刷新）。拖到光标放不下的格数是服务端裁决的边界情况，本层不假设。
+     *
+     * @throws IllegalArgumentException [slots] 为空或含越界槽位
+     * @throws IllegalStateException 会话尚未进入 play、已经关闭，或该窗口内容尚未到达
+     */
+    public fun drag(slots: List<Int>, button: DragButton = DragButton.LEFT) {
+        val container = containers[activeWindowId] ?: throw IllegalStateException(
+            "窗口 $activeWindowId 的内容还没有到达，无法拖拽；等 ContainerOpened/InventoryChanged 之后再试",
+        )
+        playConnection("拖拽").drag(container, slots, button)
+    }
+
+    /**
+     * 创造模式取整堆：把活动窗口 [slot] 上的物品按堆叠上限复制到光标（原版中键点击）。
+     *
+     * 只有创造模式可用——[gameMode] 不是 `CREATIVE` 时直接抛错，不把注定被服务端
+     * 静默忽略的包发出去。结果等服务端的权威内容更新。
+     *
+     * @throws IllegalStateException 会话尚未进入 play、已经关闭、窗口内容尚未到达，
+     *   或当前不是创造模式
+     */
+    public fun grabMaxStack(slot: Int) {
+        requireCreative("取整堆")
+        val container = containers[activeWindowId] ?: throw IllegalStateException(
+            "窗口 $activeWindowId 的内容还没有到达，无法取整堆",
+        )
+        playConnection("创造模式取整堆").grabMaxStack(container, slot)
+    }
+
+    /**
+     * 直接写创造模式背包（窗口 0）的一格；[item] 为 null 表示清空该格。
+     *
+     * [slot] 用窗口 0 的编号（见 [org.pickaxe.protocol.inventory.PlayerInventoryLayout]），
+     * 与 [inventory] 读到的编号一致。包本身没有回执，成功与否由随后的
+     * [ClientEvent.InventoryChanged] 体现。
+     *
+     * 只有创造模式可用——[gameMode] 不是 `CREATIVE` 时直接抛错。
+     *
+     * @throws IllegalArgumentException 槽位不在 0..45
+     * @throws IllegalStateException 会话尚未进入 play、已经关闭，或当前不是创造模式
+     */
+    public fun setCreativeSlot(slot: Int, item: CreativeItem?) {
+        requireCreative("写入创造模式背包")
+        playConnection("创造模式放置").setCreativeSlot(slot, item)
+    }
+
+    /** 创造模式写入 API 的共同门控：不知道自己的模式，或不是创造模式，都不发包。 */
+    private fun requireCreative(what: String) {
+        val mode = mutableGameMode.value
+        check(mode == "CREATIVE") {
+            "当前游戏模式为 ${mode ?: "未知"}，只有创造模式才能$what"
+        }
+    }
+
+    /**
      * 开始挖掘 [position] 处方块的 [face] 那一面。三段挖掘的第一段。
      *
      * 服务端对开始、取消、完成都会回确认（[ClientEvent.BlockAcknowledged]）；挖掘耗时为 0 的
@@ -1071,6 +1149,11 @@ public class Session internal constructor(
                 if (!closing.get()) {
                     event.updated.forEach { players[it.uuid] = it }
                     event.removed.forEach(players::remove)
+                    // 自己那条的 UPDATE_GAME_MODE 是中途改模式的唯一通知路径；
+                    // 登录快照不会自动刷新，这里必须跟。
+                    val self = ownUuid
+                    val mine = event.updated.firstOrNull { it.uuid == self }
+                    if (mine != null) mutableGameMode.value = mine.gameMode
                 }
             }
 
@@ -1158,6 +1241,9 @@ public class Session internal constructor(
         entityEffects.clear()
         containerPropertyValues.clear()
         mutableCommands.value = null
+        mutableGameMode.value = null
+        mutableServerBrand.value = null
+        ownUuid = null
         releasePendingSuggestions()
         mutableStatus.value = PlayerStatus()
         mutableAbilities.value = PlayerAbilities()
@@ -1198,6 +1284,9 @@ public class Session internal constructor(
                 dimension = event.dimension,
                 gameMode = event.gameMode,
             )
+            // gameMode 的第一个权威来源；此后玩家列表里自己那条的更新会刷新它。
+            ownUuid = event.uuid
+            mutableGameMode.value = event.gameMode
             emit(ClientEvent.JoinedWorld(event.entityId, event.dimension, event.gameMode))
             true
         }
@@ -1234,6 +1323,8 @@ public class Session internal constructor(
                     chunksLoaded = 0,
                 )
             }
+            // 重生包自带当前模式：它比玩家列表更早到达，直接刷新。
+            mutableGameMode.value = event.gameMode
             emit(ClientEvent.Respawned(event.dimension, event.gameMode))
             true
         }
@@ -1544,6 +1635,9 @@ public class Session internal constructor(
         entityEffects.clear()
         containerPropertyValues.clear()
         mutableCommands.value = null
+        mutableGameMode.value = null
+        mutableServerBrand.value = null
+        ownUuid = null
         releasePendingSuggestions()
         mutableStatus.value = PlayerStatus()
         mutableAbilities.value = PlayerAbilities()

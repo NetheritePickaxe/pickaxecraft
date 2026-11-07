@@ -9,6 +9,8 @@ import org.pickaxe.protocol.internal.ChatInput
 import org.pickaxe.protocol.internal.DigAction
 import org.pickaxe.protocol.internal.McplConnection
 import org.pickaxe.protocol.inventory.Container
+import org.pickaxe.protocol.inventory.CreativeItem
+import org.pickaxe.protocol.inventory.DragButton
 import org.pickaxe.protocol.inventory.Hand
 import org.pickaxe.protocol.inventory.PlayerInventoryLayout
 import org.pickaxe.protocol.inventory.SlotClick
@@ -196,6 +198,47 @@ public class ProtocolConnection private constructor(
      */
     public fun clickSlot(container: Container, slot: Int, click: SlotClick) {
         connection.clickSlot(container, slot, click)
+    }
+
+    /**
+     * 发起一次拖拽：按住 [button] 对应的按键，把光标上的物品拖到 [slots] 各格。
+     *
+     * 拖拽在协议里是 begin → 每个槽一条 add → end 三段包，服务端只在 end 收到后一次性
+     * 结算；本方法一次调用连发全部包，三段共用 [container] 快照的 `stateId` 与点击前
+     * 光标。与 [clickSlot] 相同，不做本地预测——结果等服务端的权威内容更新。
+     *
+     * @throws IllegalArgumentException [slots] 为空或含越界槽位
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    public fun drag(container: Container, slots: List<Int>, button: DragButton) {
+        connection.drag(container, slots, button)
+    }
+
+    /**
+     * 创造模式取整堆（原版中键点击）：把 [slot] 上的物品按堆叠上限复制到光标。
+     *
+     * 这是 `container_click` 的一个动作，服务端只在创造模式下响应；游戏模式门控在
+     * [org.pickaxe.client.Session] 层做，本层不重复判断。
+     *
+     * @throws IllegalArgumentException 槽位越界
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    public fun grabMaxStack(container: Container, slot: Int) {
+        connection.grabMaxStack(container, slot)
+    }
+
+    /**
+     * 直接写创造模式背包的一格；[item] 为 null 表示清空该格。
+     *
+     * [slot] 用窗口 0 的编号（0–45），与服务端下发的槽位更新同一套，不需要换算。
+     * 物品只支持 id 与数量（见 [CreativeItem]）；成功与否由随后的内容更新体现，
+     * 该包本身没有回执。
+     *
+     * @throws IllegalArgumentException 槽位越界
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    public fun setCreativeSlot(slot: Int, item: CreativeItem?) {
+        connection.setCreativeSlot(slot, item)
     }
 
     /**

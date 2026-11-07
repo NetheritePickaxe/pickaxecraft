@@ -36,6 +36,7 @@
 - [M4x 实施记录](plans/m4x-riding.md)：上/下车只有乘客列表、载具包不带实体 id、骑乘时封住玩家位置包。
 - [M4y 实施记录](plans/m4y-item-prototypes.md)：固有属性靠原型表、补丁三态、版本资产改为可重跑导出。
 - [M4z 进展（见 roadmap）](roadmap.md)：插件消息是裸字节通道、品牌串按 varint 前缀代读、上行上限 32767。
+- [M4aa 进展（见 roadmap）](roadmap.md)：拖拽是三段包、创造槽位就是窗口编号、gameMode 双源门控。
 - [M3 Android 运行时验证（门控中）](plans/m3-android-runtime.md)：阻塞事实、逐条判据与解除条件。
 - [M1 实施计划](plans/m1-implementation-plan.md)：自有客户端 API、连接生命周期、联调迁移、CLI 与提前 Android 探针；末尾附实施记录与偏差。
 - [协议适配契约](protocol-contract.md)：`protocol-core` 与协议库之间哪些行为由库保证、哪些由本项目实现，以及升级检查清单。
@@ -76,10 +77,11 @@ M4r 让生物血量可读：`Session.health(entityId)` 与 `TrackedEntity.health
 M4s 让物品组件可读：`InventoryItem` 带耐久、无法破坏、修复代价、物品名、说明文字与附魔；组件是补丁而非全量，附魔键名来自配置阶段下发的动态注册表而不是静态表。
 M4y 让物品固有属性可读：`maxDamage` / `maxStackSize` 是「原型默认值 + 补丁覆盖」合并后的结果，原型表由 Minestom 注册表导出（`exportItemPrototypes` 任务，二次运行零 diff）。
 M4z 让插件消息可收发：`Session.sendPluginMessage` / `ClientEvent.PluginMessageReceived` 原样透传字节，`minecraft:brand` 按 varint 前缀代读进 `serverBrand`；发送侧本地校验渠道与 32767 字节上限。
+M4aa 让拖拽与创造模式可写：`Session.drag` 一次调用发完三段拖拽包，`setCreativeSlot` / `grabMaxStack` 以 `gameMode` 门控；创造槽位与窗口 0 编号相同，无需换算。
 
 `protocol-core` 负责协议事实转换、区块解码与资源回收，`client-core` 负责会话 Actor、有界缓冲、区块缓存与错误分类；协议库的隐含行为已写入[协议适配契约](protocol-contract.md)。
 
-Android 只完成了构建链探针（D8 可产出 dex，`minSdk` 下限 26），运行时仍属 M3 门控；拖拽与创造模式整堆操作、挖掘进度的服务端认可仍属 M4 的后续增量。
+Android 只完成了构建链探针（D8 可产出 dex，`minSdk` 下限 26），运行时仍属 M3 门控；挖掘进度的服务端认可仍属 M4 的后续增量。
 
 ## 参考文档
 

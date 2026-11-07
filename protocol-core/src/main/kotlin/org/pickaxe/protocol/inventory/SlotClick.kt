@@ -7,9 +7,10 @@ package org.pickaxe.protocol.inventory
  * 丢一个还是整堆）。把这张表交给调用方去背没有意义，因此这里只表达**想做什么**，
  * 到包字段的映射放在适配层并单测。
  *
- * 不覆盖的两类：创造模式取整堆（`CLONE`，需要判定游戏模式）与拖拽（按下—划过若干格—抬起
- * 是三个包）。点击的结果**不做本地预测**：本端只如实声明“点之前光标上是这些”，由服务端下发
- * 权威内容，[Container.cursor] 随之下发。
+ * 创造模式的两个写入动作（整堆拿取 `CREATIVE_GRAB_MAX_STACK` 与 `set_creative_mode_slot`）
+ * 也不在这里：前者需要游戏模式门控，后者只有 id 与数量，见 [DragButton] 同目录的
+ * [CreativeItem] 与适配层的对应入口。点击的结果**不做本地预测**：本端只如实声明
+ * “点之前光标上是这些”，由服务端下发权威内容，[Container.cursor] 随之下发。
  */
 public sealed interface SlotClick {
 

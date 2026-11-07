@@ -2,10 +2,13 @@ package org.pickaxe.protocol.internal
 
 import org.geysermc.mcprotocollib.protocol.data.game.inventory.ClickItemAction
 import org.geysermc.mcprotocollib.protocol.data.game.inventory.ContainerActionType
+import org.geysermc.mcprotocollib.protocol.data.game.inventory.CreativeGrabAction
 import org.geysermc.mcprotocollib.protocol.data.game.inventory.DropItemAction
 import org.geysermc.mcprotocollib.protocol.data.game.inventory.FillStackAction
 import org.geysermc.mcprotocollib.protocol.data.game.inventory.ShiftClickItemAction
+import org.geysermc.mcprotocollib.protocol.data.game.inventory.SpreadItemAction
 import org.pickaxe.protocol.inventory.Container
+import org.pickaxe.protocol.inventory.DragButton
 import org.pickaxe.protocol.inventory.InventoryItem
 import org.pickaxe.protocol.inventory.PlayerInventoryLayout
 import org.pickaxe.protocol.inventory.SlotClick
@@ -135,5 +138,72 @@ class ContainerClicksTest {
         assertEquals(2, ContainerActionType.MOVE_TO_HOTBAR_SLOT.ordinal)
         assertEquals(4, ContainerActionType.DROP_ITEM.ordinal)
         assertEquals(6, ContainerActionType.FILL_STACK.ordinal)
+        assertEquals(5, ContainerActionType.SPREAD_ITEM.ordinal)
+        assertEquals(3, ContainerActionType.CREATIVE_GRAB_MAX_STACK.ordinal)
+    }
+
+    @Test
+    fun `拖拽拆成开始加槽与结束三段`() {
+        val container = playerInventory(stateId = 3).copy(cursor = InventoryItem(itemId = 1, count = 12))
+        val packets = ContainerClicks.dragPackets(container, listOf(9, 10, 11), DragButton.LEFT)
+
+        assertEquals(5, packets.size, "begin + 3 个 add + end")
+        assertEquals(3, packets.first().stateId)
+        packets.forEach { assertEquals(3, it.stateId, "三段共用拖拽开始前的状态号") }
+
+        val begin = packets.first()
+        assertEquals(ContainerActionType.SPREAD_ITEM, begin.action)
+        assertEquals(SpreadItemAction.LEFT_MOUSE_BEGIN_DRAG, begin.param)
+        assertEquals(-999, begin.slot, "begin 不指向任何槽位")
+
+        assertEquals(SpreadItemAction.LEFT_MOUSE_ADD_SLOT, packets[1].param)
+        assertEquals(9, packets[1].slot)
+        assertEquals(SpreadItemAction.LEFT_MOUSE_ADD_SLOT, packets[3].param)
+        assertEquals(11, packets[3].slot)
+
+        val end = packets.last()
+        assertEquals(SpreadItemAction.LEFT_MOUSE_END_DRAG, end.param)
+        assertEquals(-999, end.slot, "end 同样不指向任何槽位")
+
+        packets.forEach {
+            val carried = assertNotNull(it.carriedItem, "三段共用点击前的光标")
+            assertEquals(12, carried.count)
+        }
+    }
+
+    @Test
+    fun `右键与中键拖拽用各自的按钮参数`() {
+        val container = playerInventory()
+        val right = ContainerClicks.dragPackets(container, listOf(36), DragButton.RIGHT)
+        assertEquals(SpreadItemAction.RIGHT_MOUSE_BEGIN_DRAG, right.first().param)
+        assertEquals(SpreadItemAction.RIGHT_MOUSE_END_DRAG, right.last().param)
+
+        val middle = ContainerClicks.dragPackets(container, listOf(36), DragButton.MIDDLE)
+        assertEquals(SpreadItemAction.MIDDLE_MOUSE_BEGIN_DRAG, middle.first().param)
+        assertEquals(SpreadItemAction.MIDDLE_MOUSE_END_DRAG, middle.last().param)
+    }
+
+    @Test
+    fun `空拖拽与越界槽位被拒`() {
+        assertFailsWith<IllegalArgumentException> {
+            ContainerClicks.dragPackets(playerInventory(), emptyList(), DragButton.LEFT)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ContainerClicks.dragPackets(playerInventory(), listOf(PlayerInventoryLayout.SIZE), DragButton.LEFT)
+        }
+    }
+
+    @Test
+    fun `创造模式取整堆是点击包的一个动作`() {
+        val container = playerInventory(stateId = 5)
+        val packet = ContainerClicks.grabMaxStackPacket(container, slot = 9)
+
+        assertEquals(5, packet.stateId)
+        assertEquals(9, packet.slot)
+        assertEquals(ContainerActionType.CREATIVE_GRAB_MAX_STACK, packet.action)
+        assertEquals(CreativeGrabAction.GRAB, packet.param)
+        assertNull(packet.carriedItem, "光标本来就是空的")
+        // 参数编码是 ordinal + 2：写错会被服务端解读成越界下标，协议库在反序列化时崩溃。
+        assertEquals(2, CreativeGrabAction.GRAB.getId())
     }
 }

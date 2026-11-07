@@ -3,13 +3,16 @@ package org.pickaxe.protocol.internal
 import org.geysermc.mcprotocollib.protocol.data.game.inventory.ClickItemAction
 import org.geysermc.mcprotocollib.protocol.data.game.inventory.ContainerAction
 import org.geysermc.mcprotocollib.protocol.data.game.inventory.ContainerActionType
+import org.geysermc.mcprotocollib.protocol.data.game.inventory.CreativeGrabAction
 import org.geysermc.mcprotocollib.protocol.data.game.inventory.DropItemAction
 import org.geysermc.mcprotocollib.protocol.data.game.inventory.FillStackAction
 import org.geysermc.mcprotocollib.protocol.data.game.inventory.MoveToHotbarAction
 import org.geysermc.mcprotocollib.protocol.data.game.inventory.ShiftClickItemAction
+import org.geysermc.mcprotocollib.protocol.data.game.inventory.SpreadItemAction
 import org.geysermc.mcprotocollib.protocol.data.game.item.HashedStack
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.inventory.ServerboundContainerClickPacket
 import org.pickaxe.protocol.inventory.Container
+import org.pickaxe.protocol.inventory.DragButton
 import org.pickaxe.protocol.inventory.InventoryItem
 import org.pickaxe.protocol.inventory.PlayerInventoryLayout
 import org.pickaxe.protocol.inventory.SlotClick
@@ -83,6 +86,91 @@ internal object ContainerClicks {
             emptyMap(),
         )
     }
+
+    /**
+     * 构造一次拖拽的全部包：begin → 每个槽一条 add → end。
+     *
+     * 拖拽不是一次点击：服务端只在 end 收到后一次性结算（Minestom 把 add 槽攒进列表，
+     * end 才应用「均分/每槽一个」），所以 begin 与 end 的槽位是固定的 -999（不指任何槽），
+     * 只有 add 带目标槽位。三段共用拖拽开始前那份快照的 `stateId` 与光标——拖拽期间
+     * 服务端不结算，光标不会变；照常不预测 `changedSlots`。
+     *
+     * 按键参数与协议字节一一对应（0/4/8 起，+1 加，+2 结）：左键均分、右键每槽一个、
+     * 中键创造模式放满。空槽列表直接拒绝——begin+end 什么也不做的拖拽是调用方的错误，
+     * 发出去只会让服务端的拖拽列表凭空清空。
+     */
+    fun dragPackets(
+        container: Container,
+        slots: List<Int>,
+        button: DragButton,
+    ): List<ServerboundContainerClickPacket> {
+        require(slots.isNotEmpty()) { "拖拽至少要有一个目标槽位" }
+        slots.forEach { requireSlot(container, it) }
+        val carried = container.cursor?.let(::hashed)
+        val begin = spreadAction(button, 0)
+        val add = spreadAction(button, 1)
+        val end = spreadAction(button, 2)
+        return buildList(slots.size + 2) {
+            add(click(container, CLICK_OUTSIDE_SLOT, begin, carried))
+            slots.forEach { add(click(container, it, add, carried)) }
+            add(click(container, CLICK_OUTSIDE_SLOT, end, carried))
+        }
+    }
+
+    /**
+     * 构造创造模式「取整堆」的包（原版中键点击）。
+     *
+     * 它是 `container_click` 的一个动作而不是独立包：`CREATIVE_GRAB_MAX_STACK` 把该格物品
+     * 按堆叠上限复制到光标。本库不判断游戏模式——调用方（Session）知道自己的模式并负责门控，
+     * 这里只负责把意图变成正确的字段。
+     */
+    fun grabMaxStackPacket(container: Container, slot: Int): ServerboundContainerClickPacket {
+        requireSlot(container, slot)
+        return click(container, slot, CREATIVE_GRAB_MAX_STACK, container.cursor?.let(::hashed))
+    }
+
+    private fun click(
+        container: Container,
+        slot: Int,
+        action: Pair<ContainerActionType, ContainerAction>,
+        carried: HashedStack?,
+    ): ServerboundContainerClickPacket = ServerboundContainerClickPacket(
+        container.windowId,
+        container.stateId,
+        slot,
+        action.first,
+        action.second,
+        carried,
+        emptyMap(),
+    )
+
+    /** [DragButton] + 拖拽阶段（0 起、1 加、2 结）→ 协议动作参数。 */
+    private fun spreadAction(button: DragButton, phase: Int): Pair<ContainerActionType, ContainerAction> {
+        val action = when (button) {
+            DragButton.LEFT -> when (phase) {
+                0 -> SpreadItemAction.LEFT_MOUSE_BEGIN_DRAG
+                1 -> SpreadItemAction.LEFT_MOUSE_ADD_SLOT
+                else -> SpreadItemAction.LEFT_MOUSE_END_DRAG
+            }
+            DragButton.RIGHT -> when (phase) {
+                0 -> SpreadItemAction.RIGHT_MOUSE_BEGIN_DRAG
+                1 -> SpreadItemAction.RIGHT_MOUSE_ADD_SLOT
+                else -> SpreadItemAction.RIGHT_MOUSE_END_DRAG
+            }
+            DragButton.MIDDLE -> when (phase) {
+                0 -> SpreadItemAction.MIDDLE_MOUSE_BEGIN_DRAG
+                1 -> SpreadItemAction.MIDDLE_MOUSE_ADD_SLOT
+                else -> SpreadItemAction.MIDDLE_MOUSE_END_DRAG
+            }
+        }
+        return ContainerActionType.SPREAD_ITEM to action
+    }
+
+    private val CREATIVE_GRAB_MAX_STACK: Pair<ContainerActionType, ContainerAction> =
+        ContainerActionType.CREATIVE_GRAB_MAX_STACK to CreativeGrabAction.GRAB
+
+    /** begin/end 不指向任何槽位，协议里写死的值。 */
+    private const val CLICK_OUTSIDE_SLOT: Int = -999
 
     /**
      * 物品 → 服务端用来做去同步检测的哈希。

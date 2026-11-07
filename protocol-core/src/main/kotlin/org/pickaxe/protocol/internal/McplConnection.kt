@@ -36,6 +36,8 @@ import org.geysermc.mcprotocollib.protocol.packet.common.clientbound.Clientbound
 import org.geysermc.mcprotocollib.protocol.packet.common.clientbound.ClientboundTransferPacket
 import org.geysermc.mcprotocollib.protocol.packet.common.serverbound.ServerboundClientInformationPacket
 import org.geysermc.mcprotocollib.protocol.packet.common.serverbound.ServerboundCustomPayloadPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.inventory.ServerboundSetCreativeModeSlotPacket
+import org.geysermc.mcprotocollib.protocol.packet.login.clientbound.ClientboundLoginFinishedPacket
 import org.geysermc.mcprotocollib.protocol.packet.configuration.clientbound.ClientboundRegistryDataPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundCommandSuggestionsPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.ClientboundCommandsPacket
@@ -120,8 +122,11 @@ import org.pickaxe.protocol.entity.PlayerAbilities
 import org.pickaxe.protocol.chat.ChatKind
 import org.pickaxe.protocol.chat.ChatMessage
 import org.pickaxe.protocol.inventory.Container
+import org.pickaxe.protocol.inventory.CreativeItem
+import org.pickaxe.protocol.inventory.DragButton
 import org.pickaxe.protocol.inventory.Hand
 import org.pickaxe.protocol.inventory.InventoryItem
+import org.pickaxe.protocol.inventory.PlayerInventoryLayout
 import org.pickaxe.protocol.inventory.SlotClick
 import org.pickaxe.protocol.world.BlockChange
 import org.pickaxe.protocol.world.BlockEntity
@@ -267,6 +272,14 @@ internal class McplConnection(
      */
     @Volatile
     private var selfEntityId: Int = -1
+
+    /**
+     * 本端玩家的档案 UUID（登录完成包携带）。
+     *
+     * 玩家列表里「自己那条」只能靠它对号：用户名可能被服务端改写，实体 id 也不出现在
+     * 列表里。登录完成包先于 Login 到达，因此 JoinedWorld 发射时它一定已经就位。
+     */
+    private var ownUuid: UUID? = null
 
     /**
      * 本端正在乘坐的载具实体 id；null 表示没在载具上。
@@ -429,6 +442,10 @@ internal class McplConnection(
                 emit(ProtocolEvent.RegistryData(registryId, packet.entries.size))
             }
 
+            // 登录完成包只在此处使用：它携带本端档案（UUID），是玩家列表里「自己那条」的对号键。
+            // 包处理本身（切状态、回 acknowledge）已在 super 里完成。
+            is ClientboundLoginFinishedPacket -> ownUuid = packet.profile.id
+
             is ClientboundLoginPacket -> {
                 // 注册表条目顺序即维度 id，必须在 Login 之前读出来：区块解码依赖维度高度。
                 currentDimension = dimensionOf(packet.commonPlayerSpawnInfo.dimension, "Login")
@@ -436,6 +453,8 @@ internal class McplConnection(
                 selfEntityId = packet.entityId
                 emit(
                     ProtocolEvent.JoinedWorld(
+                        // 登录完成包先于 Login 到达；缺失说明包序被上游改动，fail fast。
+                        uuid = requireNotNull(ownUuid) { "登录完成包尚未到达，拿不到本端 UUID" },
                         entityId = packet.entityId,
                         dimension = packet.commonPlayerSpawnInfo.worldName.asString(),
                         gameMode = packet.commonPlayerSpawnInfo.gameMode.name,
@@ -1479,6 +1498,55 @@ internal class McplConnection(
      */
     fun clickSlot(container: Container, slot: Int, click: SlotClick) {
         sendInPlay("点击槽位") { ContainerClicks.packet(container, slot, click) }
+    }
+
+    /**
+     * 发起一次拖拽：begin → 每个槽一条 add → end，一次调用连发全部包。
+     *
+     * 服务端只在 end 收到后一次性结算，因此中间不发任何东西与「一口气发完」对外可观察的
+     * 行为一致，而调用方不必关心三段包的编排。快照与光标的取舍同 [clickSlot]：
+     * 三段共用 [container] 的 `stateId` 与点击前光标，结果等服务端的权威内容。
+     *
+     * @throws IllegalArgumentException 目标槽位列表为空或越界
+     * @throws IllegalStateException 尚未进入 play 阶段，或连接已关闭
+     */
+    fun drag(container: Container, slots: List<Int>, button: DragButton) {
+        val packets = ContainerClicks.dragPackets(container, slots, button)
+        // 逐条 sendInPlay：阶段检查对同一线程的三连发是重复但无害的，换取与其它发送
+        // 相同的失败语义（phase 不对时一条都不发出去，在第一条就抛错）。
+        packets.forEach { sendInPlay("拖拽") { it } }
+    }
+
+    /**
+     * 创造模式取整堆（原版中键点击）：把 [slot] 上的物品按堆叠上限复制到光标。
+     *
+     * 服务端会随后的内容更新里体现光标；本库不预测结果。是否处于创造模式由上层判定，
+     * 这里只负责发出动作。
+     */
+    fun grabMaxStack(container: Container, slot: Int) {
+        sendInPlay("创造模式取整堆") { ContainerClicks.grabMaxStackPacket(container, slot) }
+    }
+
+    /**
+     * 直接写创造模式背包的一格；[item] 为 null 表示清空该格。
+     *
+     * 包里的槽位就是窗口 0 的编号（0–45，见 [PlayerInventoryLayout]），与服务端下发的
+     * `container_set_slot` 同一套，不需要换算——这是 `set_creative_mode_slot` 与
+     * `set_player_inventory` 的关键差别，后者才是另一个编号体系。
+     *
+     * 物品只带 id 与数量：包格式本身允许组件，但构造组件补丁需要反向序列化，
+     * 属于后续能力（见 [CreativeItem]）。
+     */
+    fun setCreativeSlot(slot: Int, item: CreativeItem?) {
+        require(slot in 0 until PlayerInventoryLayout.SIZE) {
+            "创造模式槽位应在 0..${PlayerInventoryLayout.SIZE - 1} 之间，实际为 $slot"
+        }
+        sendInPlay("创造模式放置") {
+            ServerboundSetCreativeModeSlotPacket(
+                slot.toShort(),
+                item?.let { ItemStack(it.itemId, it.count) },
+            )
+        }
     }
 
     /**

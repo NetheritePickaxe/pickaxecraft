@@ -54,6 +54,8 @@ public sealed interface ProtocolEvent {
      * 这是 play 阶段真正开始的标志；此时还没有位置与区块。
      */
     public data class JoinedWorld(
+        /** 本端玩家的档案 UUID（来自登录完成包），玩家列表里自己那条就靠它对号。 */
+        public val uuid: UUID,
         public val entityId: Int,
         public val dimension: String,
         public val gameMode: String,

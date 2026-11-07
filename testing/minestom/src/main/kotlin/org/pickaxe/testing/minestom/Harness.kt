@@ -15,9 +15,11 @@ import net.minestom.server.entity.EntityCreature
 import net.minestom.server.entity.EntityType
 import net.minestom.server.entity.LivingEntity
 import net.minestom.server.entity.Player
+import net.minestom.server.entity.GameMode
 import net.minestom.server.entity.attribute.Attribute
 import net.minestom.server.entity.damage.DamageType
 import net.minestom.server.event.entity.EntityAttackEvent
+import net.minestom.server.event.inventory.CreativeInventoryActionEvent
 import net.minestom.server.event.player.AsyncPlayerConfigurationEvent
 import net.minestom.server.event.player.PlayerPacketEvent
 import net.minestom.server.event.player.PlayerEntityInteractEvent
@@ -45,6 +47,8 @@ import net.minestom.server.network.packet.client.play.ClientTabCompletePacket
 import net.minestom.server.network.packet.client.play.ClientVehicleMovePacket
 import net.minestom.server.network.packet.server.common.PluginMessagePacket
 import net.minestom.server.network.packet.server.common.TransferPacket
+import net.minestom.server.network.packet.client.play.ClientClickWindowPacket
+import net.minestom.server.utils.inventory.PlayerInventoryUtils
 import net.minestom.server.network.packet.server.play.BlockEntityDataPacket
 import net.minestom.server.network.packet.server.play.EntityEffectPacket
 import net.minestom.server.network.packet.server.play.VehicleMovePacket
@@ -575,6 +579,31 @@ public fun sendBrand(username: String, brand: String): Boolean {
     return true
 }
 
+/** 改玩家游戏模式；Minestom 会广播玩家列表的 UPDATE_GAME_MODE（本人也在内）。 */
+public fun setGameMode(username: String, gameMode: String): Boolean {
+    val player = onlinePlayer(username) ?: return false
+    val mode = GameMode.valueOf(gameMode)
+    val changed = player.setGameMode(mode)
+    println("event=server.gamemode name=$username mode=$mode changed=$changed")
+    return changed
+}
+
+/**
+ * 读服务端视角下玩家背包某格的物品；[windowSlot] 是窗口 0 编号（与本客户端一致），
+ * 内部按 Minestom 的表换算成它自己的槽位编号。
+ *
+ * 拖拽与创造模式的验收都靠它：服务端背包才是权威结果，客户端读到的内容必须与它对账。
+ */
+public fun serverInventorySlot(username: String, windowSlot: Int): ItemStack? {
+    val player = onlinePlayer(username) ?: return null
+    val minestomSlot = PlayerInventoryUtils.convertWindow0SlotToMinestomSlot(windowSlot)
+    return player.inventory.getItemStack(minestomSlot)
+}
+
+/** 等待服务端收到某玩家对指定窗口槽位的创造模式写入；超时返回 false。 */
+public fun awaitCreativeAction(username: String, windowSlot: Int, timeout: Duration): Boolean =
+    awaitFact("creative|$username|$windowSlot", timeout)
+
 /** 回复一次命令补全；matches 的顺序与内容由服务端侧写死，客户端只负责读。 */
 public fun sendTabComplete(
     username: String,
@@ -758,6 +787,18 @@ public fun startHarness(port: Int = DEFAULT_PORT): InstanceContainer {
                 recordFact(packetFactKey(name, "suggest.${packet.text()}"))
                 println("event=player.suggest name=$name transaction=${packet.transactionId()} text=${packet.text()}")
             }
+            // 拖拽：add 与 begin 不产生可观察动作，end（-999 + 按钮 2/6/10）才结算整次拖拽，
+            // 记录它就是「服务端按哪组槽位结算了哪种拖拽」的直接证据。
+            is ClientClickWindowPacket -> {
+                if (
+                    packet.clickType() == ClientClickWindowPacket.ClickType.QUICK_CRAFT &&
+                    packet.slot() == (-999).toShort() &&
+                    packet.button().toInt() in intArrayOf(2, 6, 10)
+                ) {
+                    recordFact(packetFactKey(name, "drag.${packet.button()}"))
+                    println("event=player.drag name=$name endButton=${packet.button()}")
+                }
+            }
             else -> Unit
         }
     }
@@ -769,6 +810,17 @@ public fun startHarness(port: Int = DEFAULT_PORT): InstanceContainer {
         println(
             "event=player.plugin name=$name channel=${event.identifier} bytes=${event.message.size} " +
                 "utf8=${event.messageString}",
+        )
+    }
+    // 创造模式写入：事件里的槽位是 Minestom 内部编号，换算回窗口 0 编号再登记，
+    // 与 serverInventorySlot 的入参保持同一套编号。
+    MinecraftServer.getGlobalEventHandler().addListener(CreativeInventoryActionEvent::class.java) { event ->
+        val name = event.player.username
+        val windowSlot = PlayerInventoryUtils.convertMinestomSlotToWindowSlot(event.slot)
+        recordFact("creative|$name|$windowSlot")
+        println(
+            "event=player.creative name=$name windowSlot=$windowSlot " +
+                "item=${event.clickedItem.material().name()} count=${event.clickedItem.amount()}",
         )
     }
     MinecraftServer.getCommandManager().register(EchoCommand())
