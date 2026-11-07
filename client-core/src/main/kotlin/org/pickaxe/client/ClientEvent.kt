@@ -8,7 +8,9 @@ import org.pickaxe.protocol.entity.EntityAttribute
 import org.pickaxe.protocol.entity.MobEffect
 import org.pickaxe.protocol.entity.PlayerAbilities
 import org.pickaxe.protocol.world.BlockChange
+import org.pickaxe.protocol.world.BlockDestruction
 import org.pickaxe.protocol.world.BlockEntity
+import org.pickaxe.protocol.world.BlockPosition
 import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
 import java.util.UUID
@@ -75,6 +77,18 @@ public sealed interface ClientEvent {
      * 唯一直接证据。本库不做方块预测，这个事件主要是给需要严格时序的调用方对账用的。
      */
     public data class BlockAcknowledged(public val sequence: Int) : ClientEvent
+
+    /**
+     * 某一格方块的破坏进度有观测了、变了或消失了（别人在挖方块）。
+     *
+     * 事件到达时缓存已更新：[Session.destruction] 能查到同一份快照；[destruction] 为 null
+     * 表示该坐标的进度已消失（RESET），缓存里已删除对应条目。
+     * 这是观察他人的能力：本端自己挖掘时原版服务端不回这个包。
+     */
+    public data class BlockDestructionChanged(
+        public val position: BlockPosition,
+        public val destruction: BlockDestruction?,
+    ) : ClientEvent
 
     /**
      * 一列区块的光照变了（放火把、挖开地面、服务端重算）。

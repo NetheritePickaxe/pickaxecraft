@@ -421,6 +421,16 @@ class ClientSessionTest {
                 zombie.setInstance(instance, Pos(2.5, GROUND_LEVEL, 2.5)).join()
                 awaitCondition(EVENT_TIMEOUT_MILLIS) { session.entity(zombie.entityId) != null }
 
+                // 旧维度的破坏进度同样不应跨越重生。
+                val oldTarget = BlockPosition(0, GROUND_LEVEL.toInt() - 1, 0)
+                assertTrue(
+                    withContext(Dispatchers.IO) {
+                        sendBlockBreakAnimation("RespawnBot", zombie.entityId, oldTarget.x, oldTarget.y, oldTarget.z, 0)
+                    },
+                    "服务端应能下发旧维度的破坏进度",
+                )
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.destruction(oldTarget) != null }
+
                 val player = assertNotNull(
                     MinecraftServer.getConnectionManager().getOnlinePlayerByUsername("RespawnBot"),
                     "服务端应已保存该玩家",
@@ -448,6 +458,9 @@ class ClientSessionTest {
 
                 // 实体与位置都要跟着新维度重置：旧实体不再存在，位置由新的同步包给出。
                 awaitCondition(EVENT_TIMEOUT_MILLIS) { session.entity(zombie.entityId) == null }
+                // 破坏进度属于旧世界：换维度后应当清空。
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.destructions().isEmpty() }
+                assertNull(session.destruction(oldTarget))
                 awaitCondition(EVENT_TIMEOUT_MILLIS) {
                     val position = session.world.value?.position
                     position != null && abs(position.y - GROUND_LEVEL) < 1.0
@@ -1696,6 +1709,83 @@ class ClientSessionTest {
     }
 
     @Test
+    fun `破坏进度可观察且清除后条目消失`() = runBlocking {
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, DESTRUCTION_USERNAME)
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+
+                // 破坏者是一个真实实体：观察端能在实体表里对上 breakerEntityId。
+                val digger = EntityCreature(EntityType.ZOMBIE)
+                digger.setNoGravity(true)
+                digger.setInstance(instance, Pos(DESTRUCTION_DIGGER_X, GROUND_LEVEL, 1.5)).join()
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.entity(digger.entityId) != null }
+
+                val target = BlockPosition(DESTRUCTION_X, GROUND_LEVEL.toInt() - 1, DESTRUCTION_Z)
+
+                // 阶段递增：1 → 5 → 10；坐标、破坏者 id 与服务端下发逐项对账。
+                for (stage in listOf(1, 5, 10)) {
+                    assertTrue(
+                        withContext(Dispatchers.IO) {
+                            sendBlockBreakAnimation(
+                                DESTRUCTION_USERNAME,
+                                digger.entityId,
+                                target.x,
+                                target.y,
+                                target.z,
+                                (stage - 1).toByte(),
+                            )
+                        },
+                        "服务端应能下发阶段 $stage 的破坏进度",
+                    )
+                    log.await {
+                        it is ClientEvent.BlockDestructionChanged &&
+                            it.position == target && it.destruction?.stage == stage
+                    }
+                    awaitCondition(EVENT_TIMEOUT_MILLIS) { session.destruction(target)?.stage == stage }
+                    val observed = assertNotNull(session.destruction(target), "阶段 $stage 应可在会话中查到")
+                    assertEquals(digger.entityId, observed.breakerEntityId, "破坏者应与实体表对上")
+                    assertEquals(target, observed.position, "坐标应与被挖的方块一致")
+                    assertTrue(target in session.destructions().keys, "快照应包含该坐标的进度")
+                }
+
+                // RESET：条目消失，而不是变成一个阶段值；查询也回到 null。
+                assertTrue(
+                    withContext(Dispatchers.IO) {
+                        sendBlockBreakAnimation(
+                            DESTRUCTION_USERNAME,
+                            digger.entityId,
+                            target.x,
+                            target.y,
+                            target.z,
+                            10,
+                        )
+                    },
+                    "服务端应能下发 RESET",
+                )
+                log.await {
+                    it is ClientEvent.BlockDestructionChanged &&
+                        it.position == target && it.destruction == null
+                }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.destruction(target) == null }
+                assertTrue(session.destructions().isEmpty(), "RESET 后快照不应再有该坐标")
+
+                digger.remove()
+            } finally {
+                log.close()
+                session.close()
+            }
+
+            assertTrue(session.destructions().isEmpty(), "关闭后不应继续持有破坏进度")
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `实体属性可读且变化会推给本人`() = runBlocking {
         val client = MinecraftClient()
         try {
@@ -2351,6 +2441,12 @@ class ClientSessionTest {
         const val THREAD_RELEASE_TIMEOUT_MILLIS: Long = 5_000
         const val POLL_INTERVAL_MILLIS: Long = 10
         const val SESSION_THREAD_PREFIX: String = "pickaxe-mcpl"
+
+        /** 破坏进度用例：观察端与被挖的方块，破坏者是出生点附近的僵尸。 */
+        const val DESTRUCTION_USERNAME: String = "DestructionBot"
+        const val DESTRUCTION_X: Int = 8
+        const val DESTRUCTION_Z: Int = 8
+        const val DESTRUCTION_DIGGER_X: Double = 10.5
 
         /** Minestom 默认主世界的垂直范围，harness 没有自定义维度类型。 */
         const val OVERWORLD_MIN_Y: Int = -64

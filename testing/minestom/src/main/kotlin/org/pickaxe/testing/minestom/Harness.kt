@@ -9,6 +9,7 @@ import net.minestom.server.command.builder.CommandContext
 import net.minestom.server.command.builder.arguments.ArgumentType
 import net.minestom.server.command.builder.suggestion.SuggestionEntry
 import net.minestom.server.coordinate.Pos
+import net.minestom.server.coordinate.Vec
 import net.minestom.server.component.DataComponents
 import net.minestom.server.entity.Entity
 import net.minestom.server.entity.EntityCreature
@@ -49,6 +50,7 @@ import net.minestom.server.network.packet.server.common.PluginMessagePacket
 import net.minestom.server.network.packet.server.common.TransferPacket
 import net.minestom.server.network.packet.client.play.ClientClickWindowPacket
 import net.minestom.server.utils.inventory.PlayerInventoryUtils
+import net.minestom.server.network.packet.server.play.BlockBreakAnimationPacket
 import net.minestom.server.network.packet.server.play.BlockEntityDataPacket
 import net.minestom.server.network.packet.server.play.EntityEffectPacket
 import net.minestom.server.network.packet.server.play.VehicleMovePacket
@@ -603,6 +605,27 @@ public fun serverInventorySlot(username: String, windowSlot: Int): ItemStack? {
 /** 等待服务端收到某玩家对指定窗口槽位的创造模式写入；超时返回 false。 */
 public fun awaitCreativeAction(username: String, windowSlot: Int, timeout: Duration): Boolean =
     awaitFact("creative|$username|$windowSlot", timeout)
+
+/**
+ * 向 [username] 的客户端下发一条破坏进度包。
+ *
+ * Minestom 不会为挖掘广播裂纹（它的挖掘是简化实现），这条链路只能由 harness 以
+ * 服务端权威的形状直接下发：[breakerEntityId] 是破坏者的实体 id，[stage] 是线上
+ * 字节——0–9 为阶段 1–10，10 为 RESET（进度消失），与协议编码一一对应。
+ */
+public fun sendBlockBreakAnimation(
+    username: String,
+    breakerEntityId: Int,
+    x: Int,
+    y: Int,
+    z: Int,
+    stage: Byte,
+): Boolean {
+    val player = onlinePlayer(username) ?: return false
+    player.sendPacket(BlockBreakAnimationPacket(breakerEntityId, Vec(x.toDouble(), y.toDouble(), z.toDouble()), stage))
+    println("event=server.break_animation name=$username breaker=$breakerEntityId pos=($x,$y,$z) stage=$stage")
+    return true
+}
 
 /** 回复一次命令补全；matches 的顺序与内容由服务端侧写死，客户端只负责读。 */
 public fun sendTabComplete(

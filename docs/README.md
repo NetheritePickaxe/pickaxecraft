@@ -37,6 +37,7 @@
 - [M4y 实施记录](plans/m4y-item-prototypes.md)：固有属性靠原型表、补丁三态、版本资产改为可重跑导出。
 - [M4z 进展（见 roadmap）](roadmap.md)：插件消息是裸字节通道、品牌串按 varint 前缀代读、上行上限 32767。
 - [M4aa 进展（见 roadmap）](roadmap.md)：拖拽是三段包、创造槽位就是窗口编号、gameMode 双源门控。
+- [M4ab 进展（见 roadmap）](roadmap.md)：破坏进度是观察他人的能力、RESET 是删条目、换维度即作废。
 - [M3 Android 运行时验证（门控中）](plans/m3-android-runtime.md)：阻塞事实、逐条判据与解除条件。
 - [M1 实施计划](plans/m1-implementation-plan.md)：自有客户端 API、连接生命周期、联调迁移、CLI 与提前 Android 探针；末尾附实施记录与偏差。
 - [协议适配契约](protocol-contract.md)：`protocol-core` 与协议库之间哪些行为由库保证、哪些由本项目实现，以及升级检查清单。

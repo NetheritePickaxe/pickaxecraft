@@ -18,6 +18,7 @@ import org.geysermc.mcprotocollib.protocol.MinecraftProtocol
 import org.geysermc.mcprotocollib.protocol.data.ProtocolState
 import org.geysermc.mcprotocollib.protocol.data.game.PlayerListEntryAction
 import org.geysermc.mcprotocollib.protocol.data.game.entity.player.HandPreference
+import org.geysermc.mcprotocollib.protocol.data.game.entity.player.BlockBreakStage
 import org.geysermc.mcprotocollib.protocol.data.game.entity.player.PlayerState
 import org.geysermc.mcprotocollib.protocol.data.game.entity.player.PositionElement
 import org.geysermc.mcprotocollib.protocol.data.game.item.ItemStack
@@ -78,6 +79,7 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.C
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundSetCursorItemPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.inventory.ClientboundSetPlayerInventoryPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundBlockChangedAckPacket
+import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundBlockDestructionPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundBlockEntityDataPacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundBlockUpdatePacket
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundChunkBatchFinishedPacket
@@ -129,6 +131,7 @@ import org.pickaxe.protocol.inventory.InventoryItem
 import org.pickaxe.protocol.inventory.PlayerInventoryLayout
 import org.pickaxe.protocol.inventory.SlotClick
 import org.pickaxe.protocol.world.BlockChange
+import org.pickaxe.protocol.world.BlockDestruction
 import org.pickaxe.protocol.world.BlockEntity
 import org.pickaxe.protocol.world.BlockFace
 import org.pickaxe.protocol.world.BlockPosition
@@ -531,6 +534,27 @@ internal class McplConnection(
 
             is ClientboundBlockChangedAckPacket ->
                 emit(ProtocolEvent.BlockChangeAcknowledged(packet.sequence))
+
+            // 破坏进度：每条都是绝对事实（谁、哪格、第几阶段），本层不积累状态，
+            // 按坐标的合并与 RESET 删除由上层的缓存完成。RESET 表示进度消失，用 null 表达。
+            is ClientboundBlockDestructionPacket -> {
+                val position = BlockPosition(packet.position.x, packet.position.y, packet.position.z)
+                emit(
+                    ProtocolEvent.BlockDestructionChanged(
+                        position = position,
+                        destruction = if (packet.stage == BlockBreakStage.RESET) {
+                            null
+                        } else {
+                            BlockDestruction(
+                                breakerEntityId = packet.breakerEntityId,
+                                position = position,
+                                // 线上 0–9 对应 STAGE_1..STAGE_10（见协议库解码），对外用 1–10。
+                                stage = packet.stage.ordinal + 1,
+                            )
+                        },
+                    ),
+                )
+            }
 
             is ClientboundAddEntityPacket -> spawnEntity(packet)
 

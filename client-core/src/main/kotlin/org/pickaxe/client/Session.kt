@@ -39,6 +39,7 @@ import org.pickaxe.protocol.inventory.InventoryItem
 import org.pickaxe.protocol.inventory.PlayerInventoryLayout
 import org.pickaxe.protocol.inventory.SlotClick
 import org.pickaxe.protocol.world.BlockChange
+import org.pickaxe.protocol.world.BlockDestruction
 import org.pickaxe.protocol.world.BlockEntity
 import org.pickaxe.protocol.world.BlockFace
 import org.pickaxe.protocol.world.BlockPosition
@@ -234,6 +235,15 @@ public class Session internal constructor(
     private val containers = ConcurrentHashMap<Int, Container>()
 
     /**
+     * 方块破坏进度缓存，键是方块坐标。
+     *
+     * 与区块、实体同样走缓存：同一格的进度包在挖掘期间每个 tick 都会重发，逐条投递只会
+     * 把缓冲填满。每条包都是绝对事实（谁、哪格、第几阶段），这里按坐标覆盖即可；
+     * RESET 是「进度消失」，表达为删条目而不是一个阶段值。
+     */
+    private val destructions = ConcurrentHashMap<BlockPosition, BlockDestruction>()
+
+    /**
      * 实体属性缓存：实体 id → 键名 → 属性。
      *
      * 服务端每次只下发改动的属性，这里按键合并；与区块/实体一样不占事件缓冲。
@@ -314,6 +324,7 @@ public class Session internal constructor(
             // 区块与实体都属于本次会话；不清理会让已关闭的会话继续持有整个出生点视野。
             chunks.clear()
             entities.clear()
+            destructions.clear()
             passengers.clear()
             mutableVehicle.value = null
             players.clear()
@@ -358,6 +369,22 @@ public class Session internal constructor(
     /** [blockStateAt] 的方块坐标版本；交互结果核对时少写三个参数。 */
     public fun blockStateAt(position: BlockPosition): Int? =
         blockStateAt(position.x, position.y, position.z)
+
+    /**
+     * 某一格当前可见的破坏进度；没有人在挖它时返回 null。
+     *
+     * 这是**观察他人**的能力：本端自己挖掘时原版服务端不回进度包（原版客户端自己渲染），
+     * 自己的进度见 [digBlock] 的 `block_changed_ack` 回执。
+     */
+    public fun destruction(position: BlockPosition): BlockDestruction? = destructions[position]
+
+    /**
+     * 当前所有破坏进度观测的快照；每次调用都会复制一份映射。
+     *
+     * 条目数通常很小（同时挖方块的人不多），但高频渲染路径仍应优先用 [destruction]
+     * 按坐标查询，或在 [ClientEvent.BlockDestructionChanged] 上自行维护视图。
+     */
+    public fun destructions(): Map<BlockPosition, BlockDestruction> = HashMap(destructions)
 
     /**
      * 按世界坐标读取生物群系 id（`minecraft:worldgen/biome` 注册表下标）；
@@ -1038,6 +1065,18 @@ public class Session internal constructor(
                 if (!closing.get()) lastAcknowledgedSequenceValue = event.sequence
             }
 
+            // 破坏进度先写缓存再进事件流；RESET 删条目——「进度消失」不是一个阶段值。
+            is ProtocolEvent.BlockDestructionChanged -> {
+                if (!closing.get()) {
+                    val observed = event.destruction
+                    if (observed == null) {
+                        destructions.remove(event.position)
+                    } else {
+                        destructions[event.position] = observed
+                    }
+                }
+            }
+
             // 光照与方块实体同样先写缓存再进事件流：消费者收到事件时一定能查到新值。
             // 落点不存在（区块没加载）时丢弃——服务端重发整列时会带上完整数据。
             // 与区块/实体不同，这两类事件频率低且有下游意义，因此仍走事件流。
@@ -1073,6 +1112,8 @@ public class Session internal constructor(
                     entityAttributes.clear()
                     entityEffects.clear()
                     containerPropertyValues.clear()
+                    // 破坏进度同样属于旧世界：换维度后服务端会重新广播（或不广播）。
+                    destructions.clear()
                     mutableAbilities.value = PlayerAbilities()
                     mutableMovementInput.value = MovementInput()
                 }
@@ -1231,6 +1272,7 @@ public class Session internal constructor(
         actor?.cancel()
         chunks.clear()
         entities.clear()
+        destructions.clear()
         passengers.clear()
         mutableVehicle.value = null
         players.clear()
@@ -1346,6 +1388,13 @@ public class Session internal constructor(
 
         is ProtocolEvent.BlockChangeAcknowledged -> {
             emit(ClientEvent.BlockAcknowledged(event.sequence))
+            true
+        }
+
+        // 破坏进度已在 onProtocolEvent 里写好缓存，这里只上报事实；进度已消失时
+        // destruction 为 null，与「有观测」是调用方必须区分的两种状态。
+        is ProtocolEvent.BlockDestructionChanged -> {
+            emit(ClientEvent.BlockDestructionChanged(event.position, event.destruction))
             true
         }
 
@@ -1625,6 +1674,7 @@ public class Session internal constructor(
         if (!finished.compareAndSet(false, true)) return
         chunks.clear()
         entities.clear()
+        destructions.clear()
         passengers.clear()
         mutableVehicle.value = null
         players.clear()

@@ -8,7 +8,9 @@ import org.pickaxe.protocol.entity.MobEffect
 import org.pickaxe.protocol.entity.PlayerAbilities
 import org.pickaxe.protocol.inventory.Container
 import org.pickaxe.protocol.world.BlockChange
+import org.pickaxe.protocol.world.BlockDestruction
 import org.pickaxe.protocol.world.BlockEntity
+import org.pickaxe.protocol.world.BlockPosition
 import org.pickaxe.protocol.world.ChunkColumn
 import org.pickaxe.protocol.world.LightPatch
 import org.pickaxe.protocol.world.RemotePlayer
@@ -172,6 +174,21 @@ public sealed interface ProtocolEvent {
      * 方块变更不能当回执用——它也可能来自别的玩家或别的动作。
      */
     public data class BlockChangeAcknowledged(public val sequence: Int) : ProtocolEvent
+
+    /**
+     * 某一格方块的破坏进度有观测了、变了或消失了。
+     *
+     * 服务端在别人挖方块时用 `block_destruction` 广播进度；[destruction] 为 null 表示
+     * RESET——该坐标的进度已消失（方块挖掉、挖掘取消、换了目标），查询接口应删条目，
+     * 而不是把它当成一个阶段值。
+     *
+     * 与区块一样属于**世界数据**：监听者应当按坐标写缓存并立即返回。这是观察他人的能力，
+     * 本端自己挖掘时原版服务端不回这个包，自己的进度仍以 `block_changed_ack` 为准。
+     */
+    public data class BlockDestructionChanged(
+        public val position: BlockPosition,
+        public val destruction: BlockDestruction?,
+    ) : ProtocolEvent
 
     /**
      * 一个实体进入视野。[entity] 是首次观测到的完整状态。

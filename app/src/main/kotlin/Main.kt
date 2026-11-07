@@ -323,6 +323,13 @@ private fun describe(event: ClientEvent): String = when (event) {
         "event=block.changed pos=${change.position} state=${change.stateId}"
     }
     is ClientEvent.BlockAcknowledged -> "event=block.ack sequence=${event.sequence}"
+    is ClientEvent.BlockDestructionChanged -> with(event.destruction) {
+        if (this == null) {
+            "event=block.destruction pos=${event.position} stage=reset"
+        } else {
+            "event=block.destruction pos=$position breaker=$breakerEntityId stage=$stage"
+        }
+    }
     is ClientEvent.ChunkLightUpdated -> "event=light chunk=${event.chunkX},${event.chunkZ}"
     is ClientEvent.CommandTreeReceived -> "event=commands nodes=${event.tree.size} " +
         "root=${event.tree.rootIndex} literals=${event.tree.topLevelLiterals.size}"
