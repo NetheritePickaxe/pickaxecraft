@@ -431,6 +431,7 @@ class ClientSessionTest {
                 )
                 awaitCondition(EVENT_TIMEOUT_MILLIS) { session.destruction(oldTarget) != null }
 
+                val revisionBeforeRespawn = session.chunkRevision
                 val player = assertNotNull(
                     MinecraftServer.getConnectionManager().getOnlinePlayerByUsername("RespawnBot"),
                     "服务端应已保存该玩家",
@@ -445,6 +446,11 @@ class ClientSessionTest {
                 // 新维度用下界高度重新解码：minY=0、16 个 section，方块也换成下界岩。
                 awaitCondition(EVENT_TIMEOUT_MILLIS) { session.chunk(0, 0)?.minY == NETHER_MIN_Y }
                 assertEquals(NETHER_SECTIONS, session.chunk(0, 0)?.sectionCount, "256 格高应拆成 $NETHER_SECTIONS 个 section")
+                assertTrue(
+                    session.chunkRevision > revisionBeforeRespawn,
+                    "重生清空旧维度区块应推进 chunkRevision，" +
+                        "实际 $revisionBeforeRespawn -> ${session.chunkRevision}",
+                )
                 assertEquals(
                     nether.getBlock(0, 39, 0).stateId(),
                     session.blockStateAt(0, 39, 0),
@@ -590,10 +596,17 @@ class ClientSessionTest {
         val client = MinecraftClient()
         try {
             val session = client.connect(address, "Closer")
+            awaitCondition(EVENT_TIMEOUT_MILLIS) { session.loadedChunks > 0 }
+            val revisionBeforeClose = session.chunkRevision
             session.close()
             session.close()
 
             assertEquals(SessionState.CLOSED, session.state.value)
+            assertEquals(0, session.loadedChunks, "关闭应释放出生点视野")
+            assertTrue(
+                session.chunkRevision > revisionBeforeClose,
+                "close() 清空区块缓存应推进 chunkRevision，实际 $revisionBeforeClose -> ${session.chunkRevision}",
+            )
             awaitCondition(THREAD_RELEASE_TIMEOUT_MILLIS) { sessionThreads().isEmpty() }
         } finally {
             client.close()
@@ -637,6 +650,39 @@ class ClientSessionTest {
             // 被踢的会话不能影响后续连接。
             val session = client.connect(address, "AfterKick")
             session.close()
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `服务端断开后会话关闭并推进区块修订号`() = runBlocking {
+        val client = MinecraftClient()
+        try {
+            val session = client.connect(address, "KickedAfterPlay")
+            val log = EventLog(this, session)
+            try {
+                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.loadedChunks > 0 }
+                val revisionBeforeKick = session.chunkRevision
+
+                val player = assertNotNull(
+                    MinecraftServer.getConnectionManager().getOnlinePlayerByUsername("KickedAfterPlay"),
+                    "服务端应已保存该玩家",
+                )
+                player.kick(Component.text(KICK_MESSAGE))
+
+                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.state.value == SessionState.CLOSED }
+                assertEquals(0, session.loadedChunks, "finish() 应清空区块缓存")
+                assertTrue(
+                    session.chunkRevision > revisionBeforeKick,
+                    "服务端断开（finish()）清空区块缓存应推进 chunkRevision，" +
+                        "实际 $revisionBeforeKick -> ${session.chunkRevision}",
+                )
+            } finally {
+                log.close()
+                session.close()
+            }
         } finally {
             client.close()
         }
@@ -2218,6 +2264,35 @@ class ClientSessionTest {
             // 不消费事件流：缓冲很快写满，按 M1 策略应终止会话。
             val failure = assertFailsWith<ClientException.EventOverflow> { client.connect(address, "SlowConsumer") }
             assertEquals(1, failure.capacity, "错误应带上实际生效的缓冲容量")
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `事件溢出终止会话并推进区块修订号`() = runBlocking {
+        val options = ClientOptions()
+        val client = MinecraftClient(options)
+        try {
+            // 进入 play 后再制造积压：不订阅事件流，服务端持续推消息直到两级缓冲写满。
+            val session = client.connect(address, "OverflowBot")
+            awaitCondition(EVENT_TIMEOUT_MILLIS) { session.loadedChunks > 0 }
+            val revisionBeforeFlood = session.chunkRevision
+
+            val player = assertNotNull(
+                MinecraftServer.getConnectionManager().getOnlinePlayerByUsername("OverflowBot"),
+                "服务端应已保存该玩家",
+            )
+            repeat(options.eventBufferCapacity * 2 + 16) { index ->
+                player.sendPacket(SystemChatPacket(Component.text("溢出 $index"), false))
+            }
+
+            awaitCondition(EVENT_TIMEOUT_MILLIS) { session.state.value == SessionState.CLOSED }
+            assertEquals(0, session.loadedChunks, "溢出终止应清空区块缓存")
+            assertTrue(
+                session.chunkRevision > revisionBeforeFlood,
+                "溢出终止清空区块缓存应推进 chunkRevision，实际 $revisionBeforeFlood -> ${session.chunkRevision}",
+            )
         } finally {
             client.close()
         }

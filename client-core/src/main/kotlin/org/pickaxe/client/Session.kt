@@ -1706,6 +1706,8 @@ public class Session internal constructor(
     private suspend fun finish() {
         if (!finished.compareAndSet(false, true)) return
         chunks.clear()
+        // 卸载全部区块也是一次修订：渲染层据此丢弃旧索引，而不是继续引用已清空的缓存。
+        chunkRevisionCounter.incrementAndGet()
         entities.clear()
         destructions.clear()
         passengers.clear()
