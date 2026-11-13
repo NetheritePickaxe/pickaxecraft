@@ -83,3 +83,73 @@ jobs:
             **/build/test-results/
           if-no-files-found: ignore
           retention-days: 7
+
+  # Windows 只跑 build：`ShutdownHookTest` 依赖 SIGTERM，在 Windows 上自动跳过，
+  # 由上面的 Linux job 覆盖。其余测试、字节码校验与模块边界检查都要在 Windows 通过。
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Build
+        run: ./gradlew build --console=plain
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports-windows
+          path: |
+            **/build/reports/tests/
+            **/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # macOS 跑完整 build，包括 libGDX 消费示例的测试：
+  # `gdx-platform:<version>-natives-desktop` 内含 `libgdxarm64.dylib`，
+  # 因此 Apple Silicon runner 不需要跳过该模块。若将来 natives 缺失，
+  # 先记录具体错误再决定条件跳过，不要直接静默关闭覆盖。
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Build
+        run: ./gradlew build --console=plain
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports-macos
+          path: |
+            **/build/reports/tests/
+            **/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

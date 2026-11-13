@@ -1,0 +1,114 @@
+name: Upstream probe
+
+# 每周检查一次 MCProtocolLib 的上游变化：用最新版本消费已发布的 client-core，
+# 跑状态查询 + 离线登录 + 首批区块。失败通常意味着上游换了协议版本，
+# 需要本仓库跟进，而不是代码坏了。因此它只记录 issue 与摘要，不让主分支 CI 变红。
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * 2'
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Resolve the latest MCProtocolLib version
+        id: upstream
+        run: |
+          set -euo pipefail
+          version=$(curl -fsSL https://repo.opencollab.dev/main/org/geysermc/mcprotocollib/protocol/maven-metadata.xml \
+            | sed -n 's:.*<release>\(.*\)</release>.*:\1:p' | head -1)
+          if [[ -z "$version" ]]; then
+            echo "::error::无法读取上游 maven-metadata.xml"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "最新 MCProtocolLib：$version"
+
+      # 探针消费的是发布产物，而不是本仓库的工程依赖；因此先发布到 staging repo。
+      - name: Publish to staging
+        run: |
+          ./gradlew -Pversion=0.1.0 publishAllPublicationsToStagingRepository \
+            :testing:minestom:installDist --console=plain
+
+      - name: Start test server
+        run: |
+          set -euo pipefail
+          ./testing/minestom/build/install/minestom/bin/minestom --port 25565 > server.log 2>&1 &
+          for _ in $(seq 1 60); do
+            grep -q 'event=server.started' server.log && break
+            sleep 1
+          done
+          grep -q 'event=server.started' server.log || { cat server.log; exit 1; }
+
+      - name: Probe latest MCProtocolLib
+        id: probe
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          ./gradlew -p tools/upstream-probe run \
+            "-PmcplVersion=${{ steps.upstream.outputs.version }}" \
+            "-PprobePort=25565" --console=plain 2>&1 | tee probe.log
+
+      - name: Record the outcome
+        if: always()
+        run: |
+          if [[ ! -f probe.log ]]; then
+            echo "探针未运行（前面的步骤失败），见对应 step 的日志。" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "## 上游探针"
+            echo ""
+            echo "- MCProtocolLib：${{ steps.upstream.outputs.version }}"
+            echo "- 结果：${{ steps.probe.outcome }}"
+            echo ""
+            echo '```'
+            grep -E 'probe=upstream|Invalid Version|error' probe.log || tail -40 probe.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # 已开的同类 issue 不重复建；探针的失败原因就是上游协议号变化。
+      - name: Open an issue when the probe failed
+        if: steps.probe.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.upstream.outputs.version }}
+        run: |
+          set -euo pipefail
+          [[ -f probe.log ]] || { echo "probe.log 不存在，跳过建 issue。"; exit 0; }
+          title="上游 MCProtocolLib 探测失败：$VERSION"
+          existing=$(gh issue list --state open --search "$title in:title" --json number --jq 'length')
+          if [[ "$existing" != "0" ]]; then
+            echo "已有同类 issue，跳过创建。"
+            exit 0
+          fi
+          {
+            echo "用 MCProtocolLib \`$VERSION\` 消费当前 client-core 时探针失败。"
+            echo ""
+            echo "通常意味着上游协议号已前移，本仓库需要跟进适配层；失败细节："
+            echo ""
+            echo '```'
+            grep -E 'probe=upstream|Invalid Version|Exception' probe.log | head -20
+            echo '```'
+            echo ""
+            echo "复现：\`./gradlew -Pversion=0.1.0 publishAllPublicationsToStagingRepository\`，"
+            echo "启动 \`:testing:minestom\` 服务端，再跑 \`./gradlew -p tools/upstream-probe run -PmcplVersion=$VERSION\`。"
+          } > issue.md
+          gh issue create --title "$title" --body-file issue.md

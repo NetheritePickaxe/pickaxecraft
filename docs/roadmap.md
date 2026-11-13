@@ -14,40 +14,15 @@
 - 协议版本随协议库锁定，升级时同时调整协议库与 Minestom，并重跑真实握手。
 - 当前阶段未通过验收时，不通过提前建设后续模块绕过问题。
 
-## 2. 当前进度基线（2026-11-04，M2 完成）
+## 2. 当前进度索引
 
-- 模块为 `protocol-core`、`client-core`、`app`、`testing:minestom`。
-- 调用方只依赖 `client-core` 即可完成状态查询与离线登录进入 play：`MinecraftClient` 提供
-  `status` / `connect` / `close`，`Session` 提供有序事件流与幂等关闭。
-- `protocol-core` 是协议库的唯一适配层，Netty 与 MCProtocolLib 不在 `client-core` 及以上模块的编译类路径
-  （由 `verifyModuleBoundaries` 断言）。
-- 联调用例全部经由公共 API：`ClientSessionTest` 覆盖状态查询、登录到 play、注册表接收、
-  出生进入世界、会话隔离、服务端断开、连接失败、关闭后线程回收、事件溢出。
-- 协议库的行为契约（回调顺序、KeepAlive 归属、状态切换点、断开语义）记录在
-  [协议适配契约](protocol-contract.md)。
-- Android 只完成构建链探针（[Android 反糖探针](android-dex-probe.md)）：D8 可产出 dex、
-  `minSdk` 下限 26、`org.cloudburstmc.math:api` 必须剔除。运行时仍未验证。
-- 出生链路已打通：客户端收到 `ClientboundLoginPacket`、位置同步与区块批次，服务端日志出现
-  `event=player.spawned` 与 `event=player.loaded`。传送确认、区块批次确认、`player_loaded`
-  全部由适配层自动完成。
-- 世界模型：区块内容已可查询（M4a）——`Session.blockStateAt` / `biomeAt` / `chunk` 返回解码后的
-  方块状态与生物群系；实体已可跟踪（M4b）——`Session.entity` / `entities` 返回服务端视角的位置
-  与朝向，增删通过事件流可见；玩家身份可解析（M4d）——`Session.players` / `nameOf` 把实体映射到
-  用户名；聊天可读（M4e）——`Session.chat` 回看最近消息，三类来源统一成 `ChatMessage`，
-  格式键与参数来自 `chat_type` 注册表；聊天可发（M4f）——`Session.sendChat` / `sendCommand`
-  把文本交给服务端，广播回来的消息回到事件流与记录；移动可发（M4g）——`Session.moveTo` /
-  `look` 把位置与朝向声明给服务端，只发变化的分量；背包可读（M4h）——`Session.inventory` /
-  `container` / `heldItem` 给出窗口槽位上的物品与容器内容，`selectHotbarSlot` 可切换选中格；
-  自身状态可读（M4i）——`Session.status` 给出生命/饥饿/经验，实体快照带 `equipment`；
-  容器可操作（M4j）——`Session.clickSlot` 拿起、放下、Shift 转移、换到快捷栏、丢弃，
-  `closeContainer` 关窗，`cursorItem` 读光标；世界可动（M4k）——`Session.digBlock` /
-  `useOnBlock` 挖掘与放置，服务端下发的方块变更写回区块缓存（写时复制），交互序号作为回执；
-  属性可读（M4l）——`Session.attributes` / `attribute` 按键合并累积，键名表由 Minestom 注册表导出；
-  物品可读名（M4m）——`InventoryItem.key` / `customName`，键名表同样是版本资产；
-  实体可交互（M4n）——`Session.attack` / `interactWith` / `interactAt` / `swing`，
-  伤害包转成 `EntityDamaged` 事件。
-  区块环境可读（M4t）——`ChunkColumn.skyLightAt` / `blockLightAt` / `heightAt` 与
-  `Session.blockEntity` 给出光照、高度图与方块实体，光照增量更新走 `LightPatch`。
+当前进度以 [README 的“当前进度”](../README.md) 为唯一事实源；本节只做索引，不复制日期与状态，
+避免两处描述漂移。
+
+- 工程基线、客户端 API 与出生链路：M0–M2（见下文各节，实施记录在 `docs/plans/`）。
+- 世界、交互与社交能力：M4 各节（见下文；实施记录链接见 [文档入口](README.md)）。
+- 移动平台：M3 仍是门控，不进入 0.1.0 门槛（[M3 Android 运行时验证](plans/m3-android-runtime.md)）。
+- 发布工程与供应链：见 README 的“发布与兼容”，以及[发布冒烟](../tools/release-smoke/README.md)。
 
 ## 3. M0：工程基线与协议后端（已完成）
 
@@ -153,9 +128,11 @@ M1 只要求进入 GAME，不要求玩家出生、传送/区块确认或世界�
 
 ### 验收标准
 
-- 调用者无需接触数据包、Netty 或协议库即可完成基础机器人。
+- 调用者无需接触数据包、Netty 或协议库，仅用 `client-core` 就能完成这些可观察行为：
+  状态查询、离线登录并出生、读区块与光照、发聊天与命令、走到指定坐标并读回服务端确认的位置。
 - 世界状态只来自所属 Session，断线后不会泄漏到下一次连接。
-- 慢事件消费者不会破坏 KeepAlive 等协议义务，也不会导致无界内存增长。
+- 慢事件消费者不会让内存无界增长：事件缓冲写满时以 `ClientException.EventOverflow` 显式终止会话，
+  不静默丢弃事件，也不把连接继续当成可用。
 - Minestom 集成测试覆盖已公开的稳定行为。
 - libGDX 消费示例无需依赖协议库内部类型即可把区块网格化；编译类路径由 `verifyModuleBoundaries` 断言不含 Netty/协议库/Minestom。
 - 下游用运行时信息与渲染结果证明实际使用的图形后端；Vulkan 实验路径、OpenGL 回退路径、双后端切换和上下文重建均通过测试前，不宣称 Vulkan 已支持。

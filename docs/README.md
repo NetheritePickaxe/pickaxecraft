@@ -42,8 +42,12 @@
 - [M4ab 进展（见 roadmap）](roadmap.md)：破坏进度是观察他人的能力、RESET 是删条目、换维度即作废。
 - [M3 Android 运行时验证（门控中）](plans/m3-android-runtime.md)：阻塞事实、逐条判据与解除条件。
 - [M1 实施计划](plans/m1-implementation-plan.md)：自有客户端 API、连接生命周期、联调迁移、CLI 与提前 Android 探针；末尾附实施记录与偏差。
+- [错误分类与重试语义](error-handling.md)：每类 `ClientException` 的可重试性与处理建议。
+- [上游探针](../tools/upstream-probe/README.md)：用最新 MCProtocolLib 消费已发布产物的每周探针。
 - [协议适配契约](protocol-contract.md)：`protocol-core` 与协议库之间哪些行为由库保证、哪些由本项目实现，以及升级检查清单。
 - [Android 反糖探针](android-dex-probe.md)：D8 实测结论（minSdk 26、重复类、`HexFormat`）与仍未验证的运行时项。
+- [2026-11-13 测试分层与稳定性](reviews/2026-11-13-test-layering-and-stability.md)：E2E 拆分、超时诊断、终止路径断言与 10 次稳定性记录。
+- [2026-11-13 平台证据](reviews/2026-11-13-platform-evidence.md)：Android/iOS 阻塞事实、Netty 4.2.20 在 ART 上的未验证项与解除条件。
 - [2026-11-12 现状审查与可交付性判定](reviews/2026-11-12-orientation-and-deliverability-review.md)：代码导览、路线图审计、同类项目对比，以及发布门槛与优先行动清单。
 
 ## 核心结论
@@ -60,32 +64,12 @@ PickaxeCraft 是一个 **Minecraft Java 版客户端核心库**，首要联调�
 - 核心库不集成 Minestom；`testing:minestom` 仅是测试宿主。可选单人游戏由外部 Desktop/Java 25 客户端集成 Minestom，不能迫使共享产物升级为 Java 25。
 - PacketEvents、Minosoft 只作为行为参照与排错资料。
 
-M0 完成工程基线与协议后端切换；M1 补齐自有客户端 API；M2 打通出生链路：调用方只依赖 `client-core` 就能查询状态、离线登录、完成出生，并按事件流观察会话。
-M4a 让客户端读到区块内容：`Session.blockStateAt` / `biomeAt` / `chunk` 返回解码后的方块状态与生物群系，并与服务端 `stateId` 对账。
-M4b 让客户端看到实体：`Session.entity` / `entities` 返回位置与朝向（相对位移已在适配层叠加），增删通过事件流可见。
-M4c 让换维度可用：重生后按新维度重新解码区块，旧维度的区块与实体一并作废。
-M4d 让实体有名字：`Session.players` / `nameOf` 把 UUID 关联到用户名，实体快照带上自定义名称。
-M4e 让客户端能读聊天：`Session.chat` 回看最近消息，格式来自 `chat_type` 注册表，删除包按编号移除。
-M4f 让客户端能发话：`Session.sendChat` / `sendCommand` 上行，服务端广播回来的消息才是回执，不做本地回显。
-M4g 让客户端能动：`Session.moveTo` / `look` 只发变化的分量，服务端接受时没有回执，快照由本端推进。
-M4h 让客户端能看一眼背包：`Session.inventory` / `container` / `heldItem` 读窗口槽位，`selectHotbarSlot` 切换选中格。
-M4i 让客户端知道自己什么状态：`Session.status` 给生命/饥饿/经验，实体快照带 `equipment`。
-M4j 让客户端能动手：`Session.clickSlot` 拿起、放下、Shift 转移、换到快捷栏、丢弃，`closeContainer` 关窗；点击不做本地预测，服务端回的内容就是结果。
-M4k 让客户端能改世界：`Session.digBlock` 挖掘、`useOnBlock` 放置与交互，服务端下发的方块变更写回区块缓存（写时复制），交互序号作为回执。
-M4l/M4n 让客户端认识实体：`Session.attributes(entityId)` 读属性表（按键合并，键名由本仓库注册表还原——协议库内置表会错位），`attack` / `interactWith` / `swing` 上行，伤害包转成 `EntityDamaged` 事件。
-M4m 让物品可读名：`InventoryItem.key` 给出 `minecraft:stone` 这样的键名（注册表导出，协议不带这张表），`customName` 读 `custom_name` 组件。
-M4o 让本端能声明运动状态：`setSneaking` / `setSprinting` / `setFlying` 走三条不同的上行路径；`Session.abilities` 是服务端权威结果，飞行请求不本地预测。
-M4p 让药水效果可读：`Session.effects` 按键合并新增、替换与移除，`EffectKeys` 是版本资产。
-M4q 让容器数值可读：`Session.containerProperties` 按下标累积，下标含义留给知道窗口类型的调用方。
-M4r 让生物血量可读：`Session.health(entityId)` 与 `TrackedEntity.health`；下标 9 只对生物层级成立，所以先用 `LivingEntityTypes` 判定类型，掉落物等非生物留 null。
-M4s 让物品组件可读：`InventoryItem` 带耐久、无法破坏、修复代价、物品名、说明文字与附魔；组件是补丁而非全量，附魔键名来自配置阶段下发的动态注册表而不是静态表。
-M4y 让物品固有属性可读：`maxDamage` / `maxStackSize` 是「原型默认值 + 补丁覆盖」合并后的结果，原型表由 Minestom 注册表导出（`exportItemPrototypes` 任务，二次运行零 diff）。
-M4z 让插件消息可收发：`Session.sendPluginMessage` / `ClientEvent.PluginMessageReceived` 原样透传字节，`minecraft:brand` 按 varint 前缀代读进 `serverBrand`；发送侧本地校验渠道与 32767 字节上限。
-M4aa 让拖拽与创造模式可写：`Session.drag` 一次调用发完三段拖拽包，`setCreativeSlot` / `grabMaxStack` 以 `gameMode` 门控；创造槽位与窗口 0 编号相同，无需换算。
+进度以 [README 的“当前进度”](../README.md) 为唯一事实源；各里程碑的交付内容、验收证据与实施记录
+见[实施路线](roadmap.md)以及 `docs/plans/` 下的条目。
 
 `protocol-core` 负责协议事实转换、区块解码与资源回收，`client-core` 负责会话 Actor、有界缓冲、区块缓存与错误分类；协议库的隐含行为已写入[协议适配契约](protocol-contract.md)。
 
-Android 只完成了构建链探针（D8 可产出 dex，`minSdk` 下限 26），运行时仍属 M3 门控；挖掘进度的服务端认可仍属 M4 的后续增量。
+Android 仍属候选：构建链探针通过（D8 可产出 dex，`minSdk` 下限 26），运行时验证是 M3 门控；最新状态以 [README 的平台表](../README.md) 与 [M3 门控](plans/m3-android-runtime.md) 为准。
 
 ## 参考文档
 

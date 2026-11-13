@@ -46,6 +46,13 @@
 - Netty 升级到 4.2.20.Final，并用 `netty-bom` 对齐 MCProtocolLib 与 Minestom 带进来的
   传递模块；`verifyNettyVersion` 在构建期校验全链路版本一致。
 - 区块缓存增加修订号（`chunkRevision`），卸载与关闭时推进，便于下游判断缓存失效。
+- **API 变更**：`PluginMessage.data` 改为 `data()`，每次返回独立副本；内部字节不再可写。
+- **API 变更**：光照新增只读 `LightLayer`（`levelAt` / `copyInto` / `sizeBytes`），
+  `LightPatch.sky` / `block` 改为 `Map<Int, LightLayer>`；解码结果仍零拷贝共享。
+- **API 变更**：`ProtocolConnection` 标注 `PickaxeLowLevelApi`，直接使用需显式 `@OptIn`；
+  常规路径仍是 `client-core` 的 `MinecraftClient` / `Session`。
+- 版本资产（物品键名/原型、属性、效果、生物分层）改为一个可重跑导出器，
+  `:testing:minestom:exportRegistries` 一次生成五张表，二次导出零 diff。
 
 ### 修复
 

@@ -8,7 +8,19 @@ Minestom 在本仓库只用于 `testing:minestom` 联调。最终客户端若需
 
 下游渲染完全自研、不使用 libGDX graphics API：桌面（LWJGL3）走与 MC 原版同构的双后端——OpenGL 默认 + 实验性 Vulkan；libGDX 仅在 Android/iOS 作为平台壳；所有图形依赖仍只存在于外部客户端仓库。
 
-> 当前进度：M2 出生链路已完成，M4a 区块内容已可查询（`Session.blockStateAt` / `biomeAt` / `chunk`，与服务端 `stateId` 对账），M4b 实体已可跟踪（`Session.entity` / `entities`，坐标与服务端对账），M4c 重生换维度可用，M4d 玩家列表与实体名字可解析（`Session.players` / `nameOf`），M4e 聊天可读（`Session.chat`，含格式与删除），M4f 聊天可发（`Session.sendChat` / `sendCommand`），M4g 移动可发（`Session.moveTo` / `look`，只发变化的分量），M4h 背包可读（`Session.inventory` / `container` / `heldItem`，`selectHotbarSlot` 切换选中格），M4i 自身状态与装备可读（`Session.status`、`TrackedEntity.equipment`），M4j 容器可操作（`Session.clickSlot` / `closeContainer` / `cursorItem`，不做本地预测），M4k 方块可交互（`Session.digBlock` / `useOnBlock`，服务端方块变更写回缓存，交互序号作回执），M4l 属性可读（`Session.attributes(entityId)`），M4m 物品可读名（`InventoryItem.key` / `customName`），M4n 实体可交互（`Session.attack` / `interactWith` / `interactAt` / `swing`，伤害包转 `EntityDamaged` 事件），M4o 运动状态可声明（`Session.setSneaking` / `setSprinting` / `setFlying`，`Session.abilities` 为服务端权威能力），M4p 状态效果可读（`Session.effects`，`EffectKeys` 是版本资产），M4q 容器属性可读（`Session.containerProperties`），M4r 生物血量可读（`Session.health(entityId)` / `TrackedEntity.health`，按实体层级读元数据、非生物不误读），M4s 物品组件可读（`InventoryItem.damage` / `enchantments` / `lore` 等，附魔键名来自下发的动态注册表），M4t 区块环境可读（`ChunkColumn.skyLightAt` / `blockLightAt` / `heightAt`、`Session.blockEntity`，光照增量走 `LightPatch`），M4u 命令树与补全可用（`Session.commands` / `complete`，候选由服务端算），M4v 跨服转移可跟随（`Session.transferRequest` / `MinecraftClient.followTransfer`，转移包只上报地址、不自动建连接），M4w 提供 libGDX 消费示例（`samples:libgdx-viewer`，headless、不发布，把区块网格化成顶点数组），M4x 骑乘可读可动（`Session.vehicle` / `passengers` / `steerVehicle`，上/下车由乘客列表推出，骑乘时封住玩家位置包）；物品默认组件原型尚未开始，Android 运行时验证（M3）仍受环境阻塞（门控见 `docs/plans/m3-android-runtime.md`）。
+> **当前进度（0.1.0 候选）**：M0–M2 的工程基线与出生链路、M4 的全部能力已实现；
+> M3（Android 运行时）仍受环境阻塞，是候选能力而不是发布门槛。
+>
+> - **会话**：状态查询、离线登录、出生、注册表、重生换维度、跨服转移（转移包只上报地址，
+>   由 `MinecraftClient.followTransfer` 决定是否换服）、幂等关闭与分类失败。
+> - **世界**：区块内容与方块状态、光照/高度图/方块实体、实体跟踪与属性/血量/状态效果、
+>   玩家列表、挖掘与放置、破坏进度；区块缓存写时复制，并用 `chunkRevision` 通知增量变化。
+> - **交互**：背包与容器读取、槽位点击、拖拽、创造模式槽位、选中格、光标、容器属性。
+> - **社交**：聊天读写与按编号删除、命令树与补全、插件消息（含 `minecraft:brand`）。
+> - **发布**：`io.github.netheritepickaxe` 的 Java 21 字节码产物、Dokka javadoc、本地 staging repo
+>   与 Gradle/Maven 双消费者冒烟；CLI 提供人类可读与 `--json` 两种输出。
+>
+> 各能力的验收证据与实施记录见[实施路线](docs/roadmap.md)；本段是唯一的“当前进度”汇总。
 
 ## 规划文档
 

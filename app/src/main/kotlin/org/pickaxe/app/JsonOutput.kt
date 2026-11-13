@@ -73,7 +73,8 @@ internal fun jsonStatusLine(
     }.toString()
 
 private fun sessionJson(username: String?, address: ServerAddress): JsonObject = buildJsonObject {
-    if (username != null) put("username", username)
+    // 状态查询没有用户名；键仍然存在并输出 null，避免消费者按“键缺失”判断会话类型。
+    put("username", username)
     put("host", address.host)
     put("port", address.port)
 }
