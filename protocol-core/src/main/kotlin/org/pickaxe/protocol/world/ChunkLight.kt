@@ -86,8 +86,9 @@ public class LightPatch internal constructor(
  * `null` 表示“这一层没有数据”：服务端没下发、或本端从未收到过。它与“全黑”不同——
  * 全黑是一段全零数组，查询返回 0；没有数据时查询返回 `null`，让调用方自己决定用什么兜底。
  *
- * 数组直接引用服务端下发的那一段，不复制：一列 26 层、两种光加起来约 100 KB，
- * 复制一次就让出生视野的内存翻倍。这些数组在解码之后不再被写入，因此可以安全共享。
+ * 层字节直接引用服务端下发的那一段，不复制：一列 26 层、两种光加起来约 100 KB，
+ * 复制一次就让出生视野的内存翻倍。对外通过 [LightLayer] 只读暴露；这些数组在解码之后
+ * 不再被写入，因此可以安全共享。
  */
 internal class ChunkLight private constructor(
     private val sky: List<ByteArray?>,

@@ -1,0 +1,70 @@
+name: Stability
+
+# 稳定性验证：连续跑 10 次全量 E2E，把 flake 暴露出来。
+# 不阻塞主分支 CI：nightly + 手动触发，失败时保留每一轮的测试报告。
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 18 * * *'
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      # fail-fast=false：一轮失败不影响后面的轮次，10 次数据才完整。
+      # 每轮的 XML 报告单独拷一份，否则下一轮会覆盖上一轮。
+      - name: Run full E2E ten times
+        id: rounds
+        run: |
+          set -uo pipefail
+          mkdir -p stability
+          failures=0
+          for round in $(seq 1 10); do
+            echo "::group::round $round"
+            started=$(date +%s)
+            ./gradlew :protocol-core:test :samples:libgdx-viewer:test :testing:minestom:test \
+              --rerun-tasks --console=plain
+            code=$?
+            elapsed=$(( $(date +%s) - started ))
+            echo "round=$round exit=$code seconds=$elapsed"
+            if [[ "$code" -ne 0 ]]; then
+              failures=$((failures + 1))
+              echo "::error::round $round failed (exit $code)"
+            fi
+            mkdir -p "stability/round-$round"
+            find . -path '*/build/test-results/*' -name '*.xml' -exec cp --parents {} "stability/round-$round/" \;
+            echo "::endgroup::"
+          done
+          echo "failures=$failures" >> "$GITHUB_OUTPUT"
+          echo "failures=$failures of 10"
+
+      # 无论成败都上传：失败轮次的报告才是要看的证据。
+      - name: Upload round reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stability-rounds-${{ github.run_number }}
+          path: stability/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Fail when any round failed
+        if: steps.rounds.outputs.failures != '0'
+        run: |
+          echo "::error::${{ steps.rounds.outputs.failures }} 轮失败；请把根因写入 docs/reviews 的稳定性记录，不要只写“偶发”。"
+          exit 1
