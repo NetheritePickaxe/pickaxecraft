@@ -42,6 +42,7 @@
 - [M1 实施计划](plans/m1-implementation-plan.md)：自有客户端 API、连接生命周期、联调迁移、CLI 与提前 Android 探针；末尾附实施记录与偏差。
 - [协议适配契约](protocol-contract.md)：`protocol-core` 与协议库之间哪些行为由库保证、哪些由本项目实现，以及升级检查清单。
 - [Android 反糖探针](android-dex-probe.md)：D8 实测结论（minSdk 26、重复类、`HexFormat`）与仍未验证的运行时项。
+- [2026-11-12 现状审查与可交付性判定](reviews/2026-11-12-orientation-and-deliverability-review.md)：代码导览、路线图审计、同类项目对比，以及发布门槛与优先行动清单。
 
 ## 核心结论
 
