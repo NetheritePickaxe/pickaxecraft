@@ -116,7 +116,8 @@ CI 在 Ubuntu 上以同样的命令执行（`.github/workflows/ci.yml`）。
 
 ## 发布与兼容
 
-- 坐标：`io.github.netheritepickaxe:protocol-core` 与 `io.github.netheritepickaxe:client-core`，当前版本 `0.1.0-SNAPSHOT`。
+- 坐标：`io.github.netheritepickaxe:protocol-core` 与 `io.github.netheritepickaxe:client-core`。
+  `0.1.0` 已发布到 Maven Central（2026-11-14）；开发中的默认版本仍是 `0.1.0-SNAPSHOT`。
 - 本地产物：`./gradlew publishToMavenLocal` 写入 `~/.m2`；
   `./gradlew publishAllPublicationsToStagingRepository` 写入根目录 `build/staging-repo`
   （两个模块共用一个仓库，外部消费者只读这里）。发布时用 `-Pversion=0.1.0` 产出非 SNAPSHOT 版本。
