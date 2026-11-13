@@ -4,7 +4,6 @@ import net.kyori.adventure.key.Key
 import org.geysermc.mcprotocollib.protocol.data.game.command.CommandNode as McplCommandNode
 import org.geysermc.mcprotocollib.protocol.data.game.command.CommandParser
 import org.geysermc.mcprotocollib.protocol.data.game.command.CommandType
-import org.geysermc.mcprotocollib.protocol.data.game.command.properties.DoubleProperties
 import org.geysermc.mcprotocollib.protocol.data.game.command.properties.EntityProperties
 import org.geysermc.mcprotocollib.protocol.data.game.command.properties.IntegerProperties
 import org.geysermc.mcprotocollib.protocol.data.game.command.properties.StringProperties

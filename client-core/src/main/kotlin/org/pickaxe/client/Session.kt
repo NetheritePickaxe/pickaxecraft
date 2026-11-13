@@ -15,7 +15,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
-import org.pickaxe.protocol.PluginMessage
 import org.pickaxe.protocol.PluginMessages
 import org.pickaxe.protocol.ProtocolCloseReason
 import org.pickaxe.protocol.ProtocolConnection
@@ -38,12 +37,12 @@ import org.pickaxe.protocol.inventory.Hand
 import org.pickaxe.protocol.inventory.InventoryItem
 import org.pickaxe.protocol.inventory.PlayerInventoryLayout
 import org.pickaxe.protocol.inventory.SlotClick
-import org.pickaxe.protocol.world.BlockChange
 import org.pickaxe.protocol.world.BlockDestruction
 import org.pickaxe.protocol.world.BlockEntity
 import org.pickaxe.protocol.world.BlockFace
 import org.pickaxe.protocol.world.BlockPosition
 import org.pickaxe.protocol.world.ChunkColumn
+import org.pickaxe.protocol.world.ChunkPos
 import org.pickaxe.protocol.world.HeightmapType
 import org.pickaxe.protocol.world.RemotePlayer
 import org.pickaxe.protocol.world.TrackedEntity
@@ -51,6 +50,7 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -189,6 +189,9 @@ public class Session internal constructor(
      */
     private val chunks = ConcurrentHashMap<Long, ChunkColumn>()
 
+    /** 区块修订计数器：每次区块加载或卸载时递增。 */
+    private val chunkRevisionCounter = AtomicLong(0)
+
     /**
      * 会话私有的实体缓存，键是协议内的实体 id。
      *
@@ -323,6 +326,7 @@ public class Session internal constructor(
             actor?.cancel()
             // 区块与实体都属于本次会话；不清理会让已关闭的会话继续持有整个出生点视野。
             chunks.clear()
+            chunkRevisionCounter.incrementAndGet()
             entities.clear()
             destructions.clear()
             passengers.clear()
@@ -351,6 +355,27 @@ public class Session internal constructor(
 
     /** 当前已缓存的区块列数量。 */
     public val loadedChunks: Int get() = chunks.size
+
+    /**
+     * 当前已加载区块的坐标列表。
+     *
+     * 用于渲染层精确感知已加载区块范围，配合 [chunkRevision] 判断增量变化。
+     * 返回的列表按区块坐标排序（先 x 后 z），每次调用创建新列表。
+     */
+    public fun chunkCoordinates(): List<ChunkPos> = chunks.keys
+        .map { chunkKey ->
+            ChunkPos((chunkKey shr 32).toInt(), (chunkKey and 0xFFFF_FFFFL).toInt())
+        }
+        .sortedWith(compareBy<ChunkPos>({ it.x }, { it.z }))
+
+    /**
+     * 区块缓存的修订号。
+     *
+     * 每次区块加载或卸载时单调递增，渲染层可通过对比此值判断是否需要重建区块索引。
+     * 会话关闭时不重置；新会话从 0 开始。
+     */
+    public val chunkRevision: Long
+        get() = chunkRevisionCounter.get()
 
     /** 按区块坐标取一列区块；未加载、已卸载或会话已关闭时返回 null。 */
     public fun chunk(chunkX: Int, chunkZ: Int): ChunkColumn? = chunks[chunkKey(chunkX, chunkZ)]
@@ -1038,12 +1063,18 @@ public class Session internal constructor(
     private fun onProtocolEvent(event: ProtocolEvent) {
         when (event) {
             is ProtocolEvent.ChunkLoaded -> {
-                if (!closing.get()) chunks[chunkKey(event.column.x, event.column.z)] = event.column
+                if (!closing.get()) {
+                    chunks[chunkKey(event.column.x, event.column.z)] = event.column
+                    chunkRevisionCounter.incrementAndGet()
+                }
                 return
             }
 
             is ProtocolEvent.ChunkUnloaded -> {
-                if (!closing.get()) chunks.remove(chunkKey(event.x, event.z))
+                if (!closing.get()) {
+                    chunks.remove(chunkKey(event.x, event.z))
+                    chunkRevisionCounter.incrementAndGet()
+                }
                 return
             }
 
@@ -1103,6 +1134,7 @@ public class Session internal constructor(
             is ProtocolEvent.Respawned -> {
                 if (!closing.get()) {
                     chunks.clear()
+                    chunkRevisionCounter.incrementAndGet()
                     entities.clear()
                     // 乘客关系跟着旧维度的实体一起作废：新维度里的载具是新 id，
                     // 留着旧列表会让 vehicle 指向一个已经不存在的实体。
@@ -1271,6 +1303,7 @@ public class Session internal constructor(
         inbox.close()
         actor?.cancel()
         chunks.clear()
+        chunkRevisionCounter.incrementAndGet()
         entities.clear()
         destructions.clear()
         passengers.clear()

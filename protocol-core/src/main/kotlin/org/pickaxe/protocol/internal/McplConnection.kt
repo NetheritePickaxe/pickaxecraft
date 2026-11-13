@@ -23,7 +23,6 @@ import org.geysermc.mcprotocollib.protocol.data.game.entity.player.PlayerState
 import org.geysermc.mcprotocollib.protocol.data.game.entity.player.PositionElement
 import org.geysermc.mcprotocollib.protocol.data.game.item.ItemStack
 import org.geysermc.mcprotocollib.protocol.data.game.level.HeightmapTypes
-import org.geysermc.mcprotocollib.protocol.data.game.level.LightUpdateData
 import org.geysermc.mcprotocollib.protocol.data.game.level.block.BlockChangeEntry
 import org.geysermc.mcprotocollib.protocol.data.game.level.block.BlockEntityInfo
 import org.geysermc.mcprotocollib.protocol.data.game.level.block.BlockEntityType

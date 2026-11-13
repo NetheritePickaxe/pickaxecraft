@@ -51,15 +51,12 @@ import net.minestom.server.network.packet.server.common.TransferPacket
 import net.minestom.server.network.packet.client.play.ClientClickWindowPacket
 import net.minestom.server.utils.inventory.PlayerInventoryUtils
 import net.minestom.server.network.packet.server.play.BlockBreakAnimationPacket
-import net.minestom.server.network.packet.server.play.BlockEntityDataPacket
 import net.minestom.server.network.packet.server.play.EntityEffectPacket
 import net.minestom.server.network.packet.server.play.VehicleMovePacket
 import net.minestom.server.network.packet.server.play.PlayerAbilitiesPacket
 import net.minestom.server.network.packet.server.play.RemoveEntityEffectPacket
 import net.minestom.server.network.packet.server.play.TabCompletePacket
-import net.minestom.server.network.packet.server.play.UpdateLightPacket
 import net.minestom.server.network.packet.server.play.WindowPropertyPacket
-import net.minestom.server.network.packet.server.play.data.LightData
 import net.minestom.server.potion.Potion
 import net.minestom.server.potion.PotionEffect
 import org.pickaxe.protocol.ProtocolVersion
