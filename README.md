@@ -70,11 +70,22 @@ CI 在 Ubuntu 上以同样的命令执行（`.github/workflows/ci.yml`）。
 
 ## 发布与兼容
 
-- 坐标：`org.pickaxe:protocol-core` 与 `org.pickaxe:client-core`，当前版本 `0.1.0-SNAPSHOT`。
-- 本地安装：`./gradlew publishToMavenLocal`（`protocol-core`、`client-core` 及源码 jar）。发布目标仓库在首个外部消费者出现后再定。
+- 坐标：`io.github.netheritepickaxe:protocol-core` 与 `io.github.netheritepickaxe:client-core`，当前版本 `0.1.0-SNAPSHOT`。
+- 本地安装：`./gradlew publishToMavenLocal`（`protocol-core`、`client-core` 及源码 jar）。发布目标仓库在首个外部消费者出现后再定；发布时用 `-Pversion=0.1.0` 产出非 SNAPSHOT 版本。
 - 发布产物已用独立最小工程验证：mavenLocal 解析、协议库作为传递依赖进入运行时类路径、下游编译通过。
 - **0.x 阶段不承诺源码或二进制兼容**：公共 API 可能随版本变更且不提前通告，请锁定精确版本。首个下游消费者出现后冻结 API 基线并接入二进制兼容校验，1.0 起遵循语义化版本。
 - 通过 Gradle 消费时，`protocol-core` 的运行时依赖（协议库等）经模块元数据（`.module`）传递；纯 Maven 消费者的 POM 只含 `api` 依赖，当前仅支持 Gradle 消费。
 - 本项目以 [MIT](LICENSE) 开源，发布 POM 中的许可证字段同步声明；第三方依赖的许可证清单见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)，升级或新增依赖时必须同步更新。
 
-核心技术基线：Kotlin/JVM、MCProtocolLib 26.2（协议 776）、构建与 CLI 使用 Java 25、共享发布产物使用 Java 21 字节码、Gradle Daemon JDK 25。目标宿主为 libGDX Desktop、Android 与 iOS（移动平台待验证）；Web/HTML5 不在目标内。
+## 平台支持
+
+| 平台 | 状态 | 证据与边界 |
+| --- | --- | --- |
+| 标准 JVM（Windows / Linux / macOS） | 已验证 | 共享产物为 Java 21 字节码；构建、CLI 与联调使用 JDK 25。运行时下限在发布前用 JDK 21 与 JDK 25 各跑一次确认。 |
+| Android | 候选，未验证 | 构建链已探针通过（D8 可消费、`minSdk` 26）；ART + Netty NIO + 线程/资源回收仍待 M3。不阻断 0.1.0。 |
+| iOS | 候选，未验证 | 需要 macOS/Xcode + RoboVM 环境验证 Java 21、Kotlin、协程与 Netty；未验证前不作支持声明。 |
+| Web / HTML5 | 不做 | Kotlin/JVM + Netty 与浏览器运行时不匹配。 |
+
+本库不包含物理、碰撞、寻路或任务调度；这些属于下游图形客户端。
+
+核心技术基线：Kotlin/JVM、MCProtocolLib 26.2（协议 776）、构建与 CLI 使用 Java 25、共享发布产物使用 Java 21 字节码、Gradle Daemon JDK 25。目标是可嵌入标准 JVM 宿主的客户端核心；Android 与 iOS 为候选平台，移动运行时验证不进入 0.1.0 门槛。

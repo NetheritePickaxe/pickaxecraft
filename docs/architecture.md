@@ -515,7 +515,7 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 
 ## 6. 图形宿主与平台约束
 
-共享发布产物使用 Java 21 字节码，由 `verifyBytecode`（major 65）自动断言；构建、CLI 与测试仍使用 Java 25。libGDX 只在移动端宿主作为平台壳出现，其 JDK 17/21 基线只约束 Android/iOS 宿主；桌面宿主直接基于 LWJGL3，无 libGDX 依赖与 JDK 限制，启用 Minestom 单人模式的组合根仍使用 Java 25。
+共享发布产物使用 Java 21 字节码，由 `verifyBytecode`（major 65）自动断言；构建、CLI 与测试仍使用 Java 25。**标准 JVM（Windows / Linux / macOS）已验证**；运行时下限在发布前用 JDK 21 与 JDK 25 各跑一次确认。libGDX 只在移动端宿主作为平台壳出现，其 JDK 17/21 基线只约束 Android/iOS 宿主；标准 JVM 宿主直接基于 LWJGL3，无 libGDX 依赖与 JDK 限制，启用 Minestom 单人模式的组合根仍使用 Java 25。
 
 ### 6.1 下游渲染路线：自研渲染器，桌面双后端对齐原版
 
@@ -528,9 +528,9 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 
 | 平台 | 当前决策 | 验证门控 |
 | --- | --- | --- |
-| Windows / Linux / macOS Desktop | 首要支持目标 | Java 21 共享库可嵌入 LWJGL3 宿主；M4w 用仓库内 `samples:libgdx-viewer`（不发布、headless）验证网格化；启用内嵌 Minestom 单人模式时宿主使用 Java 25 |
-| Android | 明确目标，尚未承诺支持 | 构建链已探针通过（minSdk 26）；运行时（ART + Netty NIO + 资源回收）仍待 M3 |
-| iOS | 尽力保留的候选平台 | macOS/Xcode + RoboVM spike；验证 Java 21、Kotlin、协程与 Netty |
+| 标准 JVM（Windows / Linux / macOS） | **已验证**；首要支持目标 | 共享库为 Java 21 字节码；发布前用 JDK 21 与 JDK 25 各跑一次确认运行时下限；`samples:libgdx-viewer`（不发布、headless）验证网格化；启用内嵌 Minestom 单人模式时宿主使用 Java 25 |
+| Android | **候选，未验证**；不阻断 0.1.0 | 构建链已探针通过（D8 可消费、minSdk 26）；运行时（ART + Netty NIO + 线程/资源回收）待 M3 |
+| iOS | **候选，未验证**；不阻断 0.1.0 | 需 macOS/Xcode + RoboVM spike；验证 Java 21、Kotlin、协程与 Netty |
 | Web / HTML5 | 不做 | 当前 Kotlin/JVM + Netty 路线与 libGDX GWT 后端不匹配 |
 
 具体约束：

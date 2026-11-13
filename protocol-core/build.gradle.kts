@@ -3,7 +3,7 @@ plugins {
     id("pickaxe.publish")
 }
 
-description = "PickaxeCraft 协议适配层：MCProtocolLib 之上的语义事件与世界解码"
+description = "PickaxeCraft 协议适配层：MCProtocolLib 之上的语义事件与世界解码（标准 JVM 已验证；Android/iOS 候选，未验证）"
 
 dependencies {
     // MCProtocolLib 一律走 implementation：它的 Netty 类型与数据包模型

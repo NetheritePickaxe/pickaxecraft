@@ -6,7 +6,7 @@ plugins {
     id("pickaxe.publish")
 }
 
-description = "PickaxeCraft 客户端核心：会话、事件流与只读世界模型"
+description = "PickaxeCraft 客户端核心：会话、事件流与只读世界模型（标准 JVM 已验证；Android/iOS 候选，未验证）"
 
 dependencies {
     // 上层需要 ServerAddress / ServerStatus 这类项目自有类型，因此走 api。
