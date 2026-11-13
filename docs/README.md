@@ -8,6 +8,8 @@
 - [项目结构](project-structure.md)：Gradle 模块、源码目录、依赖方向和公共 API 归属。
 - [实施路线](roadmap.md)：分阶段交付内容、验收标准和范围门控。
 - [协议后端决策](decisions/0001-protocol-backend.md)：为什么从自研协议改为采用 MCProtocolLib，以及随之改变的代价。
+- [技术栈与平台路线决策](decisions/0002.md)：2026-11-03 对技术栈、平台路线与 Android 优先级的评估（历史记录）。
+- [Netty 升级决策](decisions/0003-netty-upgrade.md)：为什么升级到 4.2.20.Final、如何用 BOM 对齐传递模块，以及验证与回滚条件。
 - [M0 实施计划](plans/m0-implementation-plan.md)：工程基线的历史计划、实施偏差与验证证据。
 - [M2 实施记录](plans/m2-implementation-plan.md)：出生链路、协议应答归属，以及“harness 从未 tick”这个根因。
 - [M4a 实施记录](plans/m4a-chunk-model.md)：区块格式与维度高度、区块缓存，以及 long 数组长度前缀的踩坑。

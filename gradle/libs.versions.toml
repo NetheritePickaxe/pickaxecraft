@@ -8,9 +8,10 @@ kotlin = "2.4.21"
 # 协议运行时。MCProtocolLib 按 Minecraft 版本发版，26.2 对应协议 776，
 # 与 Minestom 2026.10.07-26.2 同步；升级任一方都必须同时调整另一侧。
 mcprotocollib = "26.2"
-# Netty 跟随 MCProtocolLib 26.2 编译时的版本。改这个数字必须重跑
-# testing:minestom 的联调用例，不能只看编译是否通过。
-netty = "4.2.1.Final"
+# Netty 是安全边界：所有 io.netty 模块由 netty-bom 对齐到同一版本，
+# 只改直接依赖会留下 netty-resolver / codec-base 等传递模块的旧版本。
+# 升级原因、验证结论与回滚条件见 docs/decisions/0003-netty-upgrade.md。
+netty = "4.2.20.Final"
 
 # 运行时依赖（除协议外，其余在 M1 及之后按需引入）
 kotlinxCoroutines = "1.11.0"
@@ -35,7 +36,9 @@ kotlinGradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", ver
 mcprotocollib = { module = "org.geysermc.mcprotocollib:protocol", version.ref = "mcprotocollib" }
 
 # netty-all 是聚合 POM（会拉进 protobuf、zstd、brotli 与本地传输构件），
-# 因此按实际用到的模块逐个声明：MCPL 只触及 bootstrap/buffer/channel/handler/util。
+# 因此按实际用到的模块逐个声明；BOM 负责把 MCPL、Minestom 传来的其它 Netty 模块
+# （resolver、codec-base、native-unix-common 等）对齐到同一版本。
+nettyBom = { module = "io.netty:netty-bom", version.ref = "netty" }
 nettyBuffer = { module = "io.netty:netty-buffer", version.ref = "netty" }
 nettyCommon = { module = "io.netty:netty-common", version.ref = "netty" }
 nettyTransport = { module = "io.netty:netty-transport", version.ref = "netty" }

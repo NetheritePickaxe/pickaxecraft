@@ -13,6 +13,9 @@ dependencies {
         // 客户端只需要下面声明的四个模块。
         exclude(group = "io.netty", module = "netty-all")
     }
+    // 平台约束把 MCPL 与 Minestom 带进来的全部 Netty 模块对齐到版本目录，
+    // 只改直接依赖会留下 resolver / codec-base 等传递模块的旧版本。
+    implementation(platform(libs.nettyBom))
     implementation(libs.bundles.nettyClient)
     // MOTD 与断开原因是 Adventure 组件；适配层负责把它们渲染成纯文本，
     // 该依赖只服务于本模块，不会出现在上层模块的编译类路径。

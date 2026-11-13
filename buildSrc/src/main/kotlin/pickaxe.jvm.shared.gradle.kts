@@ -8,6 +8,7 @@ import org.gradle.api.artifacts.VersionCatalogsExtension
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import pickaxe.tasks.VerifyBytecode
 import pickaxe.tasks.VerifyForbiddenDependencies
+import pickaxe.tasks.registerVerifyNettyVersion
 
 plugins {
     id("org.jetbrains.kotlin.jvm")
@@ -66,6 +67,9 @@ val verifyModuleBoundaries = tasks.register<VerifyForbiddenDependencies>("verify
     classpath.from(configurations.named("compileClasspath"))
 }
 
+// 运行时类路径上的 Netty 版本必须与版本目录一致：传递模块的旧版本同样是安全问题。
+val verifyNettyVersion = registerVerifyNettyVersion()
+
 tasks.named("check") {
-    dependsOn(verifyBytecode, verifyModuleBoundaries)
+    dependsOn(verifyBytecode, verifyModuleBoundaries, verifyNettyVersion)
 }
