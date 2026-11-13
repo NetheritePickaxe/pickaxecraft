@@ -18,7 +18,7 @@
    | `MAVEN_CENTRAL_USERNAME` | Portal 的 User Token 用户名 |
    | `MAVEN_CENTRAL_PASSWORD` | Portal 的 User Token 口令 |
 
-   User Token 在 <https://central.sonatype.com/account> 生成，不是登录密码。
+   User Token 在 <https://central.sonatype.com/usertoken> 生成，不是登录密码。
 
 ## 二、本地生成 bundle
 
