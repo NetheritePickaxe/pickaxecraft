@@ -32,8 +32,8 @@ class LightPatchesTest {
 
         val patch = lightPatch(data, layers = 4)
 
-        assertSame(first, patch.sky[1], "第一段数组应落在掩码的第一个 1 上")
-        assertSame(second, patch.sky[3], "第二段数组应落在掩码的第二个 1 上，而不是层 2")
+        assertSame(first, patch.sky.getValue(1).bytes, "第一段数组应落在掩码的第一个 1 上")
+        assertSame(second, patch.sky.getValue(3).bytes, "第二段数组应落在掩码的第二个 1 上，而不是层 2")
         assertEquals(setOf(1, 3), patch.sky.keys)
         assertEquals(setOf(2), patch.block.keys)
     }

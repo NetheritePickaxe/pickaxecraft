@@ -1,6 +1,6 @@
-// 由 Minestom 2026.10.07-26.2 的 entity_type 注册表自动导出（协议 776，158 项中 93 项为生物）。
+// 由 Minestom 2026.10.07-26.2 的实体类型（entity_type）注册表自动导出（协议 776，共 158 项，其中 93 项为生物）。
+// 不要手改：升级协议库/Minestom 后重跑 “./gradlew :testing:minestom:exportRegistries” 整表替换。
 // 判据：RegistryData.EntityEntry#shouldSendAttributes()，即 packetType 为 LIVING 或 PLAYER。
-// 不要手改：升级协议库/Minestom 后重新导出整表替换，并与 MCPL 的 EntityType 枚举核对名字。
 package org.pickaxe.protocol.entity
 
 /**
@@ -25,22 +25,22 @@ internal object LivingEntityTypes {
         "COW", "CREAKING", "CREEPER", "DOLPHIN",
         "DONKEY", "DROWNED", "ELDER_GUARDIAN", "ENDERMAN",
         "ENDERMITE", "ENDER_DRAGON", "EVOKER", "FOX",
-        "FROG", "GHAST", "GIANT", "GLOW_SQUID",
-        "GOAT", "GUARDIAN", "HAPPY_GHAST", "HOGLIN",
+        "FROG", "GHAST", "HAPPY_GHAST", "GIANT",
+        "GLOW_SQUID", "GOAT", "GUARDIAN", "HOGLIN",
         "HORSE", "HUSK", "ILLUSIONER", "IRON_GOLEM",
         "LLAMA", "MAGMA_CUBE", "MANNEQUIN", "MOOSHROOM",
         "MULE", "NAUTILUS", "OCELOT", "PANDA",
         "PARCHED", "PARROT", "PHANTOM", "PIG",
-        "PIGLIN", "PIGLIN_BRUTE", "PILLAGER", "PLAYER",
-        "POLAR_BEAR", "PUFFERFISH", "RABBIT", "RAVAGER",
-        "SALMON", "SHEEP", "SHULKER", "SILVERFISH",
-        "SKELETON", "SKELETON_HORSE", "SLIME", "SNIFFER",
-        "SNOW_GOLEM", "SPIDER", "SQUID", "STRAY",
-        "STRIDER", "SULFUR_CUBE", "TADPOLE", "TRADER_LLAMA",
-        "TROPICAL_FISH", "TURTLE", "VEX", "VILLAGER",
-        "VINDICATOR", "WANDERING_TRADER", "WARDEN", "WITCH",
-        "WITHER", "WITHER_SKELETON", "WOLF", "ZOGLIN",
-        "ZOMBIE", "ZOMBIE_HORSE", "ZOMBIE_NAUTILUS", "ZOMBIE_VILLAGER",
-        "ZOMBIFIED_PIGLIN",
+        "PIGLIN", "PIGLIN_BRUTE", "PILLAGER", "POLAR_BEAR",
+        "PUFFERFISH", "RABBIT", "RAVAGER", "SALMON",
+        "SHEEP", "SHULKER", "SILVERFISH", "SKELETON",
+        "SKELETON_HORSE", "SLIME", "SNIFFER", "SNOW_GOLEM",
+        "SPIDER", "SQUID", "STRAY", "STRIDER",
+        "SULFUR_CUBE", "TADPOLE", "TRADER_LLAMA", "TROPICAL_FISH",
+        "TURTLE", "VEX", "VILLAGER", "VINDICATOR",
+        "WANDERING_TRADER", "WARDEN", "WITCH", "WITHER",
+        "WITHER_SKELETON", "WOLF", "ZOGLIN", "ZOMBIE",
+        "ZOMBIE_HORSE", "ZOMBIE_NAUTILUS", "ZOMBIE_VILLAGER", "ZOMBIFIED_PIGLIN",
+        "PLAYER",
     )
 }

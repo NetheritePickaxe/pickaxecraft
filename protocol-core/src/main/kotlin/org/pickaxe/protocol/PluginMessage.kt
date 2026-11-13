@@ -7,7 +7,7 @@ package org.pickaxe.protocol
  * 语义完全由渠道约定决定，本库不解释任何具体渠道的内容（`minecraft:brand` 的品牌串
  * 是唯一由 [PluginMessages.parseBrand] 代读的例外）。
  *
- * [data] 在构造时做防御性拷贝：调用方改写传入的数组不影响这里持有的字节，反之亦然。
+ * [data] 在构造时做防御性拷贝，每次调用又返回一份新副本：外部持有的数组与消息内部状态互不影响。
  * 因此本类不用 `data class`——数组字段的 `equals` 是引用比较，那会给出错误的相等语义。
  *
  * @param channel 渠道名，`namespace:path` 形式的 resource location（如 `minecraft:brand`）。
@@ -20,20 +20,28 @@ public class PluginMessage(
     data: ByteArray,
 ) {
 
-    /** 消息体的独立副本；内容不可通过本类修改。 */
-    public val data: ByteArray = data.copyOf()
+    /** 内部持有的一份拷贝；对外只通过 [data] 交出副本。 */
+    private val bytes: ByteArray = data.copyOf()
 
     public constructor(channel: String, data: String) : this(
         channel,
         data.toByteArray(Charsets.UTF_8),
     )
 
+    /**
+     * 消息体的独立副本。
+     *
+     * 每次调用都复制一份：调用方改写返回的数组不会影响这条消息，也不会影响下一次取到的内容。
+     * 需要反复读取时请自己保存一份，不要在高频路径里逐次复制。
+     */
+    public fun data(): ByteArray = bytes.copyOf()
+
     override fun equals(other: Any?): Boolean =
-        other is PluginMessage && other.channel == channel && other.data.contentEquals(data)
+        other is PluginMessage && other.channel == channel && other.bytes.contentEquals(bytes)
 
-    override fun hashCode(): Int = channel.hashCode() * 31 + data.contentHashCode()
+    override fun hashCode(): Int = channel.hashCode() * 31 + bytes.contentHashCode()
 
-    override fun toString(): String = "PluginMessage(channel=$channel, ${data.size} bytes)"
+    override fun toString(): String = "PluginMessage(channel=$channel, ${bytes.size} bytes)"
 }
 
 /** 插件消息的协议常量与解析工具。 */

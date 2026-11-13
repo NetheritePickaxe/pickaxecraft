@@ -376,10 +376,12 @@ private fun eventData(event: ClientEvent): JsonObject = buildJsonObject {
         }
 
         is ClientEvent.PluginMessageReceived -> with(event.message) {
+            // 取一次副本即可：这里只用于计数与品牌解析。
+            val bytes = data()
             put("channel", channel)
-            put("bytes", data.size)
+            put("bytes", bytes.size)
             if (channel == PluginMessages.BRAND_CHANNEL) {
-                put("brand", PluginMessages.parseBrand(data))
+                put("brand", PluginMessages.parseBrand(bytes))
             }
         }
 

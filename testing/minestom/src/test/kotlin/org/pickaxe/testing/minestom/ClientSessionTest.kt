@@ -1617,7 +1617,7 @@ class ClientSessionTest {
                 val received = log.snapshot()
                     .filterIsInstance<ClientEvent.PluginMessageReceived>()
                     .first { it.message.channel == PLUGIN_CHANNEL }
-                assertContentEquals(payload, received.message.data, "下行的 payload 应逐字节相同")
+                assertContentEquals(payload, received.message.data(), "下行的 payload 应逐字节相同")
 
                 // 上行：客户端原样发回，服务端在 PlayerPluginMessageEvent 里看到同一份字节。
                 session.sendPluginMessage(PLUGIN_CHANNEL, payload)

@@ -77,10 +77,11 @@ class PluginMessageTest {
         val raw = byteArrayOf(1, 2, 3)
         val message = PluginMessage("test:channel", raw)
         raw[0] = 99
-        assertContentEquals(byteArrayOf(1, 2, 3), message.data)
+        assertContentEquals(byteArrayOf(1, 2, 3), message.data())
 
-        message.data[1] = 42
-        assertContentEquals(byteArrayOf(1, 42, 3), message.data)
+        // data() 交出的是副本：改写它既不影响这条消息，也不影响下一次调用。
+        message.data()[1] = 42
+        assertContentEquals(byteArrayOf(1, 2, 3), message.data())
     }
 
     @Test

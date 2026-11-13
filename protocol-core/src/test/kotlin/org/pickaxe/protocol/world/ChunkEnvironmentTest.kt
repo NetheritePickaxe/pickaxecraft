@@ -20,15 +20,40 @@ class ChunkEnvironmentTest {
 
     @Test
     fun `光照按半字节解包且偶数格取低四位`() {
-        val layer = ByteArray(ChunkLight.LAYER_BYTES)
+        val bytes = ByteArray(ChunkLight.LAYER_BYTES)
         // 第 0 格是低半字节（0xA），第 1 格是高半字节（0x3）：写反了整片光照都会错位。
-        layer[0] = 0x3A.toByte()
+        bytes[0] = 0x3A.toByte()
+        val layer = LightLayer(bytes)
         val light = ChunkLight.of(3).withPatch(LightPatch(sky = mapOf(1 to layer), block = emptyMap()))
 
         assertEquals(0xA, light.skyAt(1, 0, 0, 0))
         assertEquals(0x3, light.skyAt(1, 1, 0, 0))
         assertNull(light.skyAt(0, 0, 0, 0), "没收到数据的层应当是未知，而不是 0")
         assertNull(light.blockAt(1, 0, 0, 0))
+    }
+
+    @Test
+    fun `光照层是只读视图，拷贝到目标数组不修改源数据`() {
+        val layer = LightLayer(ByteArray(ChunkLight.LAYER_BYTES) { 0x21 })
+        val destination = ByteArray(ChunkLight.LAYER_BYTES + 4)
+
+        layer.copyInto(destination, offset = 2)
+
+        assertEquals(0x21.toByte(), destination[2])
+        assertEquals(0x21.toByte(), destination[2 + ChunkLight.LAYER_BYTES - 1])
+        // 拷贝只写目标：源层仍是原值（低半字节 1、高半字节 2）。
+        assertEquals(1, layer.levelAt(0, 0, 0))
+        assertEquals(2, layer.levelAt(1, 0, 0))
+        assertFailsWith<IllegalArgumentException> { layer.copyInto(ByteArray(16)) }
+    }
+
+    @Test
+    fun `光照层的层内坐标越界时报错`() {
+        val layer = LightLayer(ByteArray(ChunkLight.LAYER_BYTES))
+
+        assertFailsWith<IllegalArgumentException> { layer.levelAt(16, 0, 0) }
+        assertFailsWith<IllegalArgumentException> { layer.levelAt(0, -1, 0) }
+        assertFailsWith<IllegalArgumentException> { layer.levelAt(0, 0, 16) }
     }
 
     @Test
@@ -42,8 +67,8 @@ class ChunkEnvironmentTest {
 
     @Test
     fun `光照更新只替换出现的层`() {
-        val first = ByteArray(ChunkLight.LAYER_BYTES) { 0x11 }
-        val second = ByteArray(ChunkLight.LAYER_BYTES) { 0x22 }
+        val first = LightLayer(ByteArray(ChunkLight.LAYER_BYTES) { 0x11 })
+        val second = LightLayer(ByteArray(ChunkLight.LAYER_BYTES) { 0x22 })
         val light = ChunkLight.of(3)
             .withPatch(LightPatch(sky = mapOf(1 to first), block = emptyMap()))
             .withPatch(LightPatch(sky = mapOf(2 to second), block = emptyMap()))
@@ -61,13 +86,13 @@ class ChunkEnvironmentTest {
             light.withPatch(LightPatch(sky = mapOf(9 to ChunkLight.dark()), block = emptyMap()))
         }
         assertFailsWith<IllegalArgumentException> {
-            light.withPatch(LightPatch(sky = mapOf(1 to ByteArray(16)), block = emptyMap()))
+            light.withPatch(LightPatch(sky = mapOf(1 to LightLayer(ByteArray(16))), block = emptyMap()))
         }
     }
 
     @Test
     fun `世界 Y 换算到光照层时向上多一层`() {
-        val layer = ByteArray(ChunkLight.LAYER_BYTES) { 0x0F }
+        val layer = LightLayer(ByteArray(ChunkLight.LAYER_BYTES) { 0x0F })
         val column = column(light = ChunkLight.of(3).withPatch(LightPatch(mapOf(1 to layer), emptyMap())))
 
         // minY = -64、一个 section：光照层 1 覆盖 [-64, -48)，层 0 是地表之下那一层。

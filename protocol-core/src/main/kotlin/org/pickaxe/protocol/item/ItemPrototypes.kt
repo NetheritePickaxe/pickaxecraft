@@ -1,5 +1,5 @@
 // 由 Minestom 2026.10.07-26.2 的物品注册表自动导出（协议 776，共 1537 项）。
-// 不要手改：升级协议库/Minestom 后重跑 “./gradlew :testing:minestom:exportItemPrototypes” 整表替换。
+// 不要手改：升级协议库/Minestom 后重跑 “./gradlew :testing:minestom:exportRegistries” 整表替换。
 package org.pickaxe.protocol.item
 
 /**

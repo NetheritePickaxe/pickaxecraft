@@ -1,3 +1,5 @@
+// 由 Minestom 2026.10.07-26.2 的效果注册表自动导出（协议 776，共 40 项）。
+// 不要手改：升级协议库/Minestom 后重跑 “./gradlew :testing:minestom:exportRegistries” 整表替换。
 package org.pickaxe.protocol.entity
 
 /**

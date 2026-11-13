@@ -1,5 +1,5 @@
-// 由 Minestom 2026.10.07-26.2 的注册表自动生成（tools 脚本见 docs/plans/m4l-attributes.md）。
-// 协议 776 的 wire id -> 键名。不要手改：重新生成或核对 dump 时整表替换。
+// 由 Minestom 2026.10.07-26.2 的属性注册表自动导出（协议 776，共 40 项）。
+// 不要手改：升级协议库/Minestom 后重跑 “./gradlew :testing:minestom:exportRegistries” 整表替换。
 package org.pickaxe.protocol.entity
 
 /**
@@ -12,7 +12,7 @@ package org.pickaxe.protocol.entity
  */
 internal object AttributeTable {
 
-    /** 未收录的 id 用这个前缀兜底，保证数据不丢；正常服务端不会出现。 */
+    /** 未收录的 id 用 null 兜底；正常服务端不会出现。 */
     fun key(id: Int): String? = KEYS[id]
 
     private val KEYS: Map<Int, String> = mapOf(

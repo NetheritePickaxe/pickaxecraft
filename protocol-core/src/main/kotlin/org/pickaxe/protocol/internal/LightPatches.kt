@@ -2,6 +2,7 @@ package org.pickaxe.protocol.internal
 
 import org.geysermc.mcprotocollib.protocol.data.game.level.LightUpdateData
 import org.pickaxe.protocol.world.ChunkLight
+import org.pickaxe.protocol.world.LightLayer
 import org.pickaxe.protocol.world.LightPatch
 import java.util.BitSet
 
@@ -27,8 +28,8 @@ private fun lightLayers(
     emptyMask: BitSet,
     layers: Int,
     what: String,
-): Map<Int, ByteArray> {
-    val result = LinkedHashMap<Int, ByteArray>()
+): Map<Int, LightLayer> {
+    val result = LinkedHashMap<Int, LightLayer>()
     var cursor = 0
     var layer = mask.nextSetBit(0)
     while (layer >= 0) {
@@ -36,7 +37,8 @@ private fun lightLayers(
             "$what 的掩码声明了第 $layer 层，但只带了 ${updates.size} 段数据"
         }
         require(layer < layers) { "$what 的层号 $layer 超出本列 $layers 层" }
-        result[layer] = updates[cursor++]
+        // 直接包装解码结果，不复制：光照层在这里只读，复制只会让出生视野的内存翻倍。
+        result[layer] = LightLayer(updates[cursor++])
         layer = mask.nextSetBit(layer + 1)
     }
     require(cursor == updates.size) {

@@ -7,6 +7,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withTimeout
+import org.pickaxe.protocol.PickaxeLowLevelApi
 import org.pickaxe.protocol.ProtocolCloseReason
 import org.pickaxe.protocol.ProtocolConnection
 import org.pickaxe.protocol.ProtocolEvent
@@ -24,6 +25,7 @@ import java.util.concurrent.atomic.AtomicReference
  *
  * 所有挂起函数都不在网络线程上执行，也不会阻塞调用线程等待网络。
  */
+@OptIn(PickaxeLowLevelApi::class)
 public class MinecraftClient(
     /** 本实例的行为参数，创建后不再变更。 */
     public val options: ClientOptions = ClientOptions(),

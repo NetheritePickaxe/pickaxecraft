@@ -40,14 +40,61 @@ tasks.named<Test>("test") {
 
 // 版本资产导出：只显式运行，不挂 build —— 生成文件属于源码，不能让构建静默改写它。
 // 升级 mcprotocollib/minestom 后跑一次，用 diff 判断上游改了什么。
-tasks.register<JavaExec>("exportItemPrototypes") {
+val assetSource = "Minestom ${libs.versions.minestom.get()}"
+
+fun assetTask(name: String, subcommand: String, target: String, assetDescription: String) =
+    tasks.register<JavaExec>(name) {
+        group = "asset"
+        description = assetDescription
+        mainClass.set("org.pickaxe.testing.minestom.asset.ExportAssetsKt")
+        classpath = sourceSets["main"].runtimeClasspath
+        args(subcommand, rootProject.file(target).absolutePath, assetSource)
+    }
+
+val exportItemKeys = assetTask(
+    "exportItemKeys",
+    "item-keys",
+    "protocol-core/src/main/kotlin/org/pickaxe/protocol/item/ItemKeys.kt",
+    "从 Minestom 物品注册表重导出 protocol-core 的 ItemKeys.kt",
+)
+
+val exportItemPrototypes = assetTask(
+    "exportItemPrototypes",
+    "item-prototypes",
+    "protocol-core/src/main/kotlin/org/pickaxe/protocol/item/ItemPrototypes.kt",
+    "从 Minestom 物品注册表重导出 protocol-core 的 ItemPrototypes.kt",
+)
+
+val exportAttributeTable = assetTask(
+    "exportAttributeTable",
+    "attribute-table",
+    "protocol-core/src/main/kotlin/org/pickaxe/protocol/entity/AttributeTable.kt",
+    "从 Minestom 属性注册表重导出 protocol-core 的 AttributeTable.kt",
+)
+
+val exportEffectKeys = assetTask(
+    "exportEffectKeys",
+    "effect-keys",
+    "protocol-core/src/main/kotlin/org/pickaxe/protocol/entity/EffectKeys.kt",
+    "从 Minestom 效果注册表重导出 protocol-core 的 EffectKeys.kt",
+)
+
+val exportLivingEntityTypes = assetTask(
+    "exportLivingEntityTypes",
+    "living-entity-types",
+    "protocol-core/src/main/kotlin/org/pickaxe/protocol/entity/LivingEntityTypes.kt",
+    "从 Minestom entity_type 注册表重导出 protocol-core 的 LivingEntityTypes.kt",
+)
+
+// 五张表一次跑完：CI 的 assets 工作流与本地核对都用这一个入口。
+tasks.register("exportRegistries") {
     group = "asset"
-    description = "从 Minestom 物品注册表重导出 protocol-core 的 ItemPrototypes.kt"
-    mainClass.set("org.pickaxe.testing.minestom.asset.ExportAssetsKt")
-    classpath = sourceSets["main"].runtimeClasspath
-    args(
-        "item-prototypes",
-        rootProject.file("protocol-core/src/main/kotlin/org/pickaxe/protocol/item/ItemPrototypes.kt").absolutePath,
-        "Minestom ${libs.versions.minestom.get()}",
+    description = "一次性重导出五张版本资产（物品键名/原型、属性、效果、生物分层）"
+    dependsOn(
+        exportItemKeys,
+        exportItemPrototypes,
+        exportAttributeTable,
+        exportEffectKeys,
+        exportLivingEntityTypes,
     )
 }

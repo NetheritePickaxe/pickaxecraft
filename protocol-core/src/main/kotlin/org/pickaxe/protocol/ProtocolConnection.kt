@@ -25,7 +25,11 @@ import org.pickaxe.protocol.world.BlockPosition
  *
  * 订阅关系在创建时确定：事件只发给构造时传入的 [ProtocolListener]，且回调发生在
  * 该连接自己的网络线程上。
+ *
+ * 这是[低层入口][PickaxeLowLevelApi]：常规使用请走 `client-core` 的 `Session`，
+ * 它会处理背压、事件顺序与关闭语义；直接使用本类意味着由调用方自己承担这些责任。
  */
+@PickaxeLowLevelApi
 public class ProtocolConnection private constructor(
     private val connection: McplConnection,
 ) : AutoCloseable {

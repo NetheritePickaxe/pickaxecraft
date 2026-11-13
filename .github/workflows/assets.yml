@@ -1,0 +1,44 @@
+name: Assets
+
+# 版本资产（物品键名/原型、属性、效果、生物分层）必须能从上游注册表重跑。
+# 每周跑一次，确认“重新生成后没有 diff”：有 diff 说明上游数据变了，
+# 需要人工审查并提交新表，而不是让生成结果悄悄漂移。
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 1'
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      # 生成器显式写 LF：本地 Windows 与 CI 生成的文件必须逐字节相同。
+      - name: Re-export registry assets
+        run: ./gradlew :testing:minestom:exportRegistries --console=plain
+
+      - name: Fail if the checked-in tables differ
+        run: |
+          if ! git diff --exit-code -- protocol-core/src/main/kotlin/org/pickaxe/protocol; then
+            echo "::error::版本资产与上游注册表不一致；请审查上面的 diff，确认语义变化后提交新表。"
+            exit 1
+          fi
+          if [[ -n "$(git status --porcelain --untracked-files=all -- protocol-core/src/main/kotlin)" ]]; then
+            echo "::error::导出产生了未跟踪文件，检查生成器输出路径。"
+            git status --porcelain --untracked-files=all -- protocol-core/src/main/kotlin
+            exit 1
+          fi

@@ -422,13 +422,16 @@ private fun describe(event: ClientEvent): String = when (event) {
     }
     is ClientEvent.TransferRequested -> "event=transfer host=${event.host} port=${event.port}"
     is ClientEvent.PluginMessageReceived -> with(event.message) {
+        // data() 每次返回独立副本；这里取一次在函数内复用，避免重复复制。
+        val bytes = data()
         if (channel == PluginMessages.BRAND_CHANNEL) {
-            "event=plugin channel=$channel bytes=${data.size} brand=${PluginMessages.parseBrand(data) ?: "-"}"
+            "event=plugin channel=$channel bytes=${bytes.size} " +
+                "brand=${PluginMessages.parseBrand(bytes) ?: "-"}"
         } else {
             // 字节内容通常不是文本，只打印可打印的 ASCII 预览，避免把二进制糊进日志。
-            val text = String(data, Charsets.UTF_8)
-            val utf8 = if (data.isNotEmpty() && text.all { it.code in 0x20..0x7E }) " utf8=$text" else ""
-            "event=plugin channel=$channel bytes=${data.size}$utf8"
+            val text = String(bytes, Charsets.UTF_8)
+            val utf8 = if (bytes.isNotEmpty() && text.all { it.code in 0x20..0x7E }) " utf8=$text" else ""
+            "event=plugin channel=$channel bytes=${bytes.size}$utf8"
         }
     }
     is ClientEvent.PassengersChanged -> "event=passengers vehicle=${event.vehicleId} riders=${event.passengerIds}"

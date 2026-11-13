@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import org.pickaxe.protocol.PickaxeLowLevelApi
 import org.pickaxe.protocol.PluginMessages
 import org.pickaxe.protocol.ProtocolCloseReason
 import org.pickaxe.protocol.ProtocolConnection
@@ -67,6 +68,7 @@ import java.util.concurrent.atomic.AtomicReference
  * [events] 结束，网络线程随之回收。会话也可以因服务端断开或协议错误自行终止，
  * 终止事件恰好投递一次。
  */
+@OptIn(PickaxeLowLevelApi::class)
 public class Session internal constructor(
     /** 该会话连接的服务端地址。 */
     public val address: ServerAddress,
@@ -1267,7 +1269,7 @@ public class Session internal constructor(
             // 早于事件消费者启动）。坏消息不改旧值，原始字节照常进事件流供下游对账。
             is ProtocolEvent.PluginMessageReceived -> {
                 if (!closing.get() && event.message.channel == PluginMessages.BRAND_CHANNEL) {
-                    PluginMessages.parseBrand(event.message.data)?.let { mutableServerBrand.value = it }
+                    PluginMessages.parseBrand(event.message.data())?.let { mutableServerBrand.value = it }
                 }
             }
 
