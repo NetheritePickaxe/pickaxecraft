@@ -1,0 +1,110 @@
+name: Release to Maven Central
+
+# 手动触发：版本与发布方式都由人决定。
+# - USER_MANAGED：上传后停在 VALIDATED，需要在 Central Portal 点发布；
+# - AUTOMATIC：校验通过后直接发布到 Maven Central（不可撤回）。
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '发布版本（不能含 -SNAPSHOT）'
+        required: true
+        default: '0.1.0'
+      publishing_type:
+        description: 'Central Portal 发布方式'
+        type: choice
+        options:
+          - USER_MANAGED
+          - AUTOMATIC
+        default: USER_MANAGED
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      # 发布前先跑完整构建：测试、字节码与模块边界检查都在 build 里。
+      - name: Build
+        run: ./gradlew build --console=plain
+
+      # 签名默认关闭；这里没有密钥就会在 verifyCentralBundle 直接失败。
+      - name: Build signed bundle
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+        run: ./gradlew "-Pversion=${{ inputs.version }}" centralBundle --console=plain
+
+      - name: Upload to Central Portal
+        id: upload
+        env:
+          CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          VERSION: ${{ inputs.version }}
+          PUBLISHING_TYPE: ${{ inputs.publishing_type }}
+        run: |
+          set -euo pipefail
+          bundle="build/pickaxecraft-${VERSION}.zip"
+          token=$(printf '%s:%s' "$CENTRAL_USERNAME" "$CENTRAL_PASSWORD" | base64 | tr -d '\n')
+
+          deployment=$(curl -fsS -X POST \
+            -H "Authorization: Bearer $token" \
+            -F "bundle=@$bundle" \
+            "https://central.sonatype.com/api/v1/publisher/upload?name=pickaxecraft-${VERSION}&publishingType=${PUBLISHING_TYPE}")
+          echo "deployment=$deployment" >> "$GITHUB_OUTPUT"
+          echo "已上传，deploymentId=$deployment"
+
+          # 轮询到 VALIDATED / PUBLISHED / FAILED，避免把“上传成功”当成“发布成功”。
+          for _ in $(seq 1 90); do
+            status=$(curl -fsS -X POST \
+              -H "Authorization: Bearer $token" \
+              "https://central.sonatype.com/api/v1/publisher/status?id=$deployment")
+            state=$(echo "$status" | jq -r '.deploymentState')
+            echo "deploymentState=$state"
+            case "$state" in
+              PUBLISHED)
+                echo "已发布到 Maven Central：pickaxecraft ${VERSION}"
+                {
+                  echo "## Maven Central 发布完成"
+                  echo ""
+                  echo "- 版本：${VERSION}"
+                  echo "- deployment：${deployment}"
+                } >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+                ;;
+              VALIDATED)
+                if [[ "$PUBLISHING_TYPE" == "USER_MANAGED" ]]; then
+                  {
+                    echo "## 等待手动发布"
+                    echo ""
+                    echo "校验已通过，请在 [Central Portal](https://central.sonatype.com/publishing/deployments) 点 Publish。"
+                    echo ""
+                    echo "- 版本：${VERSION}"
+                    echo "- deployment：${deployment}"
+                  } >> "$GITHUB_STEP_SUMMARY"
+                  exit 0
+                fi
+                ;;
+              FAILED)
+                echo "$status" | jq -r '.errors[]?' >&2 || true
+                echo "::error::Central 校验失败，见上面的 errors 与 Portal 部署详情。"
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          echo "::error::等待 Central 处理超时，请到 Portal 查看 deployment $deployment。"
+          exit 1

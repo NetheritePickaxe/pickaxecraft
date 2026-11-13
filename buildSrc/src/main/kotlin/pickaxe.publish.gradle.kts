@@ -41,6 +41,8 @@ publishing {
                     developer {
                         id.set("NetheritePickaxe")
                         name.set("NetheritePickaxe")
+                        // Central 要求开发者信息含邮箱；这是发布联系人，不是漏洞报告入口。
+                        email.set("gsc8379@163.com")
                         url.set("https://github.com/NetheritePickaxe")
                     }
                 }

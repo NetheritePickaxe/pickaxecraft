@@ -134,6 +134,9 @@ CI 在 Ubuntu 上以同样的命令执行（`.github/workflows/ci.yml`）。
   `runtime` 作用域（`maven-publish` 会把 `implementation` 映射为 `runtime`）。
   纯 Maven 消费方必须自行声明 `https://repo.opencollab.dev/main/`，因为 MCProtocolLib 不在 Maven Central。
 - 本项目以 [MIT](LICENSE) 开源，发布 POM 中的许可证字段同步声明；第三方依赖的许可证清单见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)，升级或新增依赖时必须同步更新。
+- 发布到 Maven Central：`./gradlew -Pversion=0.1.0 centralBundle` 生成签名 bundle，
+  再由 `Release to Maven Central` 工作流上传；步骤、secrets 与不可变版本规则见
+  [发布到 Maven Central](docs/publishing-central.md)。
 
 ## 平台支持
 
