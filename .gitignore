@@ -10,6 +10,10 @@ captures/
 .externalNativeBuild/
 .cxx/
 
+### Maven ###
+# 发布冒烟里的纯 Maven 消费者；wrapper 只提交脚本与 properties，不提交分发。
+target/
+
 ### IntelliJ IDEA ###
 # 整个 IDE 目录都不入库：这些文件描述的是本机路径与个人设置，
 # 每个人的内容都不同，提交后只会产生无意义冲突。

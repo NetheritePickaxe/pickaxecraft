@@ -4,6 +4,8 @@
 [versions]
 # 构建工具链
 kotlin = "2.4.21"
+# Dokka 与 Kotlin/Gradle 的兼容性在 Phase 1 的 spike 中确认；升级 Kotlin 时同步复核。
+dokka = "2.3.0"
 
 # 协议运行时。MCProtocolLib 按 Minecraft 版本发版，26.2 对应协议 776，
 # 与 Minestom 2026.10.07-26.2 同步；升级任一方都必须同时调整另一侧。
@@ -67,3 +69,5 @@ nettyClient = ["nettyBuffer", "nettyCommon", "nettyTransport", "nettyHandler"]
 [plugins]
 kotlinJvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+dokka = { id = "org.jetbrains.dokka", version.ref = "dokka" }
+dokkaJavadoc = { id = "org.jetbrains.dokka-javadoc", version.ref = "dokka" }

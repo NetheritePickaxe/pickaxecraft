@@ -5,10 +5,14 @@ plugins {
 dependencies {
     // CLI 是组合根：只依赖客户端公共 API，不接触协议库与 Netty。
     implementation(project(":client-core"))
+    // --json 用 buildJsonObject 构造输出，避免手写转义；不需要序列化编译器插件。
+    implementation(libs.kotlinxSerialization)
 }
 
 application {
     mainClass = "org.pickaxe.app.MainKt"
+    // 分发包内的启动脚本名与可执行文件；与项目名一致，便于下游引用。
+    applicationName = "pickaxecraft"
 }
 
 // --version 需要的版本信息在构建期生成：客户端版本来自项目坐标，

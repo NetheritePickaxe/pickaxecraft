@@ -1,6 +1,7 @@
 plugins {
     id("pickaxe.jvm.shared")
     id("pickaxe.publish")
+    alias(libs.plugins.dokkaJavadoc)
 }
 
 description = "PickaxeCraft 协议适配层：MCProtocolLib 之上的语义事件与世界解码（标准 JVM 已验证；Android/iOS 候选，未验证）"

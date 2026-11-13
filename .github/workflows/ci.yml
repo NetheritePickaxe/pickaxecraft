@@ -31,6 +31,47 @@ jobs:
       - name: Build
         run: ./gradlew build --console=plain
 
+      # --json 是对外契约：起一次联调服务，逐行校验 status 的真实输出；
+      # 再对关闭的端口跑一次，确认失败时 ok=false 且退出码非零。
+      - name: CLI JSON smoke
+        run: |
+          set -euo pipefail
+          ./gradlew :testing:minestom:installDist :app:installDist --console=plain
+          ./testing/minestom/build/install/minestom/bin/minestom --port 25565 > server.log 2>&1 &
+          for _ in $(seq 1 60); do
+            grep -q 'event=server.started' server.log && break
+            sleep 1
+          done
+          grep -q 'event=server.started' server.log || { cat server.log; exit 1; }
+          ./app/build/install/pickaxecraft/bin/pickaxecraft status 127.0.0.1 25565 --json > status.jsonl
+          cat status.jsonl
+          python3 - <<'PY'
+          import json
+          lines = [line for line in open("status.jsonl") if line.strip()]
+          assert len(lines) == 1, lines
+          obj = json.loads(lines[0])
+          assert obj["type"] == "status" and obj["ok"] is True, obj
+          assert obj["exitCode"] == 0, obj
+          assert obj["data"]["protocol"] == 776, obj
+          assert obj["session"]["host"] == "127.0.0.1" and obj["session"]["port"] == 25565, obj
+          print("json smoke ok")
+          PY
+          set +e
+          ./app/build/install/pickaxecraft/bin/pickaxecraft status 127.0.0.1 1 --json > failed.jsonl
+          code=$?
+          set -e
+          cat failed.jsonl
+          python3 - <<'PY'
+          import json
+          lines = [line for line in open("failed.jsonl") if line.strip()]
+          assert len(lines) == 1, lines
+          obj = json.loads(lines[0])
+          assert obj["type"] == "status" and obj["ok"] is False, obj
+          assert obj["exitCode"] != 0 and obj["error"]["kind"], obj
+          print("json failure smoke ok")
+          PY
+          test "$code" -ne 0
+
       # 失败时把测试报告带出来，否则只能看到“某文件某行断言失败”，无法判断断言内容。
       - name: Upload test reports
         if: failure()

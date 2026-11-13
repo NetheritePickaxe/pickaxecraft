@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  发布冒烟（Maven）：只消费 staging repo 里的 client-core，证明 POM 中的依赖声明
+  足以让纯 Maven 消费者编译并完成一次 status 查询。不依赖本机安装的 mvn：
+  用 Maven Wrapper 的 only-script 模式拉起固定版本。
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>org.pickaxe.smoke</groupId>
+  <artifactId>pickaxecraft-maven-consumer</artifactId>
+  <version>0.1.0</version>
+  <packaging>jar</packaging>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <kotlin.version>2.4.21</kotlin.version>
+    <client.version>0.1.0</client.version>
+    <jvm.target>21</jvm.target>
+    <!-- 本地 staging repo 的 file: URL。run.ps1/run.sh 会覆盖成绝对路径；
+         直接运行本 fixture 时按仓库相对位置推导（Maven 只接受带 scheme 的 URL）。 -->
+    <pickaxe.staging.repo>file:///${project.basedir}/../../../build/staging-repo</pickaxe.staging.repo>
+  </properties>
+
+  <repositories>
+    <!-- 本仓库发布的本地 staging repo；fixture 目录相对仓库根是三层。 -->
+    <repository>
+      <id>pickaxecraft-staging</id>
+      <url>${pickaxe.staging.repo}</url>
+      <releases><enabled>true</enabled></releases>
+      <snapshots><enabled>false</enabled></snapshots>
+    </repository>
+    <!-- MCProtocolLib 不在 Maven Central，消费方必须显式声明这个仓库。 -->
+    <repository>
+      <id>opencollab</id>
+      <url>https://repo.opencollab.dev/main/</url>
+    </repository>
+  </repositories>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.github.netheritepickaxe</groupId>
+      <artifactId>client-core</artifactId>
+      <version>${client.version}</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <sourceDirectory>src/main/kotlin</sourceDirectory>
+    <plugins>
+      <plugin>
+        <groupId>org.jetbrains.kotlin</groupId>
+        <artifactId>kotlin-maven-plugin</artifactId>
+        <version>${kotlin.version}</version>
+        <executions>
+          <execution>
+            <id>compile</id>
+            <phase>compile</phase>
+            <goals><goal>compile</goal></goals>
+          </execution>
+        </executions>
+        <configuration>
+          <jvmTarget>${jvm.target}</jvmTarget>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.5.0</version>
+        <configuration>
+          <mainClass>smoke.SmokeKt</mainClass>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

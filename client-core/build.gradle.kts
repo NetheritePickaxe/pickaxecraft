@@ -4,6 +4,7 @@
 plugins {
     id("pickaxe.jvm.shared")
     id("pickaxe.publish")
+    alias(libs.plugins.dokkaJavadoc)
 }
 
 description = "PickaxeCraft 客户端核心：会话、事件流与只读世界模型（标准 JVM 已验证；Android/iOS 候选，未验证）"
