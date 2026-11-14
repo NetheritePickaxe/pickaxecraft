@@ -47,7 +47,13 @@ jobs:
               echo "::error::round $round failed (exit $code)"
             fi
             mkdir -p "stability/round-$round"
-            find . -path '*/build/test-results/*' -name '*.xml' -exec cp --parents {} "stability/round-$round/" \;
+            # 只从三个模块的构建目录取报告。不能用 find .：上一轮拷进 stability/ 的
+            # XML 路径同样包含 build/test-results，下一轮会被再次拷贝，递归到文件名超长。
+            for module in protocol-core samples/libgdx-viewer testing/minestom; do
+              if [[ -d "$module/build/test-results" ]]; then
+                cp --parents -r "$module/build/test-results" "stability/round-$round/"
+              fi
+            done
             echo "::endgroup::"
           done
           echo "failures=$failures" >> "$GITHUB_OUTPUT"
