@@ -1061,11 +1061,21 @@ public class Session internal constructor(
         return connection ?: throw IllegalStateException("会话还没有建立连接，不能发送$what")
     }
 
+    /**
+     * 网络线程是否还应写缓存与投递事件。
+     *
+     * 终止有三条路径，各有自己的标志：[close] 置 `closing`、事件溢出置 `overflowing`、
+     * 服务端收尾置 `finished`。只检查 `closing` 会漏掉溢出：溢出清空缓存后，网络线程
+     * 仍可能处理在途区块，把刚清空的缓存重新填满，下游在 `CLOSED` 之后还能读到数据。
+     */
+    private fun acceptsProtocolEvents(): Boolean =
+        !closing.get() && !overflowing.get() && !finished.get()
+
     /** 协议回调：网络线程上只允许缓存写入或一次入队，溢出即终止会话。 */
     private fun onProtocolEvent(event: ProtocolEvent) {
         when (event) {
             is ProtocolEvent.ChunkLoaded -> {
-                if (!closing.get()) {
+                if (acceptsProtocolEvents()) {
                     chunks[chunkKey(event.column.x, event.column.z)] = event.column
                     chunkRevisionCounter.incrementAndGet()
                 }
@@ -1073,7 +1083,7 @@ public class Session internal constructor(
             }
 
             is ProtocolEvent.ChunkUnloaded -> {
-                if (!closing.get()) {
+                if (acceptsProtocolEvents()) {
                     chunks.remove(chunkKey(event.x, event.z))
                     chunkRevisionCounter.incrementAndGet()
                 }
@@ -1083,7 +1093,7 @@ public class Session internal constructor(
             // 方块变更与区块同属世界数据：先写缓存再进事件流，消费者收到事件时一定能查到新值。
             // 变更落在未加载的区块上不是错误——那条变更在本端没有落点，直接丢弃。
             is ProtocolEvent.BlocksChanged -> {
-                if (!closing.get()) {
+                if (acceptsProtocolEvents()) {
                     for (change in event.changes) {
                         val position = change.position
                         val key = chunkKey(position.x shr 4, position.z shr 4)
@@ -1095,12 +1105,12 @@ public class Session internal constructor(
             }
 
             is ProtocolEvent.BlockChangeAcknowledged -> {
-                if (!closing.get()) lastAcknowledgedSequenceValue = event.sequence
+                if (acceptsProtocolEvents()) lastAcknowledgedSequenceValue = event.sequence
             }
 
             // 破坏进度先写缓存再进事件流；RESET 删条目——「进度消失」不是一个阶段值。
             is ProtocolEvent.BlockDestructionChanged -> {
-                if (!closing.get()) {
+                if (acceptsProtocolEvents()) {
                     val observed = event.destruction
                     if (observed == null) {
                         destructions.remove(event.position)
@@ -1114,7 +1124,7 @@ public class Session internal constructor(
             // 落点不存在（区块没加载）时丢弃——服务端重发整列时会带上完整数据。
             // 与区块/实体不同，这两类事件频率低且有下游意义，因此仍走事件流。
             is ProtocolEvent.LightUpdated -> {
-                if (!closing.get()) {
+                if (acceptsProtocolEvents()) {
                     chunks.computeIfPresent(chunkKey(event.x, event.z)) { _, column ->
                         column.withLight(event.patch)
                     }
@@ -1122,7 +1132,7 @@ public class Session internal constructor(
             }
 
             is ProtocolEvent.BlockEntityUpdated -> {
-                if (!closing.get()) {
+                if (acceptsProtocolEvents()) {
                     val position = event.entity.position
                     chunks.computeIfPresent(chunkKey(position.x shr 4, position.z shr 4)) { _, column ->
                         column.withBlockEntity(event.entity)
@@ -1134,7 +1144,7 @@ public class Session internal constructor(
             // 否则新维度的区块可能先写入、再被 Actor 里迟到的清理抹掉。
             // 玩家背包不清（换维度不会丢东西），打开的容器随服务端关闭包一起消失。
             is ProtocolEvent.Respawned -> {
-                if (!closing.get()) {
+                if (acceptsProtocolEvents()) {
                     chunks.clear()
                     chunkRevisionCounter.incrementAndGet()
                     entities.clear()
@@ -1156,17 +1166,17 @@ public class Session internal constructor(
             // 位置增量只更新缓存：它每秒可达上百条，且每条都带完整快照，投递出去只会
             // 把消费者的缓冲填满，却不带来任何新信息。
             is ProtocolEvent.EntityUpdated -> {
-                if (!closing.get()) entities[event.entity.id] = event.entity
+                if (acceptsProtocolEvents()) entities[event.entity.id] = event.entity
                 return
             }
 
             // 增删是里程碑，走事件流；缓存先写，保证消费者收到事件时一定能查到。
             is ProtocolEvent.EntitySpawned -> {
-                if (!closing.get()) entities[event.entity.id] = event.entity
+                if (acceptsProtocolEvents()) entities[event.entity.id] = event.entity
             }
 
             is ProtocolEvent.EntityRemoved -> {
-                if (!closing.get()) {
+                if (acceptsProtocolEvents()) {
                     event.ids.forEach(entities::remove)
                     event.ids.forEach(entityAttributes::remove)
                     event.ids.forEach(entityEffects::remove)
@@ -1178,7 +1188,7 @@ public class Session internal constructor(
             // 乘客列表是整份替换，直接覆盖缓存；与其它世界数据一样先写缓存再进事件流，
             // 消费者收到 PassengersChanged 时 passengers() 已经是新值。
             is ProtocolEvent.PassengersChanged -> {
-                if (!closing.get()) {
+                if (acceptsProtocolEvents()) {
                     if (event.passengerIds.isEmpty()) {
                         passengers.remove(event.vehicleId)
                     } else {
@@ -1189,7 +1199,7 @@ public class Session internal constructor(
 
             // 属性按键合并：服务端每次只发改动的项，整表替换会抹掉没动的键。
             is ProtocolEvent.AttributesUpdated -> {
-                if (!closing.get()) {
+                if (acceptsProtocolEvents()) {
                     val table = HashMap(entityAttributes[event.entityId] ?: emptyMap())
                     for (attribute in event.changed) table[attribute.key] = attribute
                     entityAttributes[event.entityId] = table
@@ -1198,7 +1208,7 @@ public class Session internal constructor(
 
             // 状态效果按键合并：新增/替换与移除都在同一个事件里表达。
             is ProtocolEvent.EffectsUpdated -> {
-                if (!closing.get()) {
+                if (acceptsProtocolEvents()) {
                     val table = HashMap(entityEffects[event.entityId] ?: emptyMap())
                     for (effect in event.changed) table[effect.key] = effect
                     event.removed.forEach(table::remove)
@@ -1208,11 +1218,11 @@ public class Session internal constructor(
 
             // 能力是服务端权威状态：网络线程直接写入 StateFlow，事件流里再报告一次。
             is ProtocolEvent.AbilitiesUpdated -> {
-                if (!closing.get()) mutableAbilities.value = event.abilities
+                if (acceptsProtocolEvents()) mutableAbilities.value = event.abilities
             }
 
             is ProtocolEvent.ContainerPropertyChanged -> {
-                if (!closing.get()) {
+                if (acceptsProtocolEvents()) {
                     val table = HashMap(containerPropertyValues[event.windowId] ?: emptyMap())
                     table[event.property] = event.value
                     containerPropertyValues[event.windowId] = table
@@ -1221,7 +1231,7 @@ public class Session internal constructor(
 
             // 玩家列表的变化已经由适配层按包合并，一个包最多一个事件；缓存仍然先写。
             is ProtocolEvent.PlayerListChanged -> {
-                if (!closing.get()) {
+                if (acceptsProtocolEvents()) {
                     event.updated.forEach { players[it.uuid] = it }
                     event.removed.forEach(players::remove)
                     // 自己那条的 UPDATE_GAME_MODE 是中途改模式的唯一通知路径；
@@ -1234,33 +1244,33 @@ public class Session internal constructor(
 
             // 窗口内容与玩家列表同理：先写缓存，消费者收到事件时一定查得到同一份快照。
             is ProtocolEvent.ContainerUpdated -> {
-                if (!closing.get()) containers[event.container.windowId] = event.container
+                if (acceptsProtocolEvents()) containers[event.container.windowId] = event.container
             }
 
             is ProtocolEvent.ContainerOpened -> {
-                if (!closing.get()) containers[event.container.windowId] = event.container
+                if (acceptsProtocolEvents()) containers[event.container.windowId] = event.container
             }
 
             is ProtocolEvent.ContainerClosed -> {
-                if (!closing.get()) {
+                if (acceptsProtocolEvents()) {
                     containers.remove(event.windowId)
                     containerPropertyValues.remove(event.windowId)
                 }
             }
 
             is ProtocolEvent.HeldSlotChanged -> {
-                if (!closing.get()) heldSlotIndex = event.slot
+                if (acceptsProtocolEvents()) heldSlotIndex = event.slot
             }
 
             // 命令树是会话级快照（权限变化时整棵重发），先写 StateFlow 再上报事件。
             is ProtocolEvent.CommandTreeReceived -> {
-                if (!closing.get()) mutableCommands.value = event.tree
+                if (acceptsProtocolEvents()) mutableCommands.value = event.tree
             }
 
             // 转移请求是行动信号而不是可缓存状态：先写 StateFlow 让晚到的订阅者也能读到，
             // 再照常排队上报事件。它不清空——会话因转移断开后，调用方正是靠它决定连哪里。
             is ProtocolEvent.TransferRequested -> {
-                if (!closing.get()) {
+                if (acceptsProtocolEvents()) {
                     mutableTransferRequest.value = TransferRequest(event.host, event.port)
                 }
             }
@@ -1268,7 +1278,7 @@ public class Session internal constructor(
             // 品牌串是会话级快照：网络线程直接解析并写入 StateFlow（通常在配置阶段到达，
             // 早于事件消费者启动）。坏消息不改旧值，原始字节照常进事件流供下游对账。
             is ProtocolEvent.PluginMessageReceived -> {
-                if (!closing.get() && event.message.channel == PluginMessages.BRAND_CHANNEL) {
+                if (acceptsProtocolEvents() && event.message.channel == PluginMessages.BRAND_CHANNEL) {
                     PluginMessages.parseBrand(event.message.data())?.let { mutableServerBrand.value = it }
                 }
             }
@@ -1276,7 +1286,7 @@ public class Session internal constructor(
             // 补全回答是**一对一的请求/响应**，不是可缓存状态：在网络线程上直接交给等待方，
             // 不经过 Actor 的事件队列——消费者慢一点也照样能拿到答案。事件仍然照常排队上报。
             is ProtocolEvent.CommandSuggestionsReceived -> {
-                if (!closing.get()) {
+                if (acceptsProtocolEvents()) {
                     pendingSuggestions.remove(event.suggestions.transactionId)
                         ?.complete(event.suggestions)
                 }
@@ -1286,7 +1296,7 @@ public class Session internal constructor(
         }
 
         if (inbox.trySend(event).isFailure) {
-            if (closing.get()) return
+            if (!acceptsProtocolEvents()) return
             abortBecauseOfOverflow()
         }
     }
