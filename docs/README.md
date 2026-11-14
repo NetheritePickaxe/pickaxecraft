@@ -40,7 +40,7 @@
 - [M4z 进展（见 roadmap）](roadmap.md)：插件消息是裸字节通道、品牌串按 varint 前缀代读、上行上限 32767。
 - [M4aa 进展（见 roadmap）](roadmap.md)：拖拽是三段包、创造槽位就是窗口编号、gameMode 双源门控。
 - [M4ab 进展（见 roadmap）](roadmap.md)：破坏进度是观察他人的能力、RESET 是删条目、换维度即作废。
-- [M3 Android 运行时验证（门控中）](plans/m3-android-runtime.md)：阻塞事实、逐条判据与解除条件。
+- [M3 Android 运行时验证（已完成，iOS 除外）](plans/m3-android-runtime.md)：阻塞事实、逐条判据、真机结果与 `minSdk` 决策。
 - [M1 实施计划](plans/m1-implementation-plan.md)：自有客户端 API、连接生命周期、联调迁移、CLI 与提前 Android 探针；末尾附实施记录与偏差。
 - [发布到 Maven Central](publishing-central.md)：Central Portal 的 bundle、签名、secrets 与不可变版本规则。
 - [错误分类与重试语义](error-handling.md)：每类 `ClientException` 的可重试性与处理建议。
@@ -70,7 +70,7 @@ PickaxeCraft 是一个 **Minecraft Java 版客户端核心库**，首要联调�
 
 `protocol-core` 负责协议事实转换、区块解码与资源回收，`client-core` 负责会话 Actor、有界缓冲、区块缓存与错误分类；协议库的隐含行为已写入[协议适配契约](protocol-contract.md)。
 
-Android 仍属候选：构建链探针通过（D8 可产出 dex，`minSdk` 下限 26），运行时验证是 M3 门控；最新状态以 [README 的平台表](../README.md) 与 [M3 门控](plans/m3-android-runtime.md) 为准。
+Android 已在 ART 真机上验证（2026-11-15，API 36），有效 `minSdk` 为 34；iOS 仍是候选。最新状态以 [README 的平台表](../README.md) 与 [M3 记录](plans/m3-android-runtime.md) 为准。
 
 ## 参考文档
 

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  M3 Android 运行时证据用的最小宿主。
+
+  刻意不引入 AndroidX：这个 APK 的唯一用途是在真机上跑 client-core 并输出证据，
+  多一个依赖就多一层“是宿主的问题还是库的问题”的不确定性。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="org.pickaxe.androidhost">
+
+    <!-- TCP 连接需要 INTERNET，即使是 127.0.0.1（adb reverse）也一样。 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="Pickaxe M3 Host"
+        android:usesCleartextTraffic="true"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

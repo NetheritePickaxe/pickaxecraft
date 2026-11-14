@@ -8,8 +8,8 @@ Minestom 在本仓库只用于 `testing:minestom` 联调。最终客户端若需
 
 下游渲染完全自研、不使用 libGDX graphics API：桌面（LWJGL3）走与 MC 原版同构的双后端——OpenGL 默认 + 实验性 Vulkan；libGDX 仅在 Android/iOS 作为平台壳；所有图形依赖仍只存在于外部客户端仓库。
 
-> **当前进度（0.1.0 候选）**：M0–M2 的工程基线与出生链路、M4 的全部能力已实现；
-> M3（Android 运行时）仍受环境阻塞，是候选能力而不是发布门槛。
+> **当前进度（0.1.0 已发布）**：M0–M2 的工程基线与出生链路、M4 的全部能力、M3 的 Android
+> 运行时（2026-11-15 真机）已实现；iOS 仍未验证，0.1.0 的发布门槛也不包含移动运行时。
 >
 > - **会话**：状态查询、离线登录、出生、注册表、重生换维度、跨服转移（转移包只上报地址，
 >   由 `MinecraftClient.followTransfer` 决定是否换服）、幂等关闭与分类失败。
@@ -144,10 +144,10 @@ CI 在 Ubuntu 上以同样的命令执行（`.github/workflows/ci.yml`）。
 | 平台 | 状态 | 证据与边界 |
 | --- | --- | --- |
 | 标准 JVM（Windows / Linux / macOS） | 已验证 | 共享产物为 Java 21 字节码；发布冒烟用 Java 21 toolchain 编译并运行 `status` 查询。构建、CLI 与联调服务使用 JDK 25。 |
-| Android | 候选，未验证 | 构建链已探针通过（D8 可消费、`minSdk` 26）；ART + Netty NIO + 线程/资源回收仍待 M3。不阻断 0.1.0。 |
+| Android | 已验证（ART 真机，API 36）；0.1.0 的发布声明仍为候选 | 2026-11-15 在 `PLC110` / Android 16（API 36）/ arm64-v8a 上跑通 `status`、离线登录进 `PLAY`（`x=0.5 y=40.0 z=0.5`，9–17 个区块）、关闭后线程与区块缓存回收、20 轮开关无增长。有效 `minSdk` 是 34（`HexFormat`），26 只是字节码下限；宿主需自带 JNDI 占位与 jar 资源，见[架构文档的 Android 约束](docs/architecture.md)与[证据](tools/m3-android/evidence/2026-11-15-all.txt)。未覆盖：渲染、在线认证。 |
 | iOS | 候选，未验证 | 需要 macOS/Xcode + RoboVM 环境验证 Java 21、Kotlin、协程与 Netty；未验证前不作支持声明。 |
 | Web / HTML5 | 不做 | Kotlin/JVM + Netty 与浏览器运行时不匹配。 |
 
 本库不包含物理、碰撞、寻路或任务调度；这些属于下游图形客户端。
 
-核心技术基线：Kotlin/JVM、MCProtocolLib 26.2（协议 776）、构建与 CLI 使用 Java 25、共享发布产物使用 Java 21 字节码、Gradle Daemon JDK 25。目标是可嵌入标准 JVM 宿主的客户端核心；Android 与 iOS 为候选平台，移动运行时验证不进入 0.1.0 门槛。
+核心技术基线：Kotlin/JVM、MCProtocolLib 26.2（协议 776）、构建与 CLI 使用 Java 25、共享发布产物使用 Java 21 字节码、Gradle Daemon JDK 25。目标是可嵌入标准 JVM 宿主的客户端核心；Android 已拿到 ART 真机证据（`minSdk` 34），但 0.1.0 的发布门槛没有包含移动运行时，iOS 仍为候选平台。

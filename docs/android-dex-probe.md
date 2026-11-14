@@ -110,3 +110,10 @@ ANDROID_HOME=/path/to/android-sdk tools/android-probe/dex.sh 26     # 只跑一�
    连接关闭后线程与内存回收。
 2. 自带 OpenJDK 路径（PojavLauncher/FCL 类宿主）：预期直接通过，用同一条 `:app` 产物验证。
 3. 两条路径的结果分别写入架构文档后，才更新平台支持矩阵。
+
+## 7. 补记（2026-11-15）
+
+ART 路径已在真机上跑完，结论并入 [M3 Android 运行时验证](plans/m3-android-runtime.md) §6：
+`status`、离线登录、区块解码、线程与缓存回收、20 轮开关全部通过；Netty 走 no-Unsafe 的 NIO 路径，
+`directBufferAddress` 在 ART 上不可用。本文第 2 节“仍是未验证”的表述是当时的记录，不再代表现状。
+`minSdk` 的最终结论是 **34**（`java.util.HexFormat`），26 只是字节码与 `MethodHandle` 的下限。

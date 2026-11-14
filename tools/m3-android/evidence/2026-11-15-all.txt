@@ -1,0 +1,100 @@
+t=0ms event=host.started action=all server=127.0.0.1:25565 user=AndroidHost
+t=3ms event=probe.device sdk=36 release=16 abi=arm64-v8a model=PLC110
+t=3ms event=probe.vm name=Dalvik version=2.1.0 runtime=Android Runtime
+t=3ms event=probe.methodhandle ok=true result=5
+t=10ms event=probe.netty isAndroid=true hasUnsafe=false javaVersion=6 directPreferred=false canReliablyFree=false useDirectNoCleaner=false
+t=11ms event=probe.netty.direct ok=false type=java.lang.IllegalStateException message=No address access method
+t=11ms event=probe.nettyhelper ok=true srv=jndi-shim
+t=11ms event=probe.hexformat present=true api=36 roundtrip=00ff7f
+t=304ms event=status ok=true version=26.2 protocol=776 players=0/1 latency=29ms motd=Minestom Server
+t=313ms event=join.begin threads=23 client=0
+t=458ms event=session.state state=LOGIN
+t=458ms event=session.state state=CONFIGURATION
+t=458ms event=session.state state=PLAY
+t=558ms event=join.play state=PLAY x=0.5 y=40.0 z=0.5 chunks=17 entities=0 brand=Minestom
+t=560ms event=threads.connected added=1 names=[pickaxe-mcpl-3-1] total=26
+t=561ms event=join.closed state=CLOSED chunks=0
+t=568ms event=threads.after threads=25 client=0 leaked=[]
+t=568ms event=cycles.begin count=20
+t=695ms event=session.state state=LOGIN
+t=695ms event=session.state state=CONFIGURATION
+t=696ms event=session.state state=PLAY
+t=908ms event=cycle index=1 chunks=9 chunksAfterClose=0 threadsBefore=25 threadsAfter=25 added=1 leaked=[] heapBefore=13MB heapAfter=16MB
+t=1030ms event=session.state state=LOGIN
+t=1031ms event=session.state state=CONFIGURATION
+t=1031ms event=session.state state=PLAY
+t=1134ms event=cycle index=2 chunks=9 chunksAfterClose=0 threadsBefore=25 threadsAfter=25 added=1 leaked=[] heapBefore=16MB heapAfter=19MB
+t=1260ms event=session.state state=LOGIN
+t=1260ms event=session.state state=CONFIGURATION
+t=1261ms event=session.state state=PLAY
+t=1364ms event=cycle index=3 chunks=17 chunksAfterClose=0 threadsBefore=25 threadsAfter=25 added=1 leaked=[] heapBefore=19MB heapAfter=21MB
+t=1465ms event=session.state state=LOGIN
+t=1465ms event=session.state state=CONFIGURATION
+t=1466ms event=session.state state=PLAY
+t=1568ms event=cycle index=4 chunks=9 chunksAfterClose=0 threadsBefore=25 threadsAfter=25 added=1 leaked=[] heapBefore=21MB heapAfter=24MB
+t=1701ms event=session.state state=LOGIN
+t=1701ms event=session.state state=CONFIGURATION
+t=1701ms event=session.state state=PLAY
+t=1805ms event=cycle index=5 chunks=17 chunksAfterClose=0 threadsBefore=25 threadsAfter=25 added=1 leaked=[] heapBefore=24MB heapAfter=27MB
+t=2471ms event=session.state state=LOGIN
+t=2471ms event=session.state state=CONFIGURATION
+t=2471ms event=session.state state=PLAY
+t=2573ms event=cycle index=6 chunks=9 chunksAfterClose=0 threadsBefore=24 threadsAfter=25 added=1 leaked=[] heapBefore=6MB heapAfter=9MB
+t=2688ms event=session.state state=LOGIN
+t=2688ms event=session.state state=CONFIGURATION
+t=2688ms event=session.state state=PLAY
+t=2792ms event=cycle index=7 chunks=17 chunksAfterClose=0 threadsBefore=25 threadsAfter=25 added=1 leaked=[] heapBefore=9MB heapAfter=12MB
+t=2897ms event=session.state state=LOGIN
+t=2898ms event=session.state state=CONFIGURATION
+t=2898ms event=session.state state=PLAY
+t=3001ms event=cycle index=8 chunks=9 chunksAfterClose=0 threadsBefore=25 threadsAfter=26 added=1 leaked=[] heapBefore=12MB heapAfter=14MB
+t=3112ms event=session.state state=LOGIN
+t=3113ms event=session.state state=CONFIGURATION
+t=3113ms event=session.state state=PLAY
+t=3216ms event=cycle index=9 chunks=17 chunksAfterClose=0 threadsBefore=26 threadsAfter=26 added=1 leaked=[] heapBefore=14MB heapAfter=17MB
+t=3332ms event=session.state state=LOGIN
+t=3333ms event=session.state state=CONFIGURATION
+t=3333ms event=session.state state=PLAY
+t=3435ms event=cycle index=10 chunks=17 chunksAfterClose=0 threadsBefore=26 threadsAfter=26 added=1 leaked=[] heapBefore=17MB heapAfter=20MB
+t=4069ms event=session.state state=LOGIN
+t=4070ms event=session.state state=CONFIGURATION
+t=4070ms event=session.state state=PLAY
+t=4173ms event=cycle index=11 chunks=9 chunksAfterClose=0 threadsBefore=26 threadsAfter=26 added=1 leaked=[] heapBefore=6MB heapAfter=9MB
+t=4290ms event=session.state state=LOGIN
+t=4291ms event=session.state state=CONFIGURATION
+t=4291ms event=session.state state=PLAY
+t=4393ms event=cycle index=12 chunks=17 chunksAfterClose=0 threadsBefore=26 threadsAfter=26 added=1 leaked=[] heapBefore=9MB heapAfter=12MB
+t=4494ms event=session.state state=LOGIN
+t=4494ms event=session.state state=CONFIGURATION
+t=4494ms event=session.state state=PLAY
+t=4599ms event=cycle index=13 chunks=9 chunksAfterClose=0 threadsBefore=26 threadsAfter=26 added=1 leaked=[] heapBefore=12MB heapAfter=14MB
+t=4706ms event=session.state state=LOGIN
+t=4706ms event=session.state state=CONFIGURATION
+t=4706ms event=session.state state=PLAY
+t=4810ms event=cycle index=14 chunks=17 chunksAfterClose=0 threadsBefore=26 threadsAfter=26 added=1 leaked=[] heapBefore=15MB heapAfter=17MB
+t=4918ms event=session.state state=LOGIN
+t=4919ms event=session.state state=CONFIGURATION
+t=4919ms event=session.state state=PLAY
+t=5022ms event=cycle index=15 chunks=9 chunksAfterClose=0 threadsBefore=26 threadsAfter=26 added=1 leaked=[] heapBefore=18MB heapAfter=20MB
+t=5653ms event=session.state state=LOGIN
+t=5653ms event=session.state state=CONFIGURATION
+t=5654ms event=session.state state=PLAY
+t=5757ms event=cycle index=16 chunks=17 chunksAfterClose=0 threadsBefore=25 threadsAfter=26 added=1 leaked=[] heapBefore=6MB heapAfter=9MB
+t=5874ms event=session.state state=LOGIN
+t=5875ms event=session.state state=CONFIGURATION
+t=5875ms event=session.state state=PLAY
+t=5977ms event=cycle index=17 chunks=9 chunksAfterClose=0 threadsBefore=26 threadsAfter=26 added=1 leaked=[] heapBefore=9MB heapAfter=12MB
+t=6080ms event=session.state state=LOGIN
+t=6081ms event=session.state state=CONFIGURATION
+t=6081ms event=session.state state=PLAY
+t=6185ms event=cycle index=18 chunks=9 chunksAfterClose=0 threadsBefore=26 threadsAfter=26 added=1 leaked=[] heapBefore=12MB heapAfter=15MB
+t=6293ms event=session.state state=LOGIN
+t=6293ms event=session.state state=CONFIGURATION
+t=6293ms event=session.state state=PLAY
+t=6396ms event=cycle index=19 chunks=9 chunksAfterClose=0 threadsBefore=26 threadsAfter=26 added=1 leaked=[] heapBefore=15MB heapAfter=18MB
+t=6498ms event=session.state state=LOGIN
+t=6499ms event=session.state state=CONFIGURATION
+t=6499ms event=session.state state=PLAY
+t=6601ms event=cycle index=20 chunks=17 chunksAfterClose=0 threadsBefore=26 threadsAfter=26 added=1 leaked=[] heapBefore=18MB heapAfter=21MB
+t=7126ms event=cycles.done count=20 threads=25 heap=6MB
+t=7127ms event=host.done

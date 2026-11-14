@@ -39,7 +39,7 @@ PickaxeCraft 是可嵌入其他程序的 Minecraft Java 版客户端核心库，
 | 协程 | `kotlinx-coroutines`，会话内顺序处理 |
 | 二进制协议 | MCProtocolLib 26.2，不自行实现 Reader/Writer、数据包与状态机 |
 | 协议数据 | 数据包定义、注册表 NBT、标签 NBT 由协议库随包提供，本仓库只维护版本常量并与之对账 |
-| 网络 | MCProtocolLib 内置 Netty（4.2.x）；Desktop 使用，Android/iOS 复用前分别验证 |
+| 网络 | MCProtocolLib 内置 Netty（4.2.x）；Desktop 与 Android（2026-11-15 真机）已验证走 NIO，iOS 复用前需单独验证 |
 | Minestom | 本仓库仅用于 Java 25 测试宿主；可选单人游戏由外部 Desktop/Java 25 客户端集成 |
 | 图形客户端 | 独立仓库使用 libGDX；本仓库只提供无 UI 依赖的客户端核心 |
 | 配置与自有序列化 | JSON 等文本格式可使用 `kotlinx.serialization`；二进制 Minecraft 协议不使用它 |
@@ -529,16 +529,18 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 | 平台 | 当前决策 | 验证门控 |
 | --- | --- | --- |
 | 标准 JVM（Windows / Linux / macOS） | **已验证**；首要支持目标 | 共享库为 Java 21 字节码；发布前用 JDK 21 与 JDK 25 各跑一次确认运行时下限；`samples:libgdx-viewer`（不发布、headless）验证网格化；启用内嵌 Minestom 单人模式时宿主使用 Java 25 |
-| Android | **候选，未验证**；不阻断 0.1.0 | 构建链已探针通过（D8 可消费、minSdk 26）；运行时（ART + Netty NIO + 线程/资源回收）待 M3 |
+| Android | **已验证（ART 运行时，API 36 真机）**；发布声明仍以 0.1.0 为准 | 2026-11-15：`PLC110` / Android 16（API 36）/ arm64-v8a 上跑通 `status`（24–56 ms）、离线登录进 `PLAY`（`x=0.5 y=40.0 z=0.5`，9–17 个区块）、每会话新增 1 个 `pickaxe-mcpl` 线程、关闭后线程与区块缓存全部回收、20 轮开关无增长（`threads` 25–26、`heap` 6–22 MB 锯齿，结束时 6 MB）。证据见 [tools/m3-android/evidence/2026-11-15-all.txt](../tools/m3-android/evidence/2026-11-15-all.txt)。未覆盖：渲染、在线认证（`HexFormat` 约束见下）、iOS |
 | iOS | **候选，未验证**；不阻断 0.1.0 | 需 macOS/Xcode + RoboVM spike；验证 Java 21、Kotlin、协程与 Netty |
 | Web / HTML5 | 不做 | 当前 Kotlin/JVM + Netty 路线与 libGDX GWT 后端不匹配 |
 
 具体约束：
 
-- Netty 是协议库的一部分，无法从 Android/iOS 路径直接剥离。`netty-common` 显式识别 Android 并退到 no-Unsafe 路径，但**尚未在设备上验证**。
-- Android 的构建链已经实测（见 [Android 反糖探针](android-dex-probe.md)）：d8 可把共享产物与全部依赖 dex 成功；`minSdk` 下限为 26（`MethodHandle` 只在 Android O 起可用，来源是 `netty-common` 与 MinecraftAuth 的 httpclient）；`java.lang.Record` 已被处理，但 `java.util.HexFormat` 仍留在 dex 里，需要 API 34，M5 在线认证前必须处理。
+- Netty 是协议库的一部分，无法从 Android/iOS 路径直接剥离。2026-11-15 在 ART 上实测：`PlatformDependent` 报 `isAndroid=true`、`hasUnsafe=false`、`directBufferPreferred=false`，`directBufferAddress` 抛 `IllegalStateException: No address access method`；NIO transport 仍能完成状态查询、登录与区块解码，说明 no-Unsafe 路径可用，但**直接缓冲的地址访问在 ART 上不可用**，依赖它的零拷贝优化不能假设存在。
+- Android 宿主必须自带 JNDI 最小占位：mcprotocollib 的 `NettyHelper.<clinit>` 无条件 `Class.forName("com.sun.jndi.dns.DnsContextFactory")` 并 `new InitialDirContext(env)`，而 `android.jar` 里没有 `javax.naming`（API 36 实测），首次连接就会抛 `ExceptionInInitializerError`。宿主补齐最小占位后，SRV 查询以 `NamingException` 失败并回落到普通 DNS 解析（主机名与字面 IP 照常可用，只是没有 SRV）。上游修法是延迟初始化 JNDI；参考实现见 `tools/m3-android/host/src/main/java`。
+- Android 打包必须把 jar 的根资源与 `META-INF/services` 一起放进 APK：`yggdrasil_session_pubkey.der`、`networkCodec.nbt`、`networkTags.nbt`，以及 cloudburst 的 `VectorProvider`、adventure 的序列化 Provider。只放 `classes.dex` 会在 `MinecraftProtocol` 初始化或 `Vectors` 的 `ServiceLoader` 上失败——桌面直接读 jar，所以这个差异只在打包宿主里暴露。
+- 有效 `minSdk` 是 34，不是 26：`adventure-api` 的 `TextColorImpl` 用静态字段持有 `java.util.HexFormat`，mcprotocollib 的 `UUIDUtils` 也直接调用它，而 `HexFormat` 需要 API 34。26 只是字节码与 `MethodHandle` 的下限；回到 26 需要替换这两处依赖或引入反糖方案（决策见 [M3](plans/m3-android-runtime.md)）。
 - Android 打包必须 `exclude(group = "org.cloudburstmc.math", module = "api")`：该构件的 57 个类全部包含在 `:immutable` 中，同时打包会让 d8 直接报重复类，而桌面 JVM 会静默容忍。
-- 仍未验证：Netty 在 ART 上的类加载与 NIO 行为、运行时线程与内存回收、no-Unsafe 降级。在这些拿到证据前，Android 不算支持；通过前也不引入独立传输实现。
+- 仍未验证：渲染路径（本仓库不含渲染代码）、在线认证（`HexFormat` 与账户流程，M5）、iOS（需 macOS/Xcode + RoboVM）。这些部分不能由本次 ART 结果推断。
 - libGDX 官方称 RoboVM 执行 Java 字节码、其他 JVM 语言“应该可用但未测试”。因此 iOS 不能由 Desktop 或 Android 的结果推断；若失败，先记录具体不兼容点，再评估平台适配或替代传输。
 - libGDX 官方明确说明 Kotlin 不能使用 GWT HTML5 目标，Netty 也不适用于 Web。当前不引入 Kotlin/JS、TeaVM 或独立 Web 协议栈；只有出现新的明确需求并重新评审时才改变此决策。
 - 各宿主负责生命周期、网络安全配置、权限和账户秘密存储；核心不持有 Activity、Context、UI、OpenGL 或 RoboVM 对象。
