@@ -102,7 +102,7 @@ M1 只要求进入 GAME，不要求玩家出生、传送/区块确认或世界�
 
 - **Android：已完成**（2026-11-15，ART 真机 API 36）。结果、逐条判据与 `minSdk 34` 决策见
   [M3 Android 运行时验证](plans/m3-android-runtime.md) §6。
-- **iOS：未开始**，仍缺 macOS/Xcode + RoboVM 环境。
+- **iOS：未开始**，环境阻塞：没有 macOS/Xcode + RoboVM，也没有 iOS 设备或模拟器。
 
 ### 交付内容
 

@@ -67,7 +67,8 @@ JAVA_HOME=<jdk25> app/build/install/pickaxecraft/bin/pickaxecraft status 127.0.0
 
 ## 6. 后续：2026-11-15 真机证据（本条记录已被部分推翻）
 
-上文的“环境阻塞”已经解除，Android 的 ART 运行时判据全部拿到证据；iOS 仍然没有环境。
+上文的“环境阻塞”已经解除，Android 的 ART 运行时判据全部拿到证据；iOS 仍然没有环境：
+没有 macOS/Xcode + RoboVM，也没有 iOS 设备或模拟器，因此连一次 Status 查询都无法开始。
 本节只做事实更新，2026-11-13 的记录保留原样，便于对照。
 
 - 设备：`PLC110` / Android 16（API 36）/ arm64-v8a；宿主与脚本见 `tools/m3-android/`。
@@ -83,4 +84,5 @@ JAVA_HOME=<jdk25> app/build/install/pickaxecraft/bin/pickaxecraft status 127.0.0
      `networkCodec.nbt`、`networkTags.nbt`、cloudburst `VectorProvider` 等）。
 - `HexFormat` 结论：有效 `minSdk` 是 **34**，不是 26。`adventure-api` 的 `TextColorImpl`
   在静态字段里初始化 `HexFormat`，`mcprotocollib` 的 `UUIDUtils` 也直接使用它。
-- 仍然未验证：渲染、在线认证、iOS。
+- 仍然未验证：渲染、在线认证、iOS。iOS 的阻塞是**环境**而不是结论：没有 macOS/Xcode +
+  RoboVM，也没有 iOS 设备或模拟器，构建与 Status 查询都无从开始，不写「理论可用」。

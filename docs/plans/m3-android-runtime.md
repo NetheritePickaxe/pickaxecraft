@@ -122,7 +122,8 @@
 
 - 渲染：本仓库不含渲染代码，GLES 路径由外部图形客户端验证；
 - 在线认证与账户流程：M5，且受 6.3 的 `minSdk` 约束；
-- iOS：需 macOS/Xcode + RoboVM，不能由本次结果推断；
+- iOS：环境阻塞，不是结论——没有 macOS/Xcode + RoboVM，也没有 iOS 设备或模拟器，
+  构建与 Status 查询都无从开始；不能由 Android 的结果推断；
 - 直接缓冲的零拷贝优化：ART 上 `directBufferAddress` 不可用，相关优化不能假设存在。
 
 ### 6.5 复现
