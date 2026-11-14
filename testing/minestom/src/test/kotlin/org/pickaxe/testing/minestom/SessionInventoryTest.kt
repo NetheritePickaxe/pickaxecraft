@@ -48,9 +48,9 @@ internal class SessionInventoryTest : SessionTestBase() {
             val session = client.connect(address, BAG_USERNAME)
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                log.await("背包与容器内容可从会话读到") { it is ClientEvent.ChunksReceived && it.total > 0 }
                 // 出生时服务端就下发窗口 0 的整包内容：背包不是“打开才有”。
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.inventory() != null }
+                awaitCondition("背包与容器内容可从会话读到", EVENT_TIMEOUT_MILLIS) { session.inventory() != null }
                 assertTrue(assertNotNull(session.inventory()).isPlayerInventory, "窗口 0 就是玩家背包")
 
                 val player = assertNotNull(
@@ -60,7 +60,7 @@ internal class SessionInventoryTest : SessionTestBase() {
 
                 // Minestom 的槽位 0 是快捷栏第一格，协议窗口里是 36：中间那次换算是本层的责任。
                 player.inventory.setItemStack(0, ItemStack.of(Material.DIAMOND, 3))
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("背包与容器内容可从会话读到", EVENT_TIMEOUT_MILLIS) {
                     val item = session.inventory()?.slot(PlayerInventoryLayout.HOTBAR_FIRST)
                     item?.itemId == Material.DIAMOND.id() && item.count == 3
                 }
@@ -70,12 +70,12 @@ internal class SessionInventoryTest : SessionTestBase() {
                 chest.setItemStack(0, ItemStack.of(Material.GOLD_INGOT, 2))
                 player.openInventory(chest)
 
-                log.await { it is ClientEvent.ContainerOpened }
+                log.await("背包与容器内容可从会话读到") { it is ClientEvent.ContainerOpened }
                 val opened = log.snapshot().filterIsInstance<ClientEvent.ContainerOpened>().first()
                 assertEquals(CHEST_TYPE, opened.type, "箱子的容器类型应原样来自服务端")
                 assertEquals(CHEST_TITLE, opened.title, "标题应渲染成纯文本")
 
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("背包与容器内容可从会话读到", EVENT_TIMEOUT_MILLIS) {
                     session.container()?.slot(0)?.itemId == Material.GOLD_INGOT.id()
                 }
                 // 打开容器期间，玩家背包仍然从窗口 0 读：Minestom 的容器整包只带容器自己的
@@ -89,25 +89,25 @@ internal class SessionInventoryTest : SessionTestBase() {
 
                 // 单槽更新：箱子第 6 格放一个苹果，其他槽位必须保持不变。
                 chest.setItemStack(5, ItemStack.of(Material.APPLE, 1))
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("背包与容器内容可从会话读到", EVENT_TIMEOUT_MILLIS) {
                     session.container()?.slot(5)?.itemId == Material.APPLE.id()
                 }
                 assertEquals(Material.GOLD_INGOT.id(), session.container()?.slot(0)?.itemId, "单槽更新不应清掉别的格子")
 
                 player.closeInventory()
-                log.await { it is ClientEvent.ContainerClosed }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.container() == null }
+                log.await("背包与容器内容可从会话读到") { it is ClientEvent.ContainerClosed }
+                awaitCondition("背包与容器内容可从会话读到", EVENT_TIMEOUT_MILLIS) { session.container() == null }
                 assertNotNull(session.inventory(), "关掉箱子不影响玩家自己的背包")
 
                 // 手持槽位：服务端接受时不回包，本地立即推进；服务端字段是这次上行的证据。
                 session.selectHotbarSlot(HELD_SLOT)
-                log.await { it is ClientEvent.HeldSlotChanged && it.slot == HELD_SLOT }
+                log.await("背包与容器内容可从会话读到") { it is ClientEvent.HeldSlotChanged && it.slot == HELD_SLOT }
                 assertEquals(HELD_SLOT, session.heldSlot, "接受无回执，本地在发送后立即推进")
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { player.heldSlot.toInt() == HELD_SLOT }
+                awaitCondition("背包与容器内容可从会话读到", EVENT_TIMEOUT_MILLIS) { player.heldSlot.toInt() == HELD_SLOT }
                 assertNull(session.heldItem(), "第 $HELD_SLOT 格此时是空的")
 
                 player.inventory.setItemStack(HELD_SLOT, ItemStack.of(Material.STONE, 7))
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("背包与容器内容可从会话读到", EVENT_TIMEOUT_MILLIS) {
                     val held = session.heldItem()
                     held?.itemId == Material.STONE.id() && held.count == 7
                 }
@@ -141,7 +141,7 @@ internal class SessionInventoryTest : SessionTestBase() {
             val session = client.connect(address, STATE_USERNAME)
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                log.await("生命、饥饿、经验与装备对客户端可见") { it is ClientEvent.ChunksReceived && it.total > 0 }
                 val player = assertNotNull(
                     MinecraftServer.getConnectionManager().getOnlinePlayerByUsername(STATE_USERNAME),
                     "服务端应已保存该玩家",
@@ -151,17 +151,17 @@ internal class SessionInventoryTest : SessionTestBase() {
                 player.setFood(STATE_FOOD)
                 player.setFoodSaturation(STATE_SATURATION)
 
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("生命、饥饿、经验与装备对客户端可见", EVENT_TIMEOUT_MILLIS) {
                     val status = session.status.value
                     status.health == STATE_HEALTH &&
                         status.food == STATE_FOOD &&
                         status.foodSaturation == STATE_SATURATION
                 }
-                log.await { it is ClientEvent.StatusChanged && it.status.health == STATE_HEALTH }
+                log.await("生命、饥饿、经验与装备对客户端可见") { it is ClientEvent.StatusChanged && it.status.health == STATE_HEALTH }
 
                 player.setLevel(STATE_LEVEL)
                 player.setExp(STATE_EXPERIENCE_BAR)
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("生命、饥饿、经验与装备对客户端可见", EVENT_TIMEOUT_MILLIS) {
                     val status = session.status.value
                     status.level == STATE_LEVEL && status.experienceBar == STATE_EXPERIENCE_BAR
                 }
@@ -173,10 +173,10 @@ internal class SessionInventoryTest : SessionTestBase() {
                 val zombie = EntityCreature(EntityType.ZOMBIE)
                 zombie.setNoGravity(true)
                 zombie.setInstance(instance, Pos(6.5, GROUND_LEVEL, 6.5)).join()
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.entity(zombie.entityId) != null }
+                awaitCondition("生命、饥饿、经验与装备对客户端可见", EVENT_TIMEOUT_MILLIS) { session.entity(zombie.entityId) != null }
 
                 zombie.setEquipment(EquipmentSlot.HELMET, ItemStack.of(Material.GOLDEN_HELMET))
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("生命、饥饿、经验与装备对客户端可见", EVENT_TIMEOUT_MILLIS) {
                     session.entity(zombie.entityId)?.equipment?.get(EQUIPMENT_HELMET)?.itemId ==
                         Material.GOLDEN_HELMET.id()
                 }
@@ -187,7 +187,7 @@ internal class SessionInventoryTest : SessionTestBase() {
                 )
 
                 zombie.setEquipment(EquipmentSlot.HELMET, ItemStack.AIR)
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("生命、饥饿、经验与装备对客户端可见", EVENT_TIMEOUT_MILLIS) {
                     session.entity(zombie.entityId)?.equipment?.containsKey(EQUIPMENT_HELMET) == false
                 }
                 zombie.remove()
@@ -210,8 +210,8 @@ internal class SessionInventoryTest : SessionTestBase() {
             val session = client.connect(address, CLICK_USERNAME)
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.inventory() != null }
+                log.await("容器点击能把物品搬到背包") { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition("容器点击能把物品搬到背包", EVENT_TIMEOUT_MILLIS) { session.inventory() != null }
 
                 val player = assertNotNull(
                     MinecraftServer.getConnectionManager().getOnlinePlayerByUsername(CLICK_USERNAME),
@@ -224,15 +224,15 @@ internal class SessionInventoryTest : SessionTestBase() {
                 chest.setItemStack(THROW_SLOT, ItemStack.of(Material.DIRT, DIRT_COUNT))
                 player.openInventory(chest)
 
-                log.await { it is ClientEvent.ContainerOpened }
+                log.await("容器点击能把物品搬到背包") { it is ClientEvent.ContainerOpened }
                 val windowId = log.snapshot().filterIsInstance<ClientEvent.ContainerOpened>().first().windowId
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("容器点击能把物品搬到背包", EVENT_TIMEOUT_MILLIS) {
                     session.container(windowId)?.slot(CLICK_SLOT)?.itemId == Material.GOLD_INGOT.id()
                 }
 
                 // ① 左键点箱子第 0 格：整堆到光标上。光标由服务端回给本端（本端不预测）。
                 session.clickSlot(windowId, CLICK_SLOT, SlotClick.Pickup())
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("容器点击能把物品搬到背包", EVENT_TIMEOUT_MILLIS) {
                     session.container(windowId)?.cursor?.itemId == Material.GOLD_INGOT.id()
                 }
                 assertEquals(GOLD_COUNT, session.container(windowId)?.cursor?.count, "左键拿整堆")
@@ -241,7 +241,7 @@ internal class SessionInventoryTest : SessionTestBase() {
 
                 // ② 再左键点窗口里的快捷栏第一格（3 行箱子：27 格容器 + 27 格背包之后）：物品落进背包。
                 session.clickSlot(windowId, CHEST_HOTBAR_FIRST_SLOT, SlotClick.Pickup())
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("容器点击能把物品搬到背包", EVENT_TIMEOUT_MILLIS) {
                     session.inventory()?.slot(PlayerInventoryLayout.HOTBAR_FIRST)?.itemId ==
                         Material.GOLD_INGOT.id()
                 }
@@ -255,15 +255,15 @@ internal class SessionInventoryTest : SessionTestBase() {
                     player.inventory.getItemStack(0).amount(),
                     "服务端背包第 0 格与客户端第 36 格是同一格",
                 )
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.container(windowId)?.cursor == null }
+                awaitCondition("容器点击能把物品搬到背包", EVENT_TIMEOUT_MILLIS) { session.container(windowId)?.cursor == null }
 
                 // ③ Shift 点击：服务端自己决定落到背包哪一格，本端只认结果。
                 // 一次点击会改两个容器，服务端先发背包整包、再发容器整包，两边都要等，不能只看一半。
                 session.clickSlot(windowId, SHIFT_SLOT, SlotClick.QuickMove())
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("容器点击能把物品搬到背包", EVENT_TIMEOUT_MILLIS) {
                     session.inventory()?.slots?.any { it?.itemId == Material.APPLE.id() } == true
                 }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.container(windowId)?.slot(SHIFT_SLOT) == null }
+                awaitCondition("容器点击能把物品搬到背包", EVENT_TIMEOUT_MILLIS) { session.container(windowId)?.slot(SHIFT_SLOT) == null }
                 assertEquals(
                     APPLE_COUNT,
                     session.inventory()?.slots?.firstOrNull { it?.itemId == Material.APPLE.id() }?.count,
@@ -273,15 +273,15 @@ internal class SessionInventoryTest : SessionTestBase() {
 
                 // ④ 丢弃整堆：箱子这一格清空（掉落物实体不在本用例的断言范围）。
                 session.clickSlot(windowId, THROW_SLOT, SlotClick.Throw(wholeStack = true))
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.container(windowId)?.slot(THROW_SLOT) == null }
+                awaitCondition("容器点击能把物品搬到背包", EVENT_TIMEOUT_MILLIS) { session.container(windowId)?.slot(THROW_SLOT) == null }
                 assertTrue(chest.getItemStack(THROW_SLOT).isAir, "服务端箱子里这一格应已空")
 
                 // ⑤ 关闭窗口在发出时就生效（服务端接受时不回包），事件因此早于服务端处理到达；
                 // 服务端侧的状态要等一个来回。
                 session.closeContainer(windowId)
-                log.await { it is ClientEvent.ContainerClosed && it.windowId == windowId }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { player.getOpenInventory() == null }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.container() == null }
+                log.await("容器点击能把物品搬到背包") { it is ClientEvent.ContainerClosed && it.windowId == windowId }
+                awaitCondition("容器点击能把物品搬到背包", EVENT_TIMEOUT_MILLIS) { player.getOpenInventory() == null }
+                awaitCondition("容器点击能把物品搬到背包", EVENT_TIMEOUT_MILLIS) { session.container() == null }
                 assertNotNull(session.inventory(), "关掉箱子不影响玩家自己的背包")
                 assertEquals(Container.PLAYER_WINDOW_ID, session.activeWindowId)
 
@@ -308,8 +308,8 @@ internal class SessionInventoryTest : SessionTestBase() {
             val session = client.connect(address, ITEM_USERNAME)
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+                log.await("物品键名与自定义名可读") { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition("物品键名与自定义名可读", EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
                 assertTrue(
                     session.inventory()?.slots?.all { it == null } == true,
                     "测试开始时背包应为空",
@@ -324,7 +324,7 @@ internal class SessionInventoryTest : SessionTestBase() {
                     "服务端应能塞进物品",
                 )
 
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("物品键名与自定义名可读", EVENT_TIMEOUT_MILLIS) {
                     val slots = session.inventory()?.slots.orEmpty()
                     slots.any { it?.key == "minecraft:stone" && it.count == 16 && it.customName == NAMED_ITEM_NAME } &&
                         slots.any { it?.key == "minecraft:diamond" && it.customName == null }
@@ -351,13 +351,13 @@ internal class SessionInventoryTest : SessionTestBase() {
             val session = client.connect(address, COMPONENT_USERNAME)
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+                log.await("物品组件可读且附魔键名来自动态注册表") { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition("物品组件可读且附魔键名来自动态注册表", EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
                 assertTrue(
                     withContext(Dispatchers.IO) { giveComponentItem(COMPONENT_USERNAME) },
                     "服务端应把组件齐全的剑放进背包",
                 )
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("物品组件可读且附魔键名来自动态注册表", EVENT_TIMEOUT_MILLIS) {
                     session.inventory()?.slots.orEmpty().any {
                         it?.key == "minecraft:diamond_sword" && it.customName == COMPONENT_SWORD_NAME
                     }
@@ -394,8 +394,8 @@ internal class SessionInventoryTest : SessionTestBase() {
             val session = client.connect(address, PROTOTYPE_USERNAME)
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+                log.await("物品原型默认值可读") { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition("物品原型默认值可读", EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
                 // 三件物品都不设任何组件：服务端只会下发 id 与数量，耐久与堆叠上限只能由
                 // 客户端查自己的物品原型表补齐。
                 assertTrue(
@@ -406,7 +406,7 @@ internal class SessionInventoryTest : SessionTestBase() {
                     },
                     "服务端应把三件物品放进背包",
                 )
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("物品原型默认值可读", EVENT_TIMEOUT_MILLIS) {
                     val keys = session.inventory()?.slots.orEmpty().mapNotNull { it?.key }.toSet()
                     keys.containsAll(PROTOTYPE_ITEM_KEYS)
                 }
@@ -436,8 +436,8 @@ internal class SessionInventoryTest : SessionTestBase() {
             val session = client.connect(address, CREATIVE_USERNAME)
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+                log.await("拖拽与创造模式按服务端权威对账") { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition("拖拽与创造模式按服务端权威对账", EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
 
                 // 门控：模式未知或不是创造时，创造写入 API 必须本地拒绝而不是发出去被忽略。
                 assertFailsWith<IllegalStateException> {
@@ -451,7 +451,7 @@ internal class SessionInventoryTest : SessionTestBase() {
                     withContext(Dispatchers.IO) { setGameMode(CREATIVE_USERNAME, "CREATIVE") },
                     "服务端应能把玩家切成创造模式",
                 )
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.gameMode.value == "CREATIVE" }
+                awaitCondition("拖拽与创造模式按服务端权威对账", EVENT_TIMEOUT_MILLIS) { session.gameMode.value == "CREATIVE" }
 
                 // 创造写入：快捷栏第 0 格放 12 块石头；服务端事件与客户端单槽更新双侧对账。
                 session.setCreativeSlot(DRAG_SOURCE_SLOT, CreativeItem(STONE_ITEM_ID, 12))
@@ -461,19 +461,19 @@ internal class SessionInventoryTest : SessionTestBase() {
                     },
                     "服务端应收到对源槽位的创造写入",
                 )
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("拖拽与创造模式按服务端权威对账", EVENT_TIMEOUT_MILLIS) {
                     session.inventory()?.slots?.getOrNull(DRAG_SOURCE_SLOT)?.count == 12
                 }
 
                 // 左键拖拽均分：拿起 12 个，拖到 3 格，每格 4 个；客户端与服务端背包对账。
                 session.clickSlot(DRAG_SOURCE_SLOT, SlotClick.Pickup())
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.cursorItem()?.count == 12 }
+                awaitCondition("拖拽与创造模式按服务端权威对账", EVENT_TIMEOUT_MILLIS) { session.cursorItem()?.count == 12 }
                 session.drag(listOf(DRAG_TARGET_FIRST, DRAG_TARGET_FIRST + 1, DRAG_TARGET_FIRST + 2), DragButton.LEFT)
                 assertTrue(
                     withContext(Dispatchers.IO) { awaitPlayerPacket(CREATIVE_USERNAME, "drag.2", MILESTONE_TIMEOUT) },
                     "服务端应收到左键拖拽的 end 包",
                 )
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("拖拽与创造模式按服务端权威对账", EVENT_TIMEOUT_MILLIS) {
                     val slots = session.inventory()?.slots.orEmpty()
                     (0..2).all { slots.getOrNull(DRAG_TARGET_FIRST + it)?.count == 4 }
                 }
@@ -487,17 +487,17 @@ internal class SessionInventoryTest : SessionTestBase() {
 
                 // 右键拖拽每槽 1 个：换两格干净的槽，光标剩 5 个。
                 session.setCreativeSlot(DRAG_SOURCE_SLOT, CreativeItem(STONE_ITEM_ID, 7))
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("拖拽与创造模式按服务端权威对账", EVENT_TIMEOUT_MILLIS) {
                     session.inventory()?.slots?.getOrNull(DRAG_SOURCE_SLOT)?.count == 7
                 }
                 session.clickSlot(DRAG_SOURCE_SLOT, SlotClick.Pickup())
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.cursorItem()?.count == 7 }
+                awaitCondition("拖拽与创造模式按服务端权威对账", EVENT_TIMEOUT_MILLIS) { session.cursorItem()?.count == 7 }
                 session.drag(listOf(DRAG_TARGET_FIRST + 3, DRAG_TARGET_FIRST + 4), DragButton.RIGHT)
                 assertTrue(
                     withContext(Dispatchers.IO) { awaitPlayerPacket(CREATIVE_USERNAME, "drag.6", MILESTONE_TIMEOUT) },
                     "服务端应收到右键拖拽的 end 包",
                 )
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.cursorItem()?.count == 5 }
+                awaitCondition("拖拽与创造模式按服务端权威对账", EVENT_TIMEOUT_MILLIS) { session.cursorItem()?.count == 5 }
                 assertEquals(1, session.inventory()?.slots?.getOrNull(DRAG_TARGET_FIRST + 3)?.count)
                 assertEquals(1, session.inventory()?.slots?.getOrNull(DRAG_TARGET_FIRST + 4)?.count)
                 assertEquals(
@@ -514,11 +514,11 @@ internal class SessionInventoryTest : SessionTestBase() {
 
                 // 清空：null 写入后，客户端与服务端的这一格都变回空。
                 session.setCreativeSlot(DRAG_TARGET_FIRST + 6, CreativeItem(STONE_ITEM_ID, 3))
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("拖拽与创造模式按服务端权威对账", EVENT_TIMEOUT_MILLIS) {
                     session.inventory()?.slots?.getOrNull(DRAG_TARGET_FIRST + 6)?.count == 3
                 }
                 session.setCreativeSlot(DRAG_TARGET_FIRST + 6, null)
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("拖拽与创造模式按服务端权威对账", EVENT_TIMEOUT_MILLIS) {
                     session.inventory()?.slots?.getOrNull(DRAG_TARGET_FIRST + 6) == null
                 }
                 assertTrue(
@@ -546,7 +546,7 @@ internal class SessionInventoryTest : SessionTestBase() {
                 assertTrue(awaitMilestone(PROPERTY_USERNAME, PlayerMilestone.SPAWNED, MILESTONE_TIMEOUT))
 
                 sendWindowProperty(PROPERTY_USERNAME, Container.PLAYER_WINDOW_ID, FURNACE_PROGRESS, 75)
-                log.await {
+                log.await("容器数值属性可读且多个下标互不覆盖") {
                     it is ClientEvent.ContainerPropertyChanged &&
                         it.windowId == Container.PLAYER_WINDOW_ID &&
                         it.property == FURNACE_PROGRESS && it.value == 75
@@ -554,7 +554,7 @@ internal class SessionInventoryTest : SessionTestBase() {
                 assertEquals(75, session.containerProperties(Container.PLAYER_WINDOW_ID)[FURNACE_PROGRESS])
 
                 sendWindowProperty(PROPERTY_USERNAME, Container.PLAYER_WINDOW_ID, FURNACE_TOTAL, 200)
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("容器数值属性可读且多个下标互不覆盖", EVENT_TIMEOUT_MILLIS) {
                     session.containerProperties(Container.PLAYER_WINDOW_ID).size == 2
                 }
                 assertEquals(75, session.containerProperties(Container.PLAYER_WINDOW_ID)[FURNACE_PROGRESS])

@@ -58,7 +58,7 @@ internal class SessionSocialTest : SessionTestBase() {
             val session = client.connect(address, CHAT_USERNAME)
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                log.await("聊天消息可读且能按编号删除") { it is ClientEvent.ChunksReceived && it.total > 0 }
                 val player = assertNotNull(
                     MinecraftServer.getConnectionManager().getOnlinePlayerByUsername(CHAT_USERNAME),
                     "服务端应已保存该玩家",
@@ -100,7 +100,7 @@ internal class SessionSocialTest : SessionTestBase() {
                     ),
                 )
 
-                log.await { it is ClientEvent.ChatReceived && it.message.text == SYSTEM_CHAT_TEXT }
+                log.await("聊天消息可读且能按编号删除") { it is ClientEvent.ChatReceived && it.message.text == SYSTEM_CHAT_TEXT }
                 val system = awaitChat(session) { it.text == SYSTEM_CHAT_TEXT }
                 assertEquals(ChatKind.SYSTEM, system.kind)
                 assertEquals(false, system.overlay, "普通系统消息显示在聊天栏")
@@ -137,8 +137,8 @@ internal class SessionSocialTest : SessionTestBase() {
 
                 // 删除只对带编号的消息生效：服务端撤回后记录里不该再有它。
                 player.sendPacket(DeleteChatPacket(MessageSignature.Packed(CHAT_SIGNATURE_ID, null)))
-                log.await { it is ClientEvent.ChatDeleted && it.signatureId == CHAT_SIGNATURE_ID }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                log.await("聊天消息可读且能按编号删除") { it is ClientEvent.ChatDeleted && it.signatureId == CHAT_SIGNATURE_ID }
+                awaitCondition("聊天消息可读且能按编号删除", EVENT_TIMEOUT_MILLIS) {
                     session.chat().none { it.signatureId == CHAT_SIGNATURE_ID }
                 }
                 assertEquals(
@@ -166,7 +166,7 @@ internal class SessionSocialTest : SessionTestBase() {
             val session = client.connect(address, SAY_USERNAME)
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                log.await("发送的聊天与命令服务端可见") { it is ClientEvent.ChunksReceived && it.total > 0 }
 
                 session.sendChat(SAY_TEXT)
                 assertTrue(
@@ -178,7 +178,7 @@ internal class SessionSocialTest : SessionTestBase() {
                 // Minestom 用系统消息广播玩家聊天，因此这里是 SYSTEM 而不是 PLAYER；
                 // harness 把默认的可翻译模板换成了字面文本，回显才能与正文对账。
                 val expectedEcho = "$SAY_USERNAME: $SAY_TEXT"
-                log.await { it is ClientEvent.ChatReceived && it.message.text == expectedEcho }
+                log.await("发送的聊天与命令服务端可见") { it is ClientEvent.ChatReceived && it.message.text == expectedEcho }
                 val echoed = awaitChat(session) { it.text == expectedEcho }
                 assertEquals(ChatKind.SYSTEM, echoed.kind, "Minestom 以系统消息广播玩家聊天")
 
@@ -223,9 +223,9 @@ internal class SessionSocialTest : SessionTestBase() {
             val session = client.connect(address, COMMAND_USERNAME)
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                log.await("命令树与补全由服务端给出") { it is ClientEvent.ChunksReceived && it.total > 0 }
 
-                log.await { it is ClientEvent.CommandTreeReceived }
+                log.await("命令树与补全由服务端给出") { it is ClientEvent.CommandTreeReceived }
                 val tree = withTimeout(EVENT_TIMEOUT_MILLIS) { session.commands.first { it != null } }!!
                 assertTrue(
                     SUGGEST_COMMAND_NAME in tree.topLevelLiterals,
@@ -256,7 +256,7 @@ internal class SessionSocialTest : SessionTestBase() {
                 assertEquals("/$SUGGEST_COMMAND_NAME red", suggestions.applyTo(text), "套回原文应得到完整命令")
 
                 // 事件与挂起 API 是同一份数据；不想用挂起接口的调用方可以只看事件。
-                log.await { it is ClientEvent.CommandSuggestionsReceived }
+                log.await("命令树与补全由服务端给出") { it is ClientEvent.CommandSuggestionsReceived }
 
                 // 服务端确实收到了这次请求：包里的原文就是证据（补全包本身没有其他回执）。
                 assertTrue(
@@ -302,14 +302,14 @@ internal class SessionSocialTest : SessionTestBase() {
             val log = EventLog(this, session)
             var next: Session? = null
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                log.await("转移请求只上报地址，换服由调用方决定") { it is ClientEvent.ChunksReceived && it.total > 0 }
 
                 assertTrue(
                     sendTransfer(TRANSFER_USERNAME, DEFAULT_HOST, port),
                     "服务端应能找到该玩家",
                 )
 
-                log.await { it is ClientEvent.TransferRequested }
+                log.await("转移请求只上报地址，换服由调用方决定") { it is ClientEvent.TransferRequested }
                 val event = log.snapshot().filterIsInstance<ClientEvent.TransferRequested>().single()
                 assertEquals(DEFAULT_HOST, event.host)
                 assertEquals(port, event.port, "端口原样转达，不做补全")
@@ -341,7 +341,7 @@ internal class SessionSocialTest : SessionTestBase() {
                 // 新会话是完整会话而不是半截连接：能重新收到区块。
                 val nextLog = EventLog(this, next)
                 try {
-                    nextLog.await { it is ClientEvent.ChunksReceived }
+                    nextLog.await("新会话应重新收到区块") { it is ClientEvent.ChunksReceived }
                 } finally {
                     nextLog.close()
                 }
@@ -362,11 +362,11 @@ internal class SessionSocialTest : SessionTestBase() {
             val session = client.connect(address, PLUGIN_USERNAME)
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+                log.await("插件消息逐字节回环且品牌可读") { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition("插件消息逐字节回环且品牌可读", EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
 
                 // Minestom 在配置阶段就把品牌串发到 minecraft:brand；进 play 时应该已经能读到。
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.serverBrand.value != null }
+                awaitCondition("插件消息逐字节回环且品牌可读", EVENT_TIMEOUT_MILLIS) { session.serverBrand.value != null }
                 assertEquals("Minestom", session.serverBrand.value, "品牌串应来自配置阶段的插件消息")
 
                 // 下行：服务端发自定义渠道，客户端收到的字节必须逐字节相同。
@@ -378,7 +378,7 @@ internal class SessionSocialTest : SessionTestBase() {
                     },
                     "服务端应找到该玩家并下发插件消息",
                 )
-                log.await { it is ClientEvent.PluginMessageReceived && it.message.channel == PLUGIN_CHANNEL }
+                log.await("插件消息逐字节回环且品牌可读") { it is ClientEvent.PluginMessageReceived && it.message.channel == PLUGIN_CHANNEL }
                 val received = log.snapshot()
                     .filterIsInstance<ClientEvent.PluginMessageReceived>()
                     .first { it.message.channel == PLUGIN_CHANNEL }
@@ -400,7 +400,7 @@ internal class SessionSocialTest : SessionTestBase() {
                     withContext(Dispatchers.IO) { sendBrand(PLUGIN_USERNAME, HARNESS_BRAND) },
                     "服务端应能改发品牌串",
                 )
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("插件消息逐字节回环且品牌可读", EVENT_TIMEOUT_MILLIS) {
                     session.serverBrand.value == HARNESS_BRAND
                 }
             } finally {

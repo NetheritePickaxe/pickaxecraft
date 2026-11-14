@@ -49,14 +49,14 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
             val session = client.connect(address, RIDE_USERNAME)
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                log.await("骑乘时乘客关系可读，载具移动走独立包") { it is ClientEvent.ChunksReceived && it.total > 0 }
                 val self = assertNotNull(
                     withTimeout(EVENT_TIMEOUT_MILLIS) { session.world.first { it?.entityId != null } },
                     "进入世界后才能确定自己的实体 id",
                 ).entityId
 
                 session.sendCommand("/$RIDE_COMMAND_NAME")
-                log.await { it is ClientEvent.VehicleChanged && it.vehicleId != null }
+                log.await("骑乘时乘客关系可读，载具移动走独立包") { it is ClientEvent.VehicleChanged && it.vehicleId != null }
                 val vehicleId = assertNotNull(session.vehicle.value, "上车后应记录载具 id")
 
                 // 乘客列表是整份替换，判据是“列表里有自己的实体 id”。
@@ -108,7 +108,7 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
                 // 本端要把它折到载具快照上，同时推进“我在哪”——骑乘时没有别的来源。
                 val yawBefore = session.world.value!!.position!!.yaw
                 session.sendCommand("/$RIDE_COMMAND_NAME move")
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("骑乘时乘客关系可读，载具移动走独立包", EVENT_TIMEOUT_MILLIS) {
                     session.entity(vehicleId)?.let { abs(it.x - RIDE_PUSH_X) < 1e-6 } == true
                 }
                 with(session.entity(vehicleId)!!) {
@@ -123,7 +123,7 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
 
                 // 下车就是一条空列表：没有单独的“下车包”，也没有回执。
                 session.sendCommand("/$RIDE_COMMAND_NAME stop")
-                log.await { it is ClientEvent.VehicleChanged && it.vehicleId == null }
+                log.await("骑乘时乘客关系可读，载具移动走独立包") { it is ClientEvent.VehicleChanged && it.vehicleId == null }
                 assertNull(session.vehicle.value, "下车后不该还挂在载具上")
                 assertTrue(session.passengers(vehicleId).isEmpty(), "空列表应从缓存里移除这个载具")
                 assertTrue(
@@ -152,8 +152,8 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
             val session = client.connect(address, MOVE_USERNAME)
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+                log.await("移动与转向服务端可见") { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition("移动与转向服务端可见", EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
                 val spawn = assertNotNull(session.world.value?.position, "出生后应已同步位置")
                 assertEquals(GROUND_LEVEL, spawn.y, POSITION_TOLERANCE, "出生点应在平台顶面")
 
@@ -173,7 +173,7 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
                 session.moveTo(target)
 
                 // 服务端接受移动时不回包，因此快照只能由本端声明推进。
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position == target }
+                awaitCondition("移动与转向服务端可见", EVENT_TIMEOUT_MILLIS) { session.world.value?.position == target }
                 assertTrue(
                     withContext(Dispatchers.IO) {
                         awaitPlayerMove(MOVE_USERNAME, MILESTONE_TIMEOUT) { move ->
@@ -204,13 +204,13 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
                 // 服务端可以随时改写位置：传送到达后快照必须换成服务端的坐标，后续移动
                 // 从新坐标接上（本地自说自话的坐标不能覆盖服务端的权威值）。
                 player.teleport(Pos(CORRECTION_X, GROUND_LEVEL, CORRECTION_Z, 0f, 0f)).join()
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("移动与转向服务端可见", EVENT_TIMEOUT_MILLIS) {
                     val position = session.world.value?.position
                     position != null && abs(position.x - CORRECTION_X) < POSITION_TOLERANCE
                 }
 
                 // 等确认包回到服务端，否则 Minestom 会把移动当成“传送未确认”丢掉。
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("移动与转向服务端可见", EVENT_TIMEOUT_MILLIS) {
                     abs(player.position.x - CORRECTION_X) < POSITION_TOLERANCE
                 }
                 session.moveTo(Position(CORRECTION_X, GROUND_LEVEL, CORRECTION_Z + MOVE_DISTANCE, LOOK_YAW, LOOK_PITCH))
@@ -252,14 +252,14 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
             val session = client.connect(address, DESTRUCTION_USERNAME)
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+                log.await("破坏进度可观察且清除后条目消失") { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition("破坏进度可观察且清除后条目消失", EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
 
                 // 破坏者是一个真实实体：观察端能在实体表里对上 breakerEntityId。
                 val digger = EntityCreature(EntityType.ZOMBIE)
                 digger.setNoGravity(true)
                 digger.setInstance(instance, Pos(DESTRUCTION_DIGGER_X, GROUND_LEVEL, 1.5)).join()
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.entity(digger.entityId) != null }
+                awaitCondition("破坏进度可观察且清除后条目消失", EVENT_TIMEOUT_MILLIS) { session.entity(digger.entityId) != null }
 
                 val target = BlockPosition(DESTRUCTION_X, GROUND_LEVEL.toInt() - 1, DESTRUCTION_Z)
 
@@ -278,11 +278,11 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
                         },
                         "服务端应能下发阶段 $stage 的破坏进度",
                     )
-                    log.await {
+                    log.await("破坏进度可观察且清除后条目消失") {
                         it is ClientEvent.BlockDestructionChanged &&
                             it.position == target && it.destruction?.stage == stage
                     }
-                    awaitCondition(EVENT_TIMEOUT_MILLIS) { session.destruction(target)?.stage == stage }
+                    awaitCondition("破坏进度可观察且清除后条目消失", EVENT_TIMEOUT_MILLIS) { session.destruction(target)?.stage == stage }
                     val observed = assertNotNull(session.destruction(target), "阶段 $stage 应可在会话中查到")
                     assertEquals(digger.entityId, observed.breakerEntityId, "破坏者应与实体表对上")
                     assertEquals(target, observed.position, "坐标应与被挖的方块一致")
@@ -303,11 +303,11 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
                     },
                     "服务端应能下发 RESET",
                 )
-                log.await {
+                log.await("破坏进度可观察且清除后条目消失") {
                     it is ClientEvent.BlockDestructionChanged &&
                         it.position == target && it.destruction == null
                 }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.destruction(target) == null }
+                awaitCondition("破坏进度可观察且清除后条目消失", EVENT_TIMEOUT_MILLIS) { session.destruction(target) == null }
                 assertTrue(session.destructions().isEmpty(), "RESET 后快照不应再有该坐标")
 
                 digger.remove()
@@ -329,8 +329,8 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
             val session = client.connect(address, ATTR_USERNAME)
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+                log.await("实体属性可读且变化会推给本人") { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition("实体属性可读且变化会推给本人", EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
                 val entityId = assertNotNull(session.world.value?.entityId, "出生后应知道自己的实体 id")
 
                 // Minestom 的属性实例按需创建：出生时发的属性包可能整包为空（这正是
@@ -344,7 +344,7 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
                     },
                     "服务端应找到该玩家并改属性",
                 )
-                log.await {
+                log.await("实体属性可读且变化会推给本人") {
                     it is ClientEvent.EntityAttributesUpdated && it.entityId == entityId &&
                         it.changed.any { a -> a.key == MAX_HEALTH_KEY }
                 }
@@ -361,7 +361,7 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
                     },
                     "服务端应能改移动速度",
                 )
-                log.await {
+                log.await("实体属性可读且变化会推给本人") {
                     it is ClientEvent.EntityAttributesUpdated && it.entityId == entityId &&
                         it.changed.any { a -> a.key == MOVE_SPEED_KEY }
                 }
@@ -390,13 +390,13 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
             val session = client.connect(address, MOB_USERNAME)
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+                log.await("攻击与交互实体后两侧同时可见") { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition("攻击与交互实体后两侧同时可见", EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
 
                 val zombie = withContext(Dispatchers.IO) {
                     spawnZombie(instance, MOB_ZOMBIE_X, GROUND_LEVEL, 0.5)
                 }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("攻击与交互实体后两侧同时可见", EVENT_TIMEOUT_MILLIS) {
                     session.entity(zombie.entityId)?.type == "ZOMBIE"
                 }
                 // 共享 instance 里可能有别的用例留下的僵尸，必须按服务端给的 id 定位。
@@ -405,7 +405,7 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
                 // 僵尸的属性实例同样按需创建，出生包可能为空；服务端改一次基值，
                 // Minestom 会把属性包推给所有观察者（本端客户端就是观察者）。
                 zombie.getAttribute(Attribute.MAX_HEALTH).setBaseValue(RAISED_MAX_HEALTH)
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("攻击与交互实体后两侧同时可见", EVENT_TIMEOUT_MILLIS) {
                     session.attribute(zombieId, MAX_HEALTH_KEY)?.value == RAISED_MAX_HEALTH
                 }
 
@@ -416,8 +416,8 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
                     "服务端应确认这次攻击",
                 )
                 // 服务端侧：血量真的掉了。客户端侧：伤害事件包到达（第四例无回执，只能看结果）。
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { zombie.health < DEFAULT_MAX_HEALTH.toFloat() }
-                log.await { it is ClientEvent.EntityDamaged && it.entityId == zombieId }
+                awaitCondition("攻击与交互实体后两侧同时可见", EVENT_TIMEOUT_MILLIS) { zombie.health < DEFAULT_MAX_HEALTH.toFloat() }
+                log.await("攻击与交互实体后两侧同时可见") { it is ClientEvent.EntityDamaged && it.entityId == zombieId }
 
                 // 交互（右键）：Minestom 只登记事件；本端没有任何回执，服务端事实就是全部证据。
                 session.interactWith(zombieId)
@@ -442,19 +442,19 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
             val log = EventLog(this, session)
             val spawned = mutableListOf<Entity>()
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+                log.await("生物血量按实体层级读取而非只看元数据下标") { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition("生物血量按实体层级读取而非只看元数据下标", EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
 
                 val zombie = withContext(Dispatchers.IO) {
                     spawnZombie(instance, HEALTH_ZOMBIE_X, GROUND_LEVEL, 0.5)
                 }
                 spawned += zombie
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.entity(zombie.entityId)?.type == "ZOMBIE" }
+                awaitCondition("生物血量按实体层级读取而非只看元数据下标", EVENT_TIMEOUT_MILLIS) { session.entity(zombie.entityId)?.type == "ZOMBIE" }
 
                 // 服务端改血量 → LivingEntityMeta → set_entity_data；客户端只在确认是生物后才读下标 9。
                 withContext(Dispatchers.IO) { setEntityHealth(zombie, ZOMBIE_HEALTH) }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.health(zombie.entityId) == ZOMBIE_HEALTH }
-                log.await {
+                awaitCondition("生物血量按实体层级读取而非只看元数据下标", EVENT_TIMEOUT_MILLIS) { session.health(zombie.entityId) == ZOMBIE_HEALTH }
+                log.await("生物血量按实体层级读取而非只看元数据下标") {
                     it is ClientEvent.EntityHealthChanged &&
                         it.entityId == zombie.entityId && it.health == ZOMBIE_HEALTH
                 }
@@ -469,7 +469,7 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
                     }
                 }
                 spawned += dropped
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.entity(dropped.entityId) != null }
+                awaitCondition("生物血量按实体层级读取而非只看元数据下标", EVENT_TIMEOUT_MILLIS) { session.entity(dropped.entityId) != null }
                 assertNull(session.health(dropped.entityId), "非生物不应读到血量")
                 assertFalse(
                     log.snapshot().any {
@@ -495,8 +495,8 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
             val session = client.connect(address, DIG_USERNAME)
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+                log.await("出生后收到首批区块") { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition("出生后位置同步", EVENT_TIMEOUT_MILLIS, session = session) { session.world.value?.position != null }
 
                 // 脚下方块：出生点在平台顶上，脚底下那格是石头，两侧都能直接核对。
                 val spawn = assertNotNull(session.world.value?.position, "出生后应已同步位置")
@@ -518,17 +518,17 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
                     },
                     "服务端应完成这次挖掘",
                 )
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("服务端方块应变为空气", EVENT_TIMEOUT_MILLIS, session = session, events = log) {
                     instance.getBlock(target.x, target.y, target.z) == Block.AIR
                 }
 
                 // 客户端侧：方块变更写入缓存，确认序号前进。
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.blockStateAt(target) == 0 }
+                awaitCondition("客户端缓存应变为空气", EVENT_TIMEOUT_MILLIS, session = session) { session.blockStateAt(target) == 0 }
                 assertTrue(session.lastAcknowledgedSequence > 0, "服务端应回执挖掘动作")
 
                 // 方块缓存走旁路（不经过 Actor），事件却要排队——两者到达有先后差。
                 // CI 负载下这个窗口能拉长到秒级，因此事件查找也必须等待，不能查一次就断言。
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("事件流应包含该方块变更", EVENT_TIMEOUT_MILLIS, session = session) {
                     log.snapshot().filterIsInstance<ClientEvent.BlocksChanged>()
                         .flatMap { it.changes }
                         .any { it.position == target }
@@ -557,8 +557,8 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
             try {
                 val log = EventLog(this, session)
                 try {
-                    log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
-                    awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+                    log.await("放置方块后服务端与本地缓存同时可见") { it is ClientEvent.ChunksReceived && it.total > 0 }
+                    awaitCondition("放置方块后服务端与本地缓存同时可见", EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
 
                     val player = assertNotNull(
                         MinecraftServer.getConnectionManager().getOnlinePlayerByUsername(PLACE_USERNAME),
@@ -567,7 +567,7 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
                     // 放置需要手上有方块：发一组石头到主手。客户端从背包快照里看到它——
                     // 这条链路同时验证了 M4h 的槽位换算（主手 = 快捷栏第 0 格 = 窗口槽位 36）。
                     player.setItemInMainHand(ItemStack.of(Material.STONE, PLACE_COUNT))
-                    awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    awaitCondition("放置方块后服务端与本地缓存同时可见", EVENT_TIMEOUT_MILLIS) {
                         session.heldItem()?.count == PLACE_COUNT
                     }
 
@@ -589,16 +589,16 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
                         },
                         "服务端应完成这次放置",
                     )
-                    awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    awaitCondition("放置方块后服务端与本地缓存同时可见", EVENT_TIMEOUT_MILLIS) {
                         instance.getBlock(above.x, above.y, above.z) == Block.STONE
                     }
-                    awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    awaitCondition("放置方块后服务端与本地缓存同时可见", EVENT_TIMEOUT_MILLIS) {
                         session.blockStateAt(above) == instance.getBlock(above.x, above.y, above.z).stateId()
                     }
                     assertTrue(session.lastAcknowledgedSequence > 0, "服务端应回执放置动作")
 
                     // 方块缓存由网络线程旁路先写，事件随后才排进 Actor：查一次快照会偶发抢跑。
-                    awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    awaitCondition("放置方块后服务端与本地缓存同时可见", EVENT_TIMEOUT_MILLIS) {
                         log.snapshot().filterIsInstance<ClientEvent.BlocksChanged>()
                             .any { event -> event.changes.any { it.position == above } }
                     }
@@ -626,7 +626,7 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
             try {
                 assertTrue(awaitMilestone(MOTION_USERNAME, PlayerMilestone.SPAWNED, MILESTONE_TIMEOUT))
                 // 服务端里程碑先到、客户端 JoinedWorld 还在 inbox 里排队：等客户端侧就绪。
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.selfEntityId != null }
+                awaitCondition("冲刺潜行与飞行的上行包服务端可见且能力由服务端权威下发", EVENT_TIMEOUT_MILLIS) { session.selfEntityId != null }
                 assertNotNull(session.selfEntityId, "出生后应拿到本端实体 id")
 
                 // 三个动作各走不同的包：input(shift)、input(sprint)+player_command、abilities。
@@ -655,7 +655,7 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
 
                 // 服务端权威答复：能力包里允许且正在飞。
                 sendAbilities(MOTION_USERNAME, ABILITIES_CAN_FLY or ABILITIES_FLYING, ABILITIES_FLY_SPEED, 0.2f)
-                log.await {
+                log.await("冲刺潜行与飞行的上行包服务端可见且能力由服务端权威下发") {
                     it is ClientEvent.AbilitiesChanged && it.abilities.flying && it.abilities.canFly
                 }
                 assertTrue(session.abilities.value.flying, "能力包到达后才算真的在飞")
@@ -684,11 +684,11 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
             val log = EventLog(this, session)
             try {
                 assertTrue(awaitMilestone(EFFECT_USERNAME, PlayerMilestone.SPAWNED, MILESTONE_TIMEOUT))
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.selfEntityId != null }
+                awaitCondition("状态效果可按键合并且移除只影响被点名的效果", EVENT_TIMEOUT_MILLIS) { session.selfEntityId != null }
                 val entityId = assertNotNull(session.selfEntityId)
 
                 sendMobEffect(EFFECT_USERNAME, entityId, SPEED_KEY, EFFECT_AMPLIFIER, EFFECT_DURATION, 0x02)
-                log.await {
+                log.await("状态效果可按键合并且移除只影响被点名的效果") {
                     it is ClientEvent.EntityEffectsChanged && it.changed.any { effect -> effect.key == SPEED_KEY }
                 }
                 val speed = assertNotNull(session.effect(entityId, SPEED_KEY))
@@ -699,10 +699,10 @@ internal class SessionWorldInteractionTest : SessionTestBase() {
 
                 // 第二个包只带一个效果，合并后两个键都要在。
                 sendMobEffect(EFFECT_USERNAME, entityId, HASTE_KEY, 0, 100, 0)
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.effects(entityId).size == 2 }
+                awaitCondition("状态效果可按键合并且移除只影响被点名的效果", EVENT_TIMEOUT_MILLIS) { session.effects(entityId).size == 2 }
 
                 sendRemoveMobEffect(EFFECT_USERNAME, entityId, SPEED_KEY)
-                log.await { it is ClientEvent.EntityEffectsChanged && SPEED_KEY in it.removed }
+                log.await("状态效果可按键合并且移除只影响被点名的效果") { it is ClientEvent.EntityEffectsChanged && SPEED_KEY in it.removed }
                 assertNull(session.effect(entityId, SPEED_KEY))
                 assertTrue(
                     session.effects(entityId).containsKey(HASTE_KEY),

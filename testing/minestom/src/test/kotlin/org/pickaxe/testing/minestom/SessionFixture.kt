@@ -62,7 +62,7 @@ internal abstract class SessionTestBase {
 
 internal suspend fun awaitChat(session: Session, predicate: (ChatMessage) -> Boolean): ChatMessage {
     var found: ChatMessage? = null
-    awaitCondition(EVENT_TIMEOUT_MILLIS, session = session) {
+    awaitCondition("聊天记录中出现满足条件的消息", EVENT_TIMEOUT_MILLIS, session = session) {
         found = session.chat().lastOrNull(predicate)
         found != null
     }
@@ -96,11 +96,12 @@ internal fun sessionThreads(): List<Thread> =
  * 给它们各造一个事件反而会把测试专用需求塞进公共 API。代价是最多 [POLL_INTERVAL_MILLIS]
  * 的延迟，与 10 秒的上限相比可以忽略。
  *
- * 超时时抛出带诊断的 [AssertionError]：调用位置、当前会话状态与最近事件。
- * 直接抛 [kotlinx.coroutines.TimeoutCancellationException] 只能看到“超时”，
- * 定位时还得回去读代码。
+ * [what] 是等待内容的短描述：超时栈帧里只有协程状态机的 `invokeSuspend`，
+ * 行号常为 -1，没有描述就无法判断卡在哪一步。超时抛出带诊断的 [AssertionError]：
+ * 描述、调用位置、当前会话状态与最近事件。
  */
 internal suspend fun awaitCondition(
+    what: String,
     timeoutMillis: Long = EVENT_TIMEOUT_MILLIS,
     session: Session? = null,
     events: EventLog? = null,
@@ -113,13 +114,18 @@ internal suspend fun awaitCondition(
             }
         }
     } catch (timeout: TimeoutCancellationException) {
-        throw AssertionError(describeTimeout(timeoutMillis, session, events), timeout)
+        throw AssertionError(describeTimeout(what, timeoutMillis, session, events), timeout)
     }
 }
 
-/** 超时诊断：等待位置、会话状态，以及事件流里最近的若干条事件。 */
-internal fun describeTimeout(timeoutMillis: Long, session: Session?, events: EventLog?): String = buildString {
-    appendLine("等待超时（${timeoutMillis}ms）：${callerLocation()}")
+/** 超时诊断：等待条件、调用位置、会话状态，以及事件流里最近的若干条事件。 */
+internal fun describeTimeout(
+    what: String,
+    timeoutMillis: Long,
+    session: Session?,
+    events: EventLog?,
+): String = buildString {
+    appendLine("等待超时（${timeoutMillis}ms）：$what（${callerLocation()}）")
     if (session == null) {
         appendLine("会话状态：未提供会话")
     } else {
@@ -162,7 +168,7 @@ internal class EventLog(private val scope: CoroutineScope, val session: Session)
 
     fun snapshot(): List<ClientEvent> = collected.toList()
 
-    suspend fun await(predicate: (ClientEvent) -> Boolean) {
+    suspend fun await(what: String, predicate: (ClientEvent) -> Boolean) {
         try {
             withTimeout(EVENT_TIMEOUT_MILLIS) {
                 while (collected.none(predicate)) {
@@ -170,7 +176,7 @@ internal class EventLog(private val scope: CoroutineScope, val session: Session)
                 }
             }
         } catch (timeout: TimeoutCancellationException) {
-            throw AssertionError(describeTimeout(EVENT_TIMEOUT_MILLIS, session, this), timeout)
+            throw AssertionError(describeTimeout(what, EVENT_TIMEOUT_MILLIS, session, this), timeout)
         }
     }
 

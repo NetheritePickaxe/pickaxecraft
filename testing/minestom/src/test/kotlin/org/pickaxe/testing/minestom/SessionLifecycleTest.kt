@@ -68,13 +68,13 @@ internal class SessionLifecycleTest : SessionTestBase() {
                 assertEquals(SessionState.PLAY, session.state.value, "连接成功应停在上层可见的 play 状态")
                 assertTrue(session.isOpen(), "进入 play 后连接应保持")
 
-                log.await { it is ClientEvent.StateChanged && it.state == SessionState.PLAY }
+                log.await("离线登录进入 play 并收到注册表") { it is ClientEvent.StateChanged && it.state == SessionState.PLAY }
                 val states = log.snapshot()
                     .filterIsInstance<ClientEvent.StateChanged>()
                     .map { it.state }
                 assertTrue(SessionState.CONFIGURATION in states, "应观察到配置阶段，实际为 $states")
 
-                log.await { it is ClientEvent.RegistryReceived }
+                log.await("离线登录进入 play 并收到注册表") { it is ClientEvent.RegistryReceived }
                 val entryCount = log.snapshot()
                     .filterIsInstance<ClientEvent.RegistryReceived>()
                     .sumOf { it.entryCount }
@@ -98,13 +98,13 @@ internal class SessionLifecycleTest : SessionTestBase() {
             val session = client.connect(address, username)
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.JoinedWorld }
+                log.await("登录后完成出生并进入世界") { it is ClientEvent.JoinedWorld }
                 val joined = log.snapshot().filterIsInstance<ClientEvent.JoinedWorld>().first()
                 assertEquals("minecraft:overworld", joined.dimension, "应进入服务端的默认维度")
                 assertTrue(joined.entityId > 0, "服务端应分配实体 id")
 
-                log.await { it is ClientEvent.PositionUpdated }
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                log.await("登录后完成出生并进入世界") { it is ClientEvent.PositionUpdated }
+                log.await("登录后完成出生并进入世界") { it is ClientEvent.ChunksReceived && it.total > 0 }
 
                 // 自动回送的传送确认与区块批次确认，必须在服务端侧看到结果：
                 // SPAWNED 来自 PlayerSpawnEvent，LOADED 来自客户端上行 player_loaded。
@@ -145,8 +145,8 @@ internal class SessionLifecycleTest : SessionTestBase() {
             val session = client.connect(address, "ChunkBot")
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
-                awaitCondition(EVENT_TIMEOUT_MILLIS, session = session) { session.chunk(0, 0) != null }
+                log.await("出生后读到的方块状态与服务端一致") { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition("出生后读到的方块状态与服务端一致", EVENT_TIMEOUT_MILLIS, session = session) { session.chunk(0, 0) != null }
                 assertTrue(
                     session.chunkRevision > 0,
                     "区块加载应推进 chunkRevision，实际为 ${session.chunkRevision}",
@@ -206,8 +206,8 @@ internal class SessionLifecycleTest : SessionTestBase() {
             val session = client.connect(address, ENVIRONMENT_USERNAME)
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
+                log.await("区块的光照、高度图与方块实体都可读") { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition("区块的光照、高度图与方块实体都可读", EVENT_TIMEOUT_MILLIS) { session.world.value?.position != null }
 
                 // 高度图：石头平面填到 y=39，第一格空气是 y=40（= GROUND_LEVEL）。
                 // 不查出生点那一列：其它用例会在那里挖/放方块，而高度图是整列下发时的快照。
@@ -232,22 +232,22 @@ internal class SessionLifecycleTest : SessionTestBase() {
                 assertNull(session.skyLightAt(0, 400, 0), "超出本列高度应返回 null 而不是 0")
 
                 // 整列带下来的方块实体：协议里它是 level_chunk_with_light 的一部分。
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("区块的光照、高度图与方块实体都可读", EVENT_TIMEOUT_MILLIS) {
                     session.blockEntity(initialChest)?.type == "minecraft:chest"
                 }
 
                 // 增量路径：服务端先发 block_update，再发 block_entity_data。
                 val liveChest = BlockPosition(LIVE_CHEST_X, GROUND_LEVEL.toInt(), LIVE_CHEST_Z)
                 instance.setBlock(liveChest.x, liveChest.y, liveChest.z, Block.CHEST)
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("区块的光照、高度图与方块实体都可读", EVENT_TIMEOUT_MILLIS) {
                     session.blockEntity(liveChest)?.type == "minecraft:chest"
                 }
                 // 缓存先写、事件后投递：事件查找必须等待式，查一次快照会在负载下偶发失败。
-                log.await { it is ClientEvent.BlockEntityChanged && it.entity.position == liveChest }
+                log.await("区块的光照、高度图与方块实体都可读") { it is ClientEvent.BlockEntityChanged && it.entity.position == liveChest }
 
                 // 换成石头：服务端不发“删除方块实体”的包，缓存必须由方块变更清掉。
                 instance.setBlock(liveChest.x, liveChest.y, liveChest.z, Block.STONE)
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.blockEntity(liveChest) == null }
+                awaitCondition("区块的光照、高度图与方块实体都可读", EVENT_TIMEOUT_MILLIS) { session.blockEntity(liveChest) == null }
 
                 // 光照增量：火把点亮后重算并下发 update_light，方块光应从 0 变成非 0。
                 val torch = BlockPosition(TORCH_X, GROUND_LEVEL.toInt(), TORCH_Z)
@@ -256,11 +256,11 @@ internal class SessionLifecycleTest : SessionTestBase() {
                     withContext(Dispatchers.IO) { pushLight(instance, torch.x, torch.y, torch.z) },
                     "火把所在区块应已加载",
                 )
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("区块的光照、高度图与方块实体都可读", EVENT_TIMEOUT_MILLIS) {
                     val level = session.blockLightAt(torch.x, torch.y, torch.z)
                     level != null && level > 0
                 }
-                log.await {
+                log.await("区块的光照、高度图与方块实体都可读") {
                     it is ClientEvent.ChunkLightUpdated &&
                         it.chunkX == (torch.x shr 4) && it.chunkZ == (torch.z shr 4)
                 }
@@ -281,7 +281,7 @@ internal class SessionLifecycleTest : SessionTestBase() {
             val session = client.connect(address, "EntityBot")
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                log.await("实体的生成、移动与移除对客户端可见") { it is ClientEvent.ChunksReceived && it.total > 0 }
 
                 // 静止的僵尸：位置与朝向都由构造参数决定，便于逐项对账。
                 val zombie = EntityCreature(EntityType.ZOMBIE)
@@ -289,8 +289,8 @@ internal class SessionLifecycleTest : SessionTestBase() {
                 zombie.setInstance(instance, Pos(ZOMBIE_START_X, GROUND_LEVEL, 3.5)).join()
                 removedId = zombie.entityId
 
-                log.await { it is ClientEvent.EntitySpawned && it.entity.id == removedId }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.entity(removedId) != null }
+                log.await("实体的生成、移动与移除对客户端可见") { it is ClientEvent.EntitySpawned && it.entity.id == removedId }
+                awaitCondition("实体的生成、移动与移除对客户端可见", EVENT_TIMEOUT_MILLIS) { session.entity(removedId) != null }
 
                 val spawned = assertNotNull(session.entity(removedId), "实体生成后应可在会话中查到")
                 assertEquals("ZOMBIE", spawned.type, "实体类型应来自协议枚举")
@@ -302,7 +302,7 @@ internal class SessionLifecycleTest : SessionTestBase() {
 
                 // 绝对位移：服务端的传送带完整坐标，客户端直接替换。
                 zombie.teleport(Pos(TELEPORT_X, GROUND_LEVEL, 3.5, 90f, 20f)).join()
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("实体的生成、移动与移除对客户端可见", EVENT_TIMEOUT_MILLIS) {
                     val current = session.entity(removedId)
                     current != null && current.x == TELEPORT_X && current.yaw == 90f && current.pitch == 20f
                 }
@@ -310,18 +310,18 @@ internal class SessionLifecycleTest : SessionTestBase() {
                 // 相对位移：服务端每 tick 只发 1/4096 格的增量（short 编码），
                 // 客户端必须自己叠加。漏加或重复叠加都会在下面的对账里暴露。
                 zombie.setVelocity(Vec(MOVE_SPEED, 0.0, 0.0))
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { zombie.position.x > TELEPORT_X + 1.0 }
+                awaitCondition("实体的生成、移动与移除对客户端可见", EVENT_TIMEOUT_MILLIS) { zombie.position.x > TELEPORT_X + 1.0 }
                 zombie.setVelocity(Vec.ZERO)
 
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("实体的生成、移动与移除对客户端可见", EVENT_TIMEOUT_MILLIS) {
                     val current = session.entity(removedId)
                     current != null && abs(current.x - zombie.position.x) < POSITION_TOLERANCE
                 }
 
                 // 移除：事件与缓存都要跟上。
                 zombie.remove()
-                log.await { it is ClientEvent.EntityRemoved && removedId in it.ids }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.entity(removedId) == null }
+                log.await("实体的生成、移动与移除对客户端可见") { it is ClientEvent.EntityRemoved && removedId in it.ids }
+                awaitCondition("实体的生成、移动与移除对客户端可见", EVENT_TIMEOUT_MILLIS) { session.entity(removedId) == null }
                 assertTrue(removedId !in session.entities().keys, "移除后快照里不应再有该实体")
             } finally {
                 log.close()
@@ -345,15 +345,15 @@ internal class SessionLifecycleTest : SessionTestBase() {
             val session = client.connect(address, "RespawnBot")
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.chunk(0, 0) != null }
+                log.await("重生切换维度后世界状态与缓存一起更新") { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition("重生切换维度后世界状态与缓存一起更新", EVENT_TIMEOUT_MILLIS) { session.chunk(0, 0) != null }
                 assertEquals(OVERWORLD_MIN_Y, session.chunk(0, 0)?.minY, "出生维度应是主世界")
 
                 // 旧维度的实体不应跨越重生。
                 val zombie = EntityCreature(EntityType.ZOMBIE)
                 zombie.setNoGravity(true)
                 zombie.setInstance(instance, Pos(2.5, GROUND_LEVEL, 2.5)).join()
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.entity(zombie.entityId) != null }
+                awaitCondition("重生切换维度后世界状态与缓存一起更新", EVENT_TIMEOUT_MILLIS) { session.entity(zombie.entityId) != null }
 
                 // 旧维度的破坏进度同样不应跨越重生。
                 val oldTarget = BlockPosition(0, GROUND_LEVEL.toInt() - 1, 0)
@@ -363,7 +363,7 @@ internal class SessionLifecycleTest : SessionTestBase() {
                     },
                     "服务端应能下发旧维度的破坏进度",
                 )
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.destruction(oldTarget) != null }
+                awaitCondition("重生切换维度后世界状态与缓存一起更新", EVENT_TIMEOUT_MILLIS) { session.destruction(oldTarget) != null }
 
                 val revisionBeforeRespawn = session.chunkRevision
                 val player = assertNotNull(
@@ -372,13 +372,13 @@ internal class SessionLifecycleTest : SessionTestBase() {
                 )
                 player.setInstance(nether, Pos(0.5, GROUND_LEVEL, 0.5)).join()
 
-                log.await { it is ClientEvent.Respawned }
+                log.await("重生切换维度后世界状态与缓存一起更新") { it is ClientEvent.Respawned }
                 val respawned = log.snapshot().filterIsInstance<ClientEvent.Respawned>().first()
                 assertEquals(NETHER_DIMENSION, respawned.dimension, "事件应报告新维度")
                 assertEquals(NETHER_DIMENSION, session.world.value?.dimension, "世界快照应换到新维度")
 
                 // 新维度用下界高度重新解码：minY=0、16 个 section，方块也换成下界岩。
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.chunk(0, 0)?.minY == NETHER_MIN_Y }
+                awaitCondition("重生切换维度后世界状态与缓存一起更新", EVENT_TIMEOUT_MILLIS) { session.chunk(0, 0)?.minY == NETHER_MIN_Y }
                 assertEquals(NETHER_SECTIONS, session.chunk(0, 0)?.sectionCount, "256 格高应拆成 $NETHER_SECTIONS 个 section")
                 assertTrue(
                     session.chunkRevision > revisionBeforeRespawn,
@@ -397,11 +397,11 @@ internal class SessionLifecycleTest : SessionTestBase() {
                 )
 
                 // 实体与位置都要跟着新维度重置：旧实体不再存在，位置由新的同步包给出。
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.entity(zombie.entityId) == null }
+                awaitCondition("重生切换维度后世界状态与缓存一起更新", EVENT_TIMEOUT_MILLIS) { session.entity(zombie.entityId) == null }
                 // 破坏进度属于旧世界：换维度后应当清空。
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.destructions().isEmpty() }
+                awaitCondition("重生切换维度后世界状态与缓存一起更新", EVENT_TIMEOUT_MILLIS) { session.destructions().isEmpty() }
                 assertNull(session.destruction(oldTarget))
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("重生切换维度后世界状态与缓存一起更新", EVENT_TIMEOUT_MILLIS) {
                     val position = session.world.value?.position
                     position != null && abs(position.y - GROUND_LEVEL) < 1.0
                 }
@@ -425,9 +425,9 @@ internal class SessionLifecycleTest : SessionTestBase() {
             val watcherSession = observer.connect(address, WATCHER_USERNAME)
             val log = EventLog(this, watcherSession)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
+                log.await("玩家列表与自定义名称可从会话查到") { it is ClientEvent.ChunksReceived && it.total > 0 }
                 // 自己的条目也会下发：玩家列表是“服务器上都有谁”，不只是别人。
-                awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                awaitCondition("玩家列表与自定义名称可从会话查到", EVENT_TIMEOUT_MILLIS) {
                     watcherSession.players().values.any { entry -> entry.name == WATCHER_USERNAME }
                 }
 
@@ -440,21 +440,21 @@ internal class SessionLifecycleTest : SessionTestBase() {
                         "服务端应先完成 $SUBJECT_USERNAME 的出生",
                     )
                     var online: Player? = null
-                    awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    awaitCondition("玩家列表与自定义名称可从会话查到", EVENT_TIMEOUT_MILLIS) {
                         online = MinecraftServer.getConnectionManager().getOnlinePlayerByUsername(SUBJECT_USERNAME)
                         online != null
                     }
                     val serverPlayer = assertNotNull(online, "服务端应已保存该玩家")
 
-                    log.await {
+                    log.await("玩家列表与自定义名称可从会话查到") {
                         it is ClientEvent.PlayerListChanged && it.updated.any { entry -> entry.name == SUBJECT_USERNAME }
                     }
-                    awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    awaitCondition("玩家列表与自定义名称可从会话查到", EVENT_TIMEOUT_MILLIS) {
                         watcherSession.player(serverPlayer.uuid)?.name == SUBJECT_USERNAME
                     }
 
                     // 关联的核心：实体 id → UUID → 名字。
-                    awaitCondition(EVENT_TIMEOUT_MILLIS) { watcherSession.entity(serverPlayer.entityId) != null }
+                    awaitCondition("玩家列表与自定义名称可从会话查到", EVENT_TIMEOUT_MILLIS) { watcherSession.entity(serverPlayer.entityId) != null }
                     assertEquals(
                         SUBJECT_USERNAME,
                         watcherSession.nameOf(serverPlayer.entityId),
@@ -472,14 +472,14 @@ internal class SessionLifecycleTest : SessionTestBase() {
                     zombie.set(DataComponents.CUSTOM_NAME, Component.text(ZOMBIE_NAME))
                     zombie.setInstance(instance, Pos(4.5, GROUND_LEVEL, 4.5)).join()
 
-                    awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    awaitCondition("玩家列表与自定义名称可从会话查到", EVENT_TIMEOUT_MILLIS) {
                         watcherSession.entity(zombie.entityId)?.customName == ZOMBIE_NAME
                     }
                     assertNull(watcherSession.nameOf(zombie.entityId), "非玩家实体不应解析出玩家名")
 
                     // 改名走的是元数据增量包，与本层关心的字段不一致时不该产生事件。
                     zombie.set(DataComponents.CUSTOM_NAME, Component.text(RENAMED_ZOMBIE_NAME))
-                    awaitCondition(EVENT_TIMEOUT_MILLIS) {
+                    awaitCondition("玩家列表与自定义名称可从会话查到", EVENT_TIMEOUT_MILLIS) {
                         watcherSession.entity(zombie.entityId)?.customName == RENAMED_ZOMBIE_NAME
                     }
                     zombie.remove()
@@ -530,7 +530,7 @@ internal class SessionLifecycleTest : SessionTestBase() {
         val client = MinecraftClient()
         try {
             val session = client.connect(address, "Closer")
-            awaitCondition(EVENT_TIMEOUT_MILLIS, session = session) { session.loadedChunks > 0 }
+            awaitCondition("重复关闭无副作用且网络线程被回收", EVENT_TIMEOUT_MILLIS, session = session) { session.loadedChunks > 0 }
             val revisionBeforeClose = session.chunkRevision
             session.close()
 
@@ -544,7 +544,7 @@ internal class SessionLifecycleTest : SessionTestBase() {
             // 第二次关闭必须是无操作：再推一次修订号会让下游误以为缓存又变了。
             session.close()
             assertEquals(revisionAfterClose, session.chunkRevision, "重复 close() 不应再次推进 chunkRevision")
-            awaitCondition(THREAD_RELEASE_TIMEOUT_MILLIS) { sessionThreads().isEmpty() }
+            awaitCondition("重复关闭无副作用且网络线程被回收", THREAD_RELEASE_TIMEOUT_MILLIS) { sessionThreads().isEmpty() }
         } finally {
             client.close()
         }
@@ -599,8 +599,8 @@ internal class SessionLifecycleTest : SessionTestBase() {
             val session = client.connect(address, "KickedAfterPlay")
             val log = EventLog(this, session)
             try {
-                log.await { it is ClientEvent.ChunksReceived && it.total > 0 }
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.loadedChunks > 0 }
+                log.await("服务端断开后会话关闭并推进区块修订号") { it is ClientEvent.ChunksReceived && it.total > 0 }
+                awaitCondition("服务端断开后会话关闭并推进区块修订号", EVENT_TIMEOUT_MILLIS) { session.loadedChunks > 0 }
                 val revisionBeforeKick = session.chunkRevision
 
                 val player = assertNotNull(
@@ -609,7 +609,7 @@ internal class SessionLifecycleTest : SessionTestBase() {
                 )
                 player.kick(Component.text(KICK_MESSAGE))
 
-                awaitCondition(EVENT_TIMEOUT_MILLIS) { session.state.value == SessionState.CLOSED }
+                awaitCondition("服务端断开后会话关闭并推进区块修订号", EVENT_TIMEOUT_MILLIS) { session.state.value == SessionState.CLOSED }
                 assertEquals(0, session.loadedChunks, "finish() 应清空区块缓存")
                 assertTrue(
                     session.chunkRevision > revisionBeforeKick,
@@ -644,7 +644,7 @@ internal class SessionLifecycleTest : SessionTestBase() {
         try {
             // 进入 play 后再制造积压：不订阅事件流，服务端持续推消息直到两级缓冲写满。
             val session = client.connect(address, "OverflowBot")
-            awaitCondition(EVENT_TIMEOUT_MILLIS) { session.loadedChunks > 0 }
+            awaitCondition("事件溢出终止会话并推进区块修订号", EVENT_TIMEOUT_MILLIS) { session.loadedChunks > 0 }
             val revisionBeforeFlood = session.chunkRevision
 
             val player = assertNotNull(
@@ -655,7 +655,7 @@ internal class SessionLifecycleTest : SessionTestBase() {
                 player.sendPacket(SystemChatPacket(Component.text("溢出 $index"), false))
             }
 
-            awaitCondition(EVENT_TIMEOUT_MILLIS) { session.state.value == SessionState.CLOSED }
+            awaitCondition("事件溢出终止会话并推进区块修订号", EVENT_TIMEOUT_MILLIS) { session.state.value == SessionState.CLOSED }
             assertEquals(0, session.loadedChunks, "溢出终止应清空区块缓存")
             assertTrue(
                 session.chunkRevision > revisionBeforeFlood,
