@@ -529,7 +529,7 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 | 平台 | 当前决策 | 验证门控 |
 | --- | --- | --- |
 | 标准 JVM（Windows / Linux / macOS） | **已验证**；首要支持目标 | 共享库为 Java 21 字节码；发布前用 JDK 21 与 JDK 25 各跑一次确认运行时下限；`samples:libgdx-viewer`（不发布、headless）验证网格化；启用内嵌 Minestom 单人模式时宿主使用 Java 25 |
-| Android | **已验证（ART 运行时，API 36 真机）**；发布声明仍以 0.1.0 为准 | 2026-11-15：`PLC110` / Android 16（API 36）/ arm64-v8a 上跑通 `status`（24–56 ms）、离线登录进 `PLAY`（`x=0.5 y=40.0 z=0.5`，9–17 个区块）、每会话新增 1 个 `pickaxe-mcpl` 线程、关闭后线程与区块缓存全部回收、20 轮开关无增长（`threads` 25–26、`heap` 6–22 MB 锯齿，结束时 6 MB）。证据见 [tools/m3-android/evidence/2026-11-15-all.txt](../tools/m3-android/evidence/2026-11-15-all.txt)。未覆盖：渲染、在线认证（`HexFormat` 约束见下）、iOS |
+| Android | **已验证（ART 运行时，API 36 真机）**；发布声明仍以 0.1.0 为准 | 2026-11-15：`PLC110` / Android 16（API 36）/ arm64-v8a 上跑通 `status`（24–56 ms）、离线登录进 `PLAY`（`x=0.5 y=40.0 z=0.5`，9–17 个区块）、每会话新增 1 个 `pickaxe-mcpl` 线程、关闭后线程与区块缓存全部回收、20 轮开关无增长（`threads` 25–26、`heap` 6–22 MB 锯齿，结束时 6 MB）。证据见 [tools/m3-android/evidence/2026-11-15-all.txt](../tools/m3-android/evidence/2026-11-15-all.txt)。同一天还验证了另一条同构路径：同一份 `:app` 分发包在设备上的桌面 JVM（Termux + OpenJDK 25.0.4，`adb reverse` 回环）里直接运行，`status` 与离线登录同样通过（13 ms，`LOGIN→CONFIGURATION→PLAY`，`entityId=1`），证据见 [tools/m3-android/evidence/2026-11-15-termux.txt](../tools/m3-android/evidence/2026-11-15-termux.txt)。未覆盖：渲染、在线认证（`HexFormat` 约束见下）、iOS |
 | iOS | **候选，未验证**；不阻断 0.1.0 | 需 macOS/Xcode + RoboVM spike；验证 Java 21、Kotlin、协程与 Netty |
 | Web / HTML5 | 不做 | 当前 Kotlin/JVM + Netty 路线与 libGDX GWT 后端不匹配 |
 
@@ -538,6 +538,7 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 - Netty 是协议库的一部分，无法从 Android/iOS 路径直接剥离。2026-11-15 在 ART 上实测：`PlatformDependent` 报 `isAndroid=true`、`hasUnsafe=false`、`directBufferPreferred=false`，`directBufferAddress` 抛 `IllegalStateException: No address access method`；NIO transport 仍能完成状态查询、登录与区块解码，说明 no-Unsafe 路径可用，但**直接缓冲的地址访问在 ART 上不可用**，依赖它的零拷贝优化不能假设存在。
 - Android 宿主必须自带 JNDI 最小占位：mcprotocollib 的 `NettyHelper.<clinit>` 无条件 `Class.forName("com.sun.jndi.dns.DnsContextFactory")` 并 `new InitialDirContext(env)`，而 `android.jar` 里没有 `javax.naming`（API 36 实测），首次连接就会抛 `ExceptionInInitializerError`。宿主补齐最小占位后，SRV 查询以 `NamingException` 失败并回落到普通 DNS 解析（主机名与字面 IP 照常可用，只是没有 SRV）。上游修法是延迟初始化 JNDI；参考实现见 `tools/m3-android/host/src/main/java`。
 - Android 打包必须把 jar 的根资源与 `META-INF/services` 一起放进 APK：`yggdrasil_session_pubkey.der`、`networkCodec.nbt`、`networkTags.nbt`，以及 cloudburst 的 `VectorProvider`、adventure 的序列化 Provider。只放 `classes.dex` 会在 `MinecraftProtocol` 初始化或 `Vectors` 的 `ServiceLoader` 上失败——桌面直接读 jar，所以这个差异只在打包宿主里暴露。
+- 上面两项（JNDI 占位、jar 资源与 `META-INF/services`）只属于 ART/APK 打包层，不是协议层需求：2026-11-15 在设备上用 Termux + OpenJDK 25.0.4 直接跑 `:app:installDist`，不补任何占位、不改打包，`status` 与离线登录都正常。排查 Android 问题时应先区分“ART 特有”与“协议/客户端共有”。
 - 有效 `minSdk` 是 34，不是 26：`adventure-api` 的 `TextColorImpl` 用静态字段持有 `java.util.HexFormat`，mcprotocollib 的 `UUIDUtils` 也直接调用它，而 `HexFormat` 需要 API 34。26 只是字节码与 `MethodHandle` 的下限；回到 26 需要替换这两处依赖或引入反糖方案（决策见 [M3](plans/m3-android-runtime.md)）。
 - Android 打包必须 `exclude(group = "org.cloudburstmc.math", module = "api")`：该构件的 57 个类全部包含在 `:immutable` 中，同时打包会让 d8 直接报重复类，而桌面 JVM 会静默容忍。
 - 仍未验证：渲染路径（本仓库不含渲染代码）、在线认证（`HexFormat` 与账户流程，M5）、iOS（需 macOS/Xcode + RoboVM）。这些部分不能由本次 ART 结果推断。

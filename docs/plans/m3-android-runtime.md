@@ -43,11 +43,14 @@
    见探针 §4.4）；`java.util.HexFormat` 仍需 API 34，**M5 在线认证之前必须解决**
    （换实现或提高 `minSdk`，二者都要写决策）。
 
-### 3.2 自带 OpenJDK 路径（PojavLauncher / FCL 类宿主）
+### 3.2 自带 OpenJDK 路径（桌面 JVM 宿主）
 
 用同一份 `:app` 产物（Java 25 组合根 + `installDist`）验证：预期直接可用，
 不需要额外适配。这条路径的价值是**先用桌面同构的方式证明协议层与客户端核心在移动设备上成立**，
 把问题范围从“Android 平台”收窄到“ART + Netty”。
+
+2026-11-15 的实际宿主是 Termux + `pkg install openjdk-25`，不是 PojavLauncher / FCL：
+那两者自带的 JRE 是 8/17/21，跑不了 Java 25 字节码的分发包。结果见 §6.6。
 
 ### 3.3 通过判据（DoD）
 
@@ -135,3 +138,42 @@
 powershell -File tools\m3-android\build.ps1
 powershell -File tools\m3-android\run.ps1
 ```
+
+桌面 JVM 路径（§6.6）：
+
+```powershell
+.\gradlew.bat :app:installDist
+$adb = "$env:ANDROID_HOME\platform-tools\adb.exe"
+& $adb push app\build\install\pickaxecraft /sdcard/Android/data/com.termux/files/
+& $adb reverse tcp:25565 tcp:25565
+# Termux 里（首次需要 pkg install -y openjdk-25）
+#   cp -r /sdcard/Android/data/com.termux/files/pickaxecraft ~/
+#   cd ~/pickaxecraft && sh bin/pickaxecraft status 127.0.0.1 25565 --json
+#   sh bin/pickaxecraft connect 127.0.0.1 25565 --username TermuxHost --json
+# 键盘输入可以从 adb 驱动，见 tools/m3-android/termux/termux.ps1
+```
+
+### 6.6 桌面 JVM 路径（Termux + OpenJDK 25）
+
+判据与 §3.2 一致：同一份 `:app:installDist`，不改代码、不加宿主占位。2026-11-15 在
+`PLC110` 上完成：
+
+- **环境**：Termux 0.118.3（`targetSdk 28`）+ `pkg install openjdk-25` 得到
+  OpenJDK 25.0.4（2026-07-21），内核 `Linux 6.6.118-android15 … aarch64`。
+  PojavLauncher / FCL 自带的 8/17/21 JRE 跑不了 Java 25 分发包，未采用。
+- **分发**：`adb push app/build/install/pickaxecraft` 到
+  `/sdcard/Android/data/com.termux/files/`，`cp -r` 进 Termux home，用
+  `sh bin/pickaxecraft` 调用（拷贝树没有执行位）。
+- **连接**：`adb reverse tcp:25565 tcp:25565` 后连 `127.0.0.1:25565`；服务端为
+  `:testing:minestom`（Minestom 2026.10.07-26.2 / 协议 776）。
+- **结果**：`status` 返回 `version=26.2 protocol=776 latencyMillis=13 motd=Minestom Server`，
+  `exitCode=0`；`connect --username TermuxHost` 依次 `LOGIN → CONFIGURATION → PLAY`，
+  `joined entityId=1 dimension=minecraft:overworld gameMode=SURVIVAL`，事件流里有
+  45 个 `chunks`、125 个 `light`、27 个 `chat`（服务端同时打印
+  `player.configuring/spawned/loaded name=TermuxHost`），Ctrl+C 后 `closed` +
+  `result exitCode=0`。
+- **口径**：**这是桌面 JVM 的证据，不是 ART 的证据**。它证明协议层与客户端核心在设备上
+  成立，同时说明 §6.2 的两处绕过只属于 ART/APK 打包层。
+- **原始输出**：[`evidence/2026-11-15-termux.txt`](../../tools/m3-android/evidence/2026-11-15-termux.txt)
+  （287 行，头部含 `date` / `uname -a` / `java -version`）；键盘输入由
+  `tools/m3-android/termux/termux.ps1` 通过 `input text` + `uiautomator dump` 驱动。

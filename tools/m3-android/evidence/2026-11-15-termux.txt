@@ -1,0 +1,287 @@
+# PickaxeCraft M3 / Phase 4.2 - desktop JVM on the Android device
+#
+# This is NOT the ART evidence. The ART run is evidence/2026-11-15-all.txt.
+# Here the same :app distribution runs inside a desktop OpenJDK 25 (Termux),
+# which removes ART's class library and class loading from the picture: a
+# failure here would have to come from the protocol/client code or the JDK,
+# not from Android's runtime.
+#
+# Device:        PLC110 / Android 16 / API 36 / arm64-v8a
+# Runtime:       OpenJDK 25.0.4 (Termux `pkg install openjdk-25`)
+# Link to PC:    adb reverse tcp:25565 tcp:25565, client connects to 127.0.0.1:25565
+# Server:        :testing:minestom (Minestom 2026.10.07-26.2, protocol 776)
+# Distribution:  :app:installDist, copied over /sdcard/Android/data/com.termux/files
+# Invocation:    sh bin/pickaxecraft ... (avoids the exec bit on a copied tree)
+#
+# Commands, in order:
+#   sh bin/pickaxecraft status 127.0.0.1 25565 --json
+#   sh bin/pickaxecraft connect 127.0.0.1 25565 --username TermuxHost --timeout 25 --json
+#     (interrupted with Ctrl+C once the session had joined and read chat; --timeout
+#      bounds connect establishment, not the session, so the run ends by hand)
+#
+# Expected `closed` + `result exitCode=0` plus chat events show that login,
+# configuration, spawn, chunk decode and the event stream all worked.
+
+Sun Nov 15 19:01:53 CST 2026
+Linux localhost 6.6.118-android15-8-ge58033dc8ea6-abogki498046332-4k #1 SMP PREEMPT Sun Mar 29 12:31:26 UTC 2026 aarch64 Android
+openjdk version "25.0.4" 2026-07-21
+OpenJDK Runtime Environment (build 25.0.4)
+OpenJDK 64-Bit Server VM (build 25.0.4, mixed mode)
+SLF4J: No SLF4J providers were found.
+SLF4J: Defaulting to no-operation (NOP) logger implementation
+SLF4J: See https://www.slf4j.org/codes.html#noProviders for further details.
+Nov 15, 2026 10:59:48 AM io.netty.util.internal.MacAddressUtil defaultMachineId
+WARNING: Failed to find a usable hardware address from the network interfaces; using random bytes: 16:dc:2f:20:9a:2b:c3:b2
+{"type":"status","session":{"username":null,"host":"127.0.0.1","port":25565},"ok":true,"data":{"version":"26.2","protocol":776,"players":0,"maxPlayers":1,"latencyMillis":13,"motd":"Minestom Server"},"exitCode":0}
+SLF4J: No SLF4J providers were found.
+SLF4J: Defaulting to no-operation (NOP) logger implementation
+SLF4J: See https://www.slf4j.org/codes.html#noProviders for further details.
+Nov 15, 2026 11:00:10 AM io.netty.util.internal.MacAddressUtil defaultMachineId
+WARNING: Failed to find a usable hardware address from the network interfaces; using random bytes: a1:7e:03:6e:a4:cf:56:2f
+{"type":"event","event":"state","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"state":"LOGIN"},"ok":true}
+{"type":"event","event":"state","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"state":"CONFIGURATION"},"ok":true}
+{"type":"event","event":"plugin","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"channel":"minecraft:brand","bytes":9,"brand":"Minestom"},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:chat_type","entries":7},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:worldgen/biome","entries":66},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:dialog","entries":3},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:damage_type","entries":51},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:trim_material","entries":11},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:trim_pattern","entries":18},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:banner_pattern","entries":43},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:enchantment","entries":43},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:painting_variant","entries":51},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:jukebox_song","entries":22},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:instrument","entries":8},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:wolf_variant","entries":9},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:wolf_sound_variant","entries":7},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:cat_variant","entries":11},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:cat_sound_variant","entries":2},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:chicken_variant","entries":3},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:chicken_sound_variant","entries":2},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:cow_variant","entries":3},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:cow_sound_variant","entries":2},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:frog_variant","entries":3},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:pig_variant","entries":3},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:pig_sound_variant","entries":3},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:zombie_nautilus_variant","entries":2},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:world_clock","entries":2},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:timeline","entries":4},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:dimension_type","entries":4},"ok":true}
+{"type":"event","event":"registry","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"registry":"minecraft:sulfur_cube_archetype","entries":12},"ok":true}
+{"type":"event","event":"state","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"state":"PLAY"},"ok":true}
+{"type":"event","event":"joined","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"entityId":1,"dimension":"minecraft:overworld","gameMode":"SURVIVAL"},"ok":true}
+{"type":"event","event":"inventory","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"windowId":0},"ok":true}
+{"type":"event","event":"players","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"updated":[{"uuid":"0ecf9f58-a3ba-42f0-bea1-7ee8981cb174","name":"TermuxHost","gameMode":"SURVIVAL","latencyMillis":30}],"removed":[]},"ok":true}
+{"type":"event","event":"commands","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"nodes":9,"root":8,"literals":["pickaxetransfer","pickaxeride","pickaxe","pickaxecolor"]},"ok":true}
+{"type":"event","event":"attributes","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"entityId":1,"changed":[]},"ok":true}
+{"type":"event","event":"status","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"health":20.0,"food":20,"foodSaturation":5.0,"experienceBar":null,"level":null,"totalExperience":null},"ok":true}
+{"type":"event","event":"abilities","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"invincible":false,"canFly":false,"flying":false,"creative":false,"flySpeed":0.05,"walkSpeed":0.1},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":9,"total":9},"ok":true}
+{"type":"event","event":"position","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"x":0.5,"y":40.0,"z":0.5,"yaw":0.0,"pitch":0.0},"ok":true}
+{"type":"event","event":"position","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"x":0.5,"y":40.0,"z":0.5,"yaw":0.0,"pitch":0.0},"ok":true}
+{"type":"event","event":"inventory","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"windowId":0},"ok":true}
+{"type":"event","event":"inventory","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"windowId":0},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":17},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":25},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":33},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":41},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":49},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":57},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":65},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":73},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":81},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":89},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":97},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":105},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":0,"chunkZ":-2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":1,"chunkZ":0},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":0,"chunkZ":0},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":113},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-1,"chunkZ":-2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":0,"chunkZ":1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-1,"chunkZ":-1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":0,"chunkZ":-1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-1,"chunkZ":1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":1,"chunkZ":-2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":2,"chunkZ":-2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":1,"chunkZ":-1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":2,"chunkZ":1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":2,"chunkZ":-1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":2,"chunkZ":0},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":2,"chunkZ":2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":1,"chunkZ":2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-1,"chunkZ":2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":0,"chunkZ":2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-2,"chunkZ":2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-2,"chunkZ":1},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":121},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":3,"chunkZ":0},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":3,"chunkZ":1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":2,"chunkZ":-3},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-2,"chunkZ":-3},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":0,"chunkZ":-3},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-1,"chunkZ":-3},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":1,"chunkZ":-3},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":3,"chunkZ":-2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-2,"chunkZ":-1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-2,"chunkZ":0},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-2,"chunkZ":-2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":3,"chunkZ":-3},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":3,"chunkZ":-1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":3,"chunkZ":2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":3,"chunkZ":3},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":2,"chunkZ":3},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":1,"chunkZ":3},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":0,"chunkZ":3},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-1,"chunkZ":3},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-2,"chunkZ":3},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-3,"chunkZ":3},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-3,"chunkZ":2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-3,"chunkZ":1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-3,"chunkZ":0},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-3,"chunkZ":-2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-3,"chunkZ":-3},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-3,"chunkZ":-1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-3,"chunkZ":-4},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-2,"chunkZ":-4},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":2,"chunkZ":-4},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":0,"chunkZ":-4},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-1,"chunkZ":-4},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":1,"chunkZ":-4},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":3,"chunkZ":-4},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":4,"chunkZ":-3},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":4,"chunkZ":-2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":4,"chunkZ":-1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":4,"chunkZ":0},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":4,"chunkZ":1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":4,"chunkZ":3},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":4,"chunkZ":2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":3,"chunkZ":4},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":2,"chunkZ":4},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":1,"chunkZ":4},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":0,"chunkZ":4},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-1,"chunkZ":4},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-2,"chunkZ":4},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-3,"chunkZ":4},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-4,"chunkZ":3},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-4,"chunkZ":1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-4,"chunkZ":0},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-4,"chunkZ":-1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-4,"chunkZ":-2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-4,"chunkZ":-3},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-4,"chunkZ":2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-2,"chunkZ":-5},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-1,"chunkZ":-5},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":0,"chunkZ":-5},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":1,"chunkZ":-5},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":2,"chunkZ":-5},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":5,"chunkZ":-2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":5,"chunkZ":-1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":5,"chunkZ":1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":5,"chunkZ":2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":5,"chunkZ":0},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":2,"chunkZ":5},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":1,"chunkZ":5},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":0,"chunkZ":5},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-1,"chunkZ":5},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-2,"chunkZ":5},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-5,"chunkZ":2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-5,"chunkZ":1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-5,"chunkZ":0},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-5,"chunkZ":-1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-5,"chunkZ":-2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":0,"chunkZ":-6},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-1,"chunkZ":-6},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":1,"chunkZ":-6},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":6,"chunkZ":-1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":6,"chunkZ":0},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":6,"chunkZ":1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":1,"chunkZ":6},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":0,"chunkZ":6},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-1,"chunkZ":6},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":129},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-6,"chunkZ":2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-6,"chunkZ":1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-6,"chunkZ":0},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-6,"chunkZ":-1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-6,"chunkZ":-2},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":1,"chunkZ":-7},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-1,"chunkZ":-7},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":0,"chunkZ":-7},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":7,"chunkZ":-1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":7,"chunkZ":0},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":7,"chunkZ":1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":0,"chunkZ":7},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":1,"chunkZ":7},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-1,"chunkZ":7},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-7,"chunkZ":0},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-7,"chunkZ":1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-7,"chunkZ":-1},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":0,"chunkZ":-8},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":8,"chunkZ":0},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":0,"chunkZ":8},"ok":true}
+{"type":"event","event":"light","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunkX":-8,"chunkZ":0},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":137},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":145},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":153},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"SYSTEM","overlay":false,"sender":null,"senderName":null,"targetName":null,"format":null,"text":"服务器广播 #57"},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":161},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":169},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":177},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":185},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":193},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":201},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":209},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":217},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":225},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":233},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":241},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":249},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":257},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":265},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":273},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":281},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":289},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":297},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":305},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":313},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":321},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":329},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":337},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":345},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":353},"ok":true}
+{"type":"event","event":"chunks","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"chunks":8,"total":361},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"SYSTEM","overlay":false,"sender":null,"senderName":null,"targetName":null,"format":null,"text":"服务器广播 #58"},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"DISGUISED","overlay":false,"sender":null,"senderName":"控制台","targetName":null,"format":"chat.type.announcement","text":"控制台播报 #58"},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"SYSTEM","overlay":false,"sender":null,"senderName":null,"targetName":null,"format":null,"text":"服务器广播 #59"},"ok":true}
+{"type":"event","event":"players","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"updated":[{"uuid":"0ecf9f58-a3ba-42f0-bea1-7ee8981cb174","name":"TermuxHost","gameMode":"SURVIVAL","latencyMillis":15}],"removed":[]},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"SYSTEM","overlay":false,"sender":null,"senderName":null,"targetName":null,"format":null,"text":"服务器广播 #60"},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"DISGUISED","overlay":false,"sender":null,"senderName":"控制台","targetName":null,"format":"chat.type.announcement","text":"控制台播报 #60"},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"SYSTEM","overlay":false,"sender":null,"senderName":null,"targetName":null,"format":null,"text":"服务器广播 #61"},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"SYSTEM","overlay":false,"sender":null,"senderName":null,"targetName":null,"format":null,"text":"服务器广播 #62"},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"DISGUISED","overlay":false,"sender":null,"senderName":"控制台","targetName":null,"format":"chat.type.announcement","text":"控制台播报 #62"},"ok":true}
+{"type":"event","event":"players","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"updated":[{"uuid":"0ecf9f58-a3ba-42f0-bea1-7ee8981cb174","name":"TermuxHost","gameMode":"SURVIVAL","latencyMillis":11}],"removed":[]},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"SYSTEM","overlay":false,"sender":null,"senderName":null,"targetName":null,"format":null,"text":"服务器广播 #63"},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"SYSTEM","overlay":false,"sender":null,"senderName":null,"targetName":null,"format":null,"text":"服务器广播 #64"},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"DISGUISED","overlay":false,"sender":null,"senderName":"控制台","targetName":null,"format":"chat.type.announcement","text":"控制台播报 #64"},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"SYSTEM","overlay":false,"sender":null,"senderName":null,"targetName":null,"format":null,"text":"服务器广播 #65"},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"SYSTEM","overlay":false,"sender":null,"senderName":null,"targetName":null,"format":null,"text":"服务器广播 #66"},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"DISGUISED","overlay":false,"sender":null,"senderName":"控制台","targetName":null,"format":"chat.type.announcement","text":"控制台播报 #66"},"ok":true}
+{"type":"event","event":"players","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"updated":[{"uuid":"0ecf9f58-a3ba-42f0-bea1-7ee8981cb174","name":"TermuxHost","gameMode":"SURVIVAL","latencyMillis":25}],"removed":[]},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"SYSTEM","overlay":false,"sender":null,"senderName":null,"targetName":null,"format":null,"text":"服务器广播 #67"},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"SYSTEM","overlay":false,"sender":null,"senderName":null,"targetName":null,"format":null,"text":"服务器广播 #68"},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"DISGUISED","overlay":false,"sender":null,"senderName":"控制台","targetName":null,"format":"chat.type.announcement","text":"控制台播报 #68"},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"SYSTEM","overlay":false,"sender":null,"senderName":null,"targetName":null,"format":null,"text":"服务器广播 #69"},"ok":true}
+{"type":"event","event":"players","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"updated":[{"uuid":"0ecf9f58-a3ba-42f0-bea1-7ee8981cb174","name":"TermuxHost","gameMode":"SURVIVAL","latencyMillis":9}],"removed":[]},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"SYSTEM","overlay":false,"sender":null,"senderName":null,"targetName":null,"format":null,"text":"服务器广播 #70"},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"DISGUISED","overlay":false,"sender":null,"senderName":"控制台","targetName":null,"format":"chat.type.announcement","text":"控制台播报 #70"},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"SYSTEM","overlay":false,"sender":null,"senderName":null,"targetName":null,"format":null,"text":"服务器广播 #71"},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"SYSTEM","overlay":false,"sender":null,"senderName":null,"targetName":null,"format":null,"text":"服务器广播 #72"},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"DISGUISED","overlay":false,"sender":null,"senderName":"控制台","targetName":null,"format":"chat.type.announcement","text":"控制台播报 #72"},"ok":true}
+{"type":"event","event":"players","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"updated":[{"uuid":"0ecf9f58-a3ba-42f0-bea1-7ee8981cb174","name":"TermuxHost","gameMode":"SURVIVAL","latencyMillis":22}],"removed":[]},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"SYSTEM","overlay":false,"sender":null,"senderName":null,"targetName":null,"format":null,"text":"服务器广播 #73"},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"SYSTEM","overlay":false,"sender":null,"senderName":null,"targetName":null,"format":null,"text":"服务器广播 #74"},"ok":true}
+{"type":"event","event":"chat","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{"kind":"DISGUISED","overlay":false,"sender":null,"senderName":"控制台","targetName":null,"format":"chat.type.announcement","text":"控制台播报 #74"},"ok":true}
+{"type":"event","event":"closed","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"data":{},"ok":true}
+{"type":"result","session":{"username":"TermuxHost","host":"127.0.0.1","port":25565},"ok":true,"exitCode":0}
+connect_exit=

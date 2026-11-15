@@ -37,6 +37,49 @@ powershell -File tools\m3-android\run.ps1
 
 已归档的证据：`evidence/2026-11-15-all.txt`（PLC110 / Android 16 / API 36 / arm64-v8a）。
 
+## 4.2：设备上的桌面 JVM（Termux）
+
+ART 的证据回答“Android 运行时行不行”；这条路径回答“同一份 `:app` 分发包离开 ART 后，
+在设备上还成不成立”。两者一起才能把问题定位到 ART 特有还是协议/客户端共有。
+
+前提：Termux 0.118+，`pkg install -y openjdk-25`（实测 25.0.4；
+PojavLauncher / FCL 自带的 8/17/21 JRE 跑不了 Java 25 分发包）。设备无需 root。
+
+```powershell
+.\gradlew.bat :app:installDist
+$adb = "$env:ANDROID_HOME\platform-tools\adb.exe"
+& $adb push app\build\install\pickaxecraft /sdcard/Android/data/com.termux/files/
+& $adb reverse tcp:25565 tcp:25565
+```
+
+Termux 里（先执行一次 `termux-setup-storage`，把 `/sdcard` 授权给 Termux）：
+
+```sh
+cp -r /sdcard/Android/data/com.termux/files/pickaxecraft ~/
+cd ~/pickaxecraft
+sh bin/pickaxecraft status 127.0.0.1 25565 --json
+sh bin/pickaxecraft connect 127.0.0.1 25565 --username TermuxHost --json
+```
+
+`/sdcard/Android/data/com.termux/files/` 是 adb 与 Termux 都能读写的唯一方便位置，
+Termux home 在 `/data/data/com.termux` 下，adb 读不到。`sh bin/...` 而不是 `./bin/...`：
+`adb push` 不保留执行位。
+
+键盘输入可以从 adb 驱动，不必手点屏幕：
+
+```powershell
+powershell -File tools/m3-android/termux/termux.ps1 -Command "java -version"
+powershell -File tools/m3-android/termux/termux.ps1 -Read -Lines 20
+```
+
+`termux.ps1` 用 `input text` 打字、用 `uiautomator dump` 读屏；限制是**命令里不能含单引号**
+（`%s` 表示空格）。`connect` 的 `--timeout` 只管建连，会话要按 `Ctrl+C` 结束
+（`adb shell input keycombination KEYCODE_CTRL_LEFT KEYCODE_C`）。
+
+已归档：`evidence/2026-11-15-termux.txt`（287 行，头部含 `date` / `uname -a` /
+`java -version`）。结论是**桌面 JVM，不是 ART**；`status` 13 ms，登录到 `PLAY` 后
+`closed` + `result exitCode=0`。
+
 ## 宿主要自带的两处绕过（不是客户端改动）
 
 `client-core` 与 `protocol-core` 一行没动；下面两点只发生在证据宿主的 dex 里，

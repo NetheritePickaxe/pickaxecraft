@@ -103,7 +103,9 @@ Android 已通过 ART 运行时验证（2026-11-15，`PLC110` / Android 16 / API
 证据与逐条判据见 [M3 Android 运行时验证](plans/m3-android-runtime.md) §6。本仓库仍不引入 AGP、
 KMP 或 Android 专属模块：证据宿主是 `tools/m3-android/` 下的手工 aapt2 + d8 + apksigner 编排，
 不是产品代码。宿主必须自带的三件事（JNDI 占位、jar 资源与 `META-INF/services`、`minSdk 34`）
-写在 `docs/architecture.md` 第 6 节的 Android 约束里。
+写在 `docs/architecture.md` 第 6 节的 Android 约束里。同一份 `:app` 分发包也在设备上的桌面
+JVM（Termux + OpenJDK 25）里跑通（§6.6），驱动脚本在 `tools/m3-android/termux/`；它不改变
+上面的结论，只用来区分“ART 特有”与“协议/客户端共有”的问题。
 
 ## 4. 依赖方向
 

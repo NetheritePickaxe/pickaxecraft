@@ -144,7 +144,7 @@ CI 在 Ubuntu 上以同样的命令执行（`.github/workflows/ci.yml`）。
 | 平台 | 状态 | 证据与边界 |
 | --- | --- | --- |
 | 标准 JVM（Windows / Linux / macOS） | 已验证 | 共享产物为 Java 21 字节码；发布冒烟用 Java 21 toolchain 编译并运行 `status` 查询。构建、CLI 与联调服务使用 JDK 25。 |
-| Android | 已验证（ART 真机，API 36）；0.1.0 的发布声明仍为候选 | 2026-11-15 在 `PLC110` / Android 16（API 36）/ arm64-v8a 上跑通 `status`、离线登录进 `PLAY`（`x=0.5 y=40.0 z=0.5`，9–17 个区块）、关闭后线程与区块缓存回收、20 轮开关无增长。有效 `minSdk` 是 34（`HexFormat`），26 只是字节码下限；宿主需自带 JNDI 占位与 jar 资源，见[架构文档的 Android 约束](docs/architecture.md)与[证据](tools/m3-android/evidence/2026-11-15-all.txt)。未覆盖：渲染、在线认证。 |
+| Android | 已验证（ART 真机，API 36）；0.1.0 的发布声明仍为候选 | 2026-11-15 在 `PLC110` / Android 16（API 36）/ arm64-v8a 上跑通 `status`、离线登录进 `PLAY`（`x=0.5 y=40.0 z=0.5`，9–17 个区块）、关闭后线程与区块缓存回收、20 轮开关无增长。有效 `minSdk` 是 34（`HexFormat`），26 只是字节码下限；宿主需自带 JNDI 占位与 jar 资源，见[架构文档的 Android 约束](docs/architecture.md)与[证据](tools/m3-android/evidence/2026-11-15-all.txt)。同一份分发包在设备上的桌面 JVM（Termux + OpenJDK 25.0.4）里也直接跑通 `status` 与离线登录，说明上述两处绕过只属于 ART/APK 打包，见[第二份证据](tools/m3-android/evidence/2026-11-15-termux.txt)。未覆盖：渲染、在线认证。 |
 | iOS | 候选，未验证 | 环境阻塞：没有 macOS/Xcode + RoboVM，也没有 iOS 设备或模拟器，未做过任何构建或连接；未验证前不作支持声明。 |
 | Web / HTML5 | 不做 | Kotlin/JVM + Netty 与浏览器运行时不匹配。 |
 
