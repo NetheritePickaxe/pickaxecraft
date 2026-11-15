@@ -1,6 +1,6 @@
 # 实施路线
 
-状态：M2 已完成（出生链路打通），M4a–M4aa 已完成（区块内容、实体跟踪、重生换维度、玩家身份、聊天读写、移动上行、背包读写、自身状态与装备、容器点击、方块交互、实体属性、物品键名与自定义名、实体交互、运动状态、状态效果、容器属性、生物血量、物品组件、光照/高度图/方块实体、命令树与补全、跨服转移、libGDX 消费示例、骑乘与载具、物品原型默认值与可重跑导出、插件消息、拖拽与创造模式）；M3 的 Android 部分已于 2026-11-15 在真机上完成（iOS 仍缺 macOS/Xcode 环境，门控与验收步骤见 plans/m3-android-runtime.md）
+状态：M2 已完成（出生链路打通），M4a–M4aa 已完成（区块内容、实体跟踪、重生换维度、玩家身份、聊天读写、移动上行、背包读写、自身状态与装备、容器点击、方块交互、实体属性、物品键名与自定义名、实体交互、运动状态、状态效果、容器属性、生物血量、物品组件、光照/高度图/方块实体、命令树与补全、跨服转移、libGDX 消费示例、骑乘与载具、物品原型默认值与可重跑导出、插件消息、拖拽与创造模式）；M3 的 Android 部分已于 2026-11-15 在真机上完成（iOS 仍缺 macOS/Xcode 环境，门控与验收步骤见 docs/architecture.md）
 日期：2026-11-04
 
 ## 1. 执行原则
@@ -19,9 +19,9 @@
 当前进度以 [README 的“当前进度”](../README.md) 为唯一事实源；本节只做索引，不复制日期与状态，
 避免两处描述漂移。
 
-- 工程基线、客户端 API 与出生链路：M0–M2（见下文各节，实施记录在 `docs/plans/`）。
+- 工程基线、客户端 API 与出生链路：M0–M2。
 - 世界、交互与社交能力：M4 各节（见下文；实施记录链接见 [文档入口](README.md)）。
-- 移动平台：M3 的 Android 部分已完成（ART 真机，2026-11-15），iOS 仍缺环境；两者都没有进入 0.1.0 门槛（[M3 Android 运行时验证](plans/m3-android-runtime.md)）。
+- 移动平台：M3 的 Android 部分已完成（ART 真机，2026-11-15），iOS 仍缺环境；两者都没有进入 0.1.0 门槛。
 - 发布工程与供应链：见 README 的“发布与兼容”，以及[发布冒烟](../tools/release-smoke/README.md)。
 
 ## 3. M0：工程基线与协议后端（已完成）
@@ -44,8 +44,8 @@
 
 ## 4. M1：客户端核心骨架与连接链路（已完成，Android 运行时除外）
 
-实施记录与偏差见 [M1 实施计划](plans/m1-implementation-plan.md)；协议库行为契约见
-[协议适配契约](protocol-contract.md)；Android 构建链证据见 [Android 反糖探针](android-dex-probe.md)。
+实施记录与偏差见 docs/architecture.md §5；协议库行为契约见
+[协议适配契约](protocol-contract.md)；Android 构建链证据见 tools/m3-android。
 
 ### 交付内容
 
@@ -70,8 +70,6 @@
 M1 只要求进入 GAME，不要求玩家出生、传送/区块确认或世界模型；这些仍是 M2 的独立门控。
 
 ## 5. M2：Minestom 离线登录 MVP（已完成）
-
-实施记录（含根因与偏差）见 [M2 实施记录](plans/m2-implementation-plan.md)。
 
 ### 交付内容
 
@@ -102,7 +100,7 @@ M1 只要求进入 GAME，不要求玩家出生、传送/区块确认或世界�
 
 - **Android：已完成**（2026-11-15，ART 真机 API 36；同一份 `:app` 分发包也在设备上的桌面
   JVM（Termux + OpenJDK 25.0.4）里跑通）。结果、逐条判据与 `minSdk 34` 决策见
-  [M3 Android 运行时验证](plans/m3-android-runtime.md) §6。
+  见 [docs/architecture.md](architecture.md) §6。
 - **iOS：未开始**，环境阻塞：没有 macOS/Xcode + RoboVM，也没有 iOS 设备或模拟器。
 
 ### 交付内容
@@ -118,7 +116,7 @@ M1 只要求进入 GAME，不要求玩家出生、传送/区块确认或世界�
 - Android 真机或模拟器可对同一 Minestom 服务完成 M2 的链路，或给出明确的不可行结论与证据。
 - iOS 形成 RoboVM 实测结论；未验证前只列为候选平台，不写成已支持。
 - 结论写入架构文档后才更新支持矩阵；不得以 Desktop 成功推断移动端成功。
-- 逐条判据与结果见 [M3 Android 运行时验证（Android 已完成，iOS 待环境）](plans/m3-android-runtime.md)。
+- 逐条判据与结果见 M3 Android（已完成，iOS 仍缺环境）。
 
 ## 7. M4：可使用的客户端库
 
@@ -146,8 +144,6 @@ M1 只要求进入 GAME，不要求玩家出生、传送/区块确认或世界�
 
 ### 实际进展：M4a 区块内容（2026-11-04）
 
-实施记录见 [M4a 实施记录](plans/m4a-chunk-model.md)。已交付：
-
 - 适配层解码区块（三种调色板形态、位宽与截断校验），维度高度取自 `dimension_type` 注册表；
 - `Session.chunk` / `blockStateAt` / `biomeAt` 返回解码后的内容，未加载与越界分开表达；
 - 区块走独立缓存而不进入有界事件队列，出生时的 300+ 列不会打满 256 容量；
@@ -155,15 +151,11 @@ M1 只要求进入 GAME，不要求玩家出生、传送/区块确认或世界�
 
 ### 实际进展：M4b 实体跟踪（2026-11-04）
 
-实施记录见 [M4b 实施记录](plans/m4b-entity-tracking.md)。已交付：
-
 - 适配层按 id 累积相对位移（`short / 4096`）与传送的相对标记，向上只给完整快照；
 - `Session.entity` / `entities` / `entityCount` 查询，增删走事件流、位置只写缓存；
 - 联调用例用服务端的真实位置对账，覆盖生成、传送、逐 tick 相对移动与移除。
 
 ### 实际进展：M4c 重生与维度切换（2026-11-04）
-
-实施记录见 [M4c 实施记录](plans/m4c-respawn.md)。已交付：
 
 - `ClientboundRespawnPacket` 重新解析维度并作废旧世界的区块与实体；
 - 区块计数与 `player_loaded` 复位，新维度首批区块到达后重发；
@@ -172,16 +164,12 @@ M1 只要求进入 GAME，不要求玩家出生、传送/区块确认或世界�
 
 ### 实际进展：M4d 玩家身份（2026-11-04）
 
-实施记录见 [M4d 实施记录](plans/m4d-player-identity.md)。已交付：
-
 - 玩家列表按 UUID 合并多次增量（档案、延迟、游戏模式），向上一个包一个事件；
 - `Session.players` / `player(uuid)` / `playerCount` / `nameOf(entityId)` 完成实体 → 名字的关联；
 - 实体元数据只读自定义名称（下标 2），其余下标因缺少实体类型表不读；
 - 联调用例用两个并发会话验证列表、关联与改名，CLI 摘要打印在线玩家。
 
 ### 实际进展：M4e 聊天（2026-11-04）
-
-实施记录见 [M4e 实施记录](plans/m4e-chat.md)。已交付：
 
 - 系统、玩家、伪装三类消息统一成 `ChatMessage`，保留发送者、格式与编号；
 - 格式从 `chat_type` 注册表解析成“键 + 参数顺序”，不内置翻译表；
@@ -190,8 +178,6 @@ M1 只要求进入 GAME，不要求玩家出生、传送/区块确认或世界�
 - 联调用例逐项对账三类消息，并验证删除只影响被引用的那条。
 
 ### 实际进展：M4f 聊天上行（2026-11-04）
-
-实施记录见 [M4f 实施记录](plans/m4f-chat-upstream.md)。已交付：
 
 - `Session.sendChat` / `sendCommand` 发送聊天与命令，只有 play 阶段可发，非 play 与已关闭时
   明确抛错而不是把包塞进待发队列；
@@ -202,8 +188,6 @@ M1 只要求进入 GAME，不要求玩家出生、传送/区块确认或世界�
 - CLI 新增 `connect ... --say <文本>`，出生后发送一条消息并打印 `event=chat.sent`。
 
 ### 实际进展：M4g 移动上行（2026-11-04）
-
-实施记录见 [M4g 实施记录](plans/m4g-movement-upstream.md)。已交付：
 
 - `Session.moveTo` / `Session.look`：把位置与朝向声明给服务端，只有 play 阶段可发；
 - 与上一姿态比较后只发变化的分量（`pos` / `rot` / `pos_rot` / `status_only` / 不发包），
@@ -216,8 +200,6 @@ M1 只要求进入 GAME，不要求玩家出生、传送/区块确认或世界�
 
 ### 实际进展：M4h 背包与容器（只读）（2026-11-04）
 
-实施记录见 [M4h 实施记录](plans/m4h-inventory.md)。已交付：
-
 - `Session.inventory` / `container` / `heldItem` 读窗口内容；`Container` 是不可变快照，
   物品只有协议 id 与数量，空槽是 null；
 - 两套槽位编号在适配层换算（护甲段反序），对外只暴露窗口槽位，`PlayerSlotMappingTest` 钉住；
@@ -228,8 +210,6 @@ M1 只要求进入 GAME，不要求玩家出生、传送/区块确认或世界�
 
 ### 实际进展：M4i 自身状态与实体装备（2026-11-04）
 
-实施记录见 [M4i 实施记录](plans/m4i-player-state.md)。已交付：
-
 - `Session.status`（StateFlow）与 `ClientEvent.StatusChanged`：生命/饥饿/饱和度、经验条/等级/总量，
   两个包各写一半，字段可空以区分“还没收到”与“真的是 0”；
 - `TrackedEntity.equipment`：装备走独立包，不依赖实体元数据下标，所有实体都成立；
@@ -239,7 +219,7 @@ M1 只要求进入 GAME，不要求玩家出生、传送/区块确认或世界�
 
 M4 收尾计划四项已全部交付：物品原型默认值（M4y）、插件消息（M4z）、拖拽与创造模式（M4aa）、
 破坏进度（M4ab，见下文）。M4 功能面就此收尾，「仍未交付」只剩 M3 的 iOS 部分
-（Android 已于 2026-11-15 在真机完成，见 [M3 Android 运行时验证](plans/m3-android-runtime.md)）。
+（Android 已于 2026-11-15 在真机完成，见 见 [docs/architecture.md](architecture.md)）。
 （属性表、物品可读名、实体交互、运动状态、状态效果、容器属性、生物血量、物品组件、
 区块环境、命令补全、跨服转移、libGDX 消费示例、骑乘与载具、物品原型默认值、插件消息、
 拖拽与创造模式已分别由
@@ -289,8 +269,6 @@ M4 验收清单里明写、此前完全缺失的一项。已交付：
 
 ### 实际进展：M4j 容器点击与关闭窗口（2026-11-04）
 
-实施记录见 [M4j 实施记录](plans/m4j-container-click.md)。已交付：
-
 - `SlotClick`（`Pickup` / `QuickMove` / `SwapWithHotbar` / `Throw` / `PickupAll`）表达点击意图，
   到「动作类型 + 参数」的映射集中在 `ContainerClicks`，由 `ContainerClicksTest` 钉住；
 - `Session.clickSlot`（作用于活动窗口，也可指定窗口）与 `closeContainer`，`stateId` 跟着快照走，
@@ -303,8 +281,6 @@ M4 验收清单里明写、此前完全缺失的一项。已交付：
 - CLI 新增 `--click <槽位>[:动作]` 与 `--close-window`。
 
 ### 实际进展：M4k 方块交互（2026-11-04）
-
-实施记录见 [M4k 实施记录](plans/m4k-block-interaction.md)。已交付：
 
 - `BlockPosition`（带协议位宽校验）、`BlockFace`、`BlockChange`、`Hand` 四个公共类型；
 - `Session.startDigging / cancelDigging / finishDigging / digBlock`：挖掘三段原语加
@@ -322,8 +298,6 @@ M4 验收清单里明写、此前完全缺失的一项。已交付：
 
 ### 实际进展：M4l 实体属性（2026-11-04）
 
-实施记录见 [M4l 实施记录](plans/m4l-attributes.md)。已交付：
-
 - `update_attributes` 按键合并累积（出生时全量、之后增量），`Session.attributes(entityId)` /
   `attribute(entityId, key)` 给出累积快照，`EntityAttributesUpdated` 事件只带本包变化的项；
 - 属性键名由 Minestom 注册表导出的 `AttributeTable` 还原——协议库内置表按旧版编号错位，
@@ -331,8 +305,6 @@ M4 验收清单里明写、此前完全缺失的一项。已交付：
 - 联调用例专门验证「合并不得抹掉旧键」：先改最大生命再改移动速度，最后两个键都要在。
 
 ### 实际进展：M4m 物品键名与自定义名（2026-11-04）
-
-实施记录见 [M4m 实施记录](plans/m4m-item-names.md)。已交付：
 
 - `ItemKeys` 由 Minestom 注册表导出（协议 776，1537 项，id 连续），`InventoryItem.key` 把
   数字 id 翻译成 `minecraft:*` 键名——`minecraft:item` 注册表不随登录下发，表是版本资产；
@@ -342,8 +314,6 @@ M4 验收清单里明写、此前完全缺失的一项。已交付：
 
 ### 实际进展：M4n 实体交互（2026-11-04）
 
-实施记录见 [M4n 实施记录](plans/m4n-entity-interaction.md)。已交付：
-
 - 26.2 把攻击拆成独立的 `attack` 包：`Session.attack(entityId)`；`interactWith`（右键交互）、
   `interactAt`（带命中点偏移的交互）与 `swing`（挥手，纯视觉）；
 - 攻击与交互均无回执（第四例）：打中了看 `EntityDamaged` 事件（`damage_event` 包）与实体
@@ -351,8 +321,6 @@ M4 验收清单里明写、此前完全缺失的一项。已交付：
 - 联调用例：生成僵尸后攻击 + 右键，两侧对账。
 
 ### 实际进展：M4o 运动状态（2026-11-04）
-
-实施记录见 [M4o 实施记录](plans/m4o-movement-state.md)。已交付：
 
 - `Session.setMovementInput` / `setSneaking` / `setSprinting` / `setFlying`：
   26.2 的七位 `player_input` 是状态包，每次整份重发；冲刺另发带实体 id 的
@@ -364,8 +332,6 @@ M4 验收清单里明写、此前完全缺失的一项。已交付：
 
 ### 实际进展：M4p 状态效果（2026-11-04）
 
-实施记录见 [M4p 实施记录](plans/m4p-mob-effects.md)。已交付：
-
 - `MobEffect` + `EffectKeys`（协议 776 共 40 项，注册表不随登录下发，属版本资产）；
 - 按键合并累积，`Session.effects` / `ownEffects` / `effect` 与
   `ClientEvent.EntityEffectsChanged`，`duration = -1` 与四个显示标志原样保留；
@@ -373,15 +339,11 @@ M4 验收清单里明写、此前完全缺失的一项。已交付：
 
 ### 实际进展：M4q 容器属性（2026-11-04）
 
-实施记录见 [M4q 实施记录](plans/m4q-container-properties.md)。已交付：
-
 - `Session.containerProperties(windowId)` 按下标累积 `container_set_data`；
   下标含义取决于窗口类型，本层刻意不翻译；
 - 窗口关闭、重生、会话结束都会清掉对应表；联调覆盖两个下标互不覆盖。
 
 ### 实际进展：M4r 生物血量（2026-11-05）
-
-实施记录见 [M4r 实施记录](plans/m4r-entity-health.md)。已交付：
 
 - `LivingEntityTypes` 版本资产（Minestom 注册表导出，158 种实体里 93 种属生物层级）；
   适配层按 `TrackedEntity.type` 判层级后才读元数据下标 9，未知类型不猜；
@@ -391,16 +353,12 @@ M4 验收清单里明写、此前完全缺失的一项。已交付：
 
 ### 实际进展：M4s 物品组件（2026-11-05）
 
-实施记录见 [M4s 实施记录](plans/m4s-item-components.md)。已交付：
-
 - `InventoryItem` 读出耐久、无法破坏、修复代价、物品名、说明文字、附魔与附魔书组件；
   组件补丁的缺省语义写进公共文档，不拿 0 兜底；
 - 附魔键名由配置阶段下发的 `minecraft:enchantment` 动态注册表还原，不固化静态表；
 - 单测覆盖补丁取值、显式删除与越界 id，联调用组件齐全的钻石剑逐字段对账。
 
 ### 实际进展：M4t 光照、高度图与方块实体（2026-11-05）
-
-实施记录见 [M4t 实施记录](plans/m4t-chunk-environment.md)。已交付：
 
 - `ChunkColumn` 增加 `skyLightAt` / `blockLightAt` / `heightAt` / `blockEntity`，
   数据挂在列上而不是新增顶层缓存，列仍是不可变整体替换；
@@ -415,8 +373,6 @@ M4 验收清单里明写、此前完全缺失的一项。已交付：
 
 ### 实际进展：M4u 命令树与补全（2026-11-05）
 
-实施记录见 [M4u 实施记录](plans/m4u-command-completion.md)。已交付：
-
 - `Session.commands`（StateFlow）与 `ClientEvent.CommandTreeReceived`：
   服务端下发的命令树按只读模型暴露，节点下标原样保留，可查子节点、重定向与顶层命令名；
 - 参数类型 `CommandArgumentType`（57 项，按名字对齐协议库）与参数属性
@@ -427,8 +383,6 @@ M4 验收清单里明写、此前完全缺失的一项。已交付：
 - CLI 新增 `--commands` 与 `--complete`。
 
 ### 实际进展：M4v 跨服转移（2026-11-05）
-
-实施记录见 [M4v 实施记录](plans/m4v-cross-server-transfer.md)。已交付：
 
 - `ProtocolEvent.TransferRequested` / `ClientEvent.TransferRequested(host, port)`：
   转移包只上报目标地址，连接状态不变（协议库的自动跟随保持关闭）；
@@ -442,8 +396,7 @@ M4 验收清单里明写、此前完全缺失的一项。已交付：
 
 ### 实际进展：M4w libGDX 消费示例与 M3 门控（2026-11-05）
 
-实施记录见 [M4w 实施记录](plans/m4w-libgdx-sample.md) 与
-[M3 Android 运行时验证](plans/m3-android-runtime.md)。
+见 [docs/architecture.md](architecture.md)。
 
 - 新增 `samples:libgdx-viewer`：不发布、无模块依赖它、只依赖 `client-core` 与 libGDX；
 - `ChunkMeshBuilder` 输出 `MeshData`（顶点/法线/索引数组），做六面剔除，不创建 GL 资源；
@@ -454,8 +407,6 @@ M4 验收清单里明写、此前完全缺失的一项。已交付：
 
 ### 实际进展：M4x 骑乘与载具（2026-11-05）
 
-实施记录见 [M4x 实施记录](plans/m4x-riding.md)。已交付：
-
 - `Session.vehicle`（StateFlow）与 `Session.passengers(vehicleId)`：上/下车由乘客列表推出，
   没有单独的 mount/dismount 包；
 - `ClientEvent.PassengersChanged`（原始事实）与 `ClientEvent.VehicleChanged`（派生结论）；
@@ -465,8 +416,6 @@ M4 验收清单里明写、此前完全缺失的一项。已交付：
 - CLI 新增 `--steer x,y,z`，`--exec /pickaxeride` 可配合实跑。
 
 ### 实际进展：M4y 物品原型默认值与可重跑导出（2026-11-06）
-
-实施计划见 [M4y 实施计划](plans/m4y-item-prototypes.md)。已交付：
 
 - `ItemPrototypes`（Minestom 物品注册表导出，1537 项）：`maxDamage` / `maxStackSize` 从
   「只读补丁」改成「原型默认值 + 补丁覆盖」，修掉普通钻石剑耐久读到 `null` 的真 bug；

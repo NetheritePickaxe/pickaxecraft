@@ -3,7 +3,7 @@
 #
 # 它验证的是**构建链**：Java 21 字节码能否被 d8 处理成 dex、哪些 API 需要更高的
 # minSdk、哪些构件之间存在重复类。它不验证运行时行为——真机/模拟器上的
-# Netty、ART 与资源回收仍然是独立门控（见 docs/android-dex-probe.md）。
+# Netty、ART 与资源回收仍然是独立门控（已验证见 tools/m3-android）。
 #
 # 用法：
 #   tools/android-probe/dex.sh              # 默认 min-api 24 26 34

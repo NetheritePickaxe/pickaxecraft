@@ -184,8 +184,6 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 - **未解码**：光照、高度图、方块实体（NBT）与群系增量更新。重生/维度切换见 5.5：
   换维度会换掉 section 数量，旧维度缓存必须整体作废。
 
-实现记录与格式细节见 [M4a 实施记录](plans/m4a-chunk-model.md)。
-
 ### 5.4 M4b 已落地的具体形态：实体跟踪
 
 协议库已经把实体包拆成完整对象，本层补的是它不做的事：**累积相对量**并给出中立模型。
@@ -203,8 +201,6 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
   自己的位置由 `WorldSnapshot.position` 表达。
 - **未处理**：装备、状态效果、属性、生命值。实体元数据只读自定义名称，UUID → 玩家名见 5.6。
 
-实现记录见 [M4b 实施记录](plans/m4b-entity-tracking.md)。
-
 ### 5.5 M4c 已落地的具体形态：重生与维度切换
 
 `ClientboundRespawnPacket` 携带与 Login 相同的 `PlayerSpawnInfo`，因此换维度是一次“重新开始”：
@@ -216,8 +212,6 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 - **清理发生在网络线程**：若放到 Actor 里，新维度的区块可能先写入、再被迟到的事件抹掉。
 - **位置置空**：旧坐标属于另一个维度，保留它等于给调用方错误数据；新的同步包紧随其后。
 - **事件**：`ClientEvent.Respawned(dimension, gameMode)`，世界快照同时换维度。
-
-实现记录见 [M4c 实施记录](plans/m4c-respawn.md)。
 
 ### 5.6 M4d 已落地的具体形态：玩家身份
 
@@ -234,8 +228,6 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
   往后排（例如生命值 9）。协议不携带层级信息，本层也没有实体类型表，读其余下标会得到
   另一个字段的值——那不是数据缺失，是错误数据。
 - **玩家列表是会话级事实**：换维度不清空，与区块、实体不同。
-
-实现记录见 [M4d 实施记录](plans/m4d-player-identity.md)。
 
 ### 5.7 M4e 已落地的具体形态：聊天
 
@@ -254,8 +246,6 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 - **存储**：`Session.chat()` / `chatCount`，按到达顺序保留最近 `ClientOptions.chatHistorySize` 条，
   关闭与溢出都会清空。
 
-实现记录见 [M4e 实施记录](plans/m4e-chat.md)。
-
 ### 5.8 M4f 已落地的具体形态：聊天上行
 
 上行与下行不是镜像关系，有四件事只在发送方向存在：
@@ -272,8 +262,6 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 
 校验集中在 `ChatInput`：256 字符上限（与服务端解码时的限制同源）、单行（协议允许换行，但下游
 一律按单行渲染）、命令剥一层前导斜杠。命令走独立的 `chat_command` 包，不参与聊天签名。
-
-实现记录见 [M4f 实施记录](plans/m4f-chat-upstream.md)。
 
 ### 5.9 M4g 已落地的具体形态：移动上行
 
@@ -310,8 +298,6 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 - **成功没有回执同样是两台机器共有的特征**：`set_carried_item` 只在被拒绝或改写时才收到
   `set_held_slot`，因此选中格在发送后本地推进，服务端纠正时覆盖——与移动包同一套处理。
 
-实现记录见 [M4h 实施记录](plans/m4h-inventory.md)。
-
 ### 5.11 M4i 已落地的具体形态：自身状态与装备
 
 - **两个包各管一半**：`set_health` 给生命/饥饿/饱和度，`set_experience` 给进度/等级/总量。
@@ -321,8 +307,6 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
   这正是它与只能读下标 2 的自定义名称的区别。空物品表示清空该槽，要删键。
 - **重生复位**：生命与经验属于上一个身体，`Respawned` 时把状态快照清空，等服务端重发。
 - **仍然读不到**：生物血量（只在元数据里，下标依赖实体层级）、属性表、状态效果。
-
-实现记录见 [M4i 实施记录](plans/m4i-player-state.md)。
 
 ### 5.12 M4j 已落地的具体形态：点击槽位与关闭窗口
 
@@ -341,8 +325,6 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
   服务端自己关窗时发），所以关闭在发出时就本地生效，服务端随后若再发关闭包也不会重复上报。
 - **容器窗口不校验槽位上限**：整包可能只带容器自己的格子，后面的背包段在快照里不存在却仍然
   可点，按快照长度拦截会挡住真实能点的格子。
-
-实现记录见 [M4j 实施记录](plans/m4j-container-click.md)。
 
 ### 5.13 M4k 已落地的具体形态：方块交互
 
@@ -363,8 +345,6 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 - 联调用例按“服务端 `instance.getBlock` 变成什么、客户端 `blockStateAt` 就该是什么”双侧对账，
   并断言回执序号前进与事件流里的方块变更。
 
-实现记录见 [M4k 实施记录](plans/m4k-block-interaction.md)。
-
 ### 5.14 M4l/M4n 已落地的具体形态：实体属性与实体交互
 
 - **属性按键合并**：`update_attributes` 只带被更新的项（出生时全量、之后增量），客户端按
@@ -378,8 +358,6 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 - 联调用例：服务端改玩家/僵尸的属性基值，客户端等事件后读新值（合并不得抹掉旧键）；
   生成僵尸攻击 + 右键，两侧对账。
 
-实现记录见 [M4l 实施记录](plans/m4l-attributes.md) 与 [M4n 实施记录](plans/m4n-entity-interaction.md)。
-
 ### 5.15 M4m 已落地的具体形态：物品键名与自定义名
 
 - **键名表是版本资产**：`minecraft:item` 注册表不随登录下发，协议库的 `ItemStack` 只有数字
@@ -388,8 +366,6 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 - `InventoryItem` 新增 `key` 与 `customName`；`custom_name` 组件的空文本是合法值，
   与 null（没有组件）语义不同，两者都不做归一。
 - 联调用例：带名石头 + 无名钻石，断言一个 `customName` 有值、另一个是 null。
-
-实现记录见 [M4m 实施记录](plans/m4m-item-names.md)。
 
 ### 5.16 M4o/M4p/M4q 已落地的具体形态：运动状态、状态效果与容器属性
 
@@ -403,9 +379,6 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
   `EffectKeys` 是版本资产（协议不带效果注册表），容器属性下标刻意不翻译（含义取决于窗口类型）。
 - 三个方向的新状态在重生、关闭与溢出时统一复位，不把上一条命的事实带到下一次连接。
 
-实现记录见 [M4o](plans/m4o-movement-state.md)、[M4p](plans/m4p-mob-effects.md)、
-[M4q](plans/m4q-container-properties.md)。
-
 ### 5.17 M4r 已落地的具体形态：生物血量
 
 - 元数据下标含义依赖实体层级。适配层用 `LivingEntityTypes`（Minestom 注册表导出的
@@ -418,8 +391,6 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 - 联调同时给正例（僵尸改血量）与反例（掉落物不产生血量、查询为 null），
   服务端 `event=server.health` 日志是独立证据。
 
-实现记录见 [M4r](plans/m4r-entity-health.md)。
-
 ### 5.18 M4s 已落地的具体形态：物品组件
 
 - `ItemComponents` 把 `ItemStack` 完整转成 `InventoryItem`：耐久、无法破坏、修复代价、
@@ -429,8 +400,6 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 - 附魔键名来自配置阶段下发的动态注册表，适配层保存条目顺序（即 wire id），
   不新增会过期的静态表；越界 id 降级为 `unknown:<id>` 而不是丢数据。
 - CLI 摘要把非空组件附在键名后面，联调逐字段与服务端设置值对账。
-
-实现记录见 [M4s](plans/m4s-item-components.md)。
 
 ### 5.19 M4t 已落地的具体形态：光照、高度图与方块实体
 
@@ -452,8 +421,6 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
   只在落点已存在时发出（区块被作废后迟到的包不入队）。这里踩过一次坑——把「只进缓存」
   实现成 `return`，事件就永远不来。
 
-实现记录见 [M4t](plans/m4t-chunk-environment.md)。
-
 ### 5.20 M4u 已落地的具体形态：命令树与补全
 
 - 命令树只在服务端存在，本层做的是**形状转换**：扁平数组原样保留下标，子节点与重定向
@@ -469,8 +436,6 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
   回调时不回），把它显示成空列表会让调用方误判成“这里没有可选值”。
 - 替换区间（`start`/`length`）是服务端给的**修补指令**，`CommandSuggestions.applyTo` 负责套回
   原文；区间越界时返回 null 而不是尽量修正，错位替换出来的假输入比不替换更难排查。
-
-实现记录见 [M4u](plans/m4u-command-completion.md)。
 
 ### 5.21 M4v 已落地的具体形态：跨服转移
 
@@ -488,8 +453,6 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
   断开的文本原因只是一句翻译键（`disconnect.transfer` 与服务端自定义文案都见过），不能当判据。
 - 联调用例刻意把目标指向**同一个服务端**：Minestom 是进程级单例，一个 JVM 里跑不了第二个实例；
   同名重连还能顺带证明旧连接真的关掉了（服务端侧会看到第二次 `player.configuring` 与 `player.spawned`）。
-
-实现记录见 [M4v](plans/m4v-cross-server-transfer.md)。
 
 ### 5.22 M4w/M4x 已落地的具体形态：消费示例与骑乘
 
@@ -510,8 +473,6 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
   会以为自己动了；显式失败比静默失效容易排查得多。
 - 下行的载具坐标只推进位置、不改朝向：乘客可以转头看别处，载具的朝向是另一件事。
   `world.position` 因此“跟着载具走但保留自己的视角”。
-
-实现记录见 [M4x](plans/m4x-riding.md)。
 
 ## 6. 图形宿主与平台约束
 
@@ -539,7 +500,7 @@ Kotlin 协程只出现在 `client-core` 与组合根；`protocol-core` 是纯回
 - Android 宿主必须自带 JNDI 最小占位：mcprotocollib 的 `NettyHelper.<clinit>` 无条件 `Class.forName("com.sun.jndi.dns.DnsContextFactory")` 并 `new InitialDirContext(env)`，而 `android.jar` 里没有 `javax.naming`（API 36 实测），首次连接就会抛 `ExceptionInInitializerError`。宿主补齐最小占位后，SRV 查询以 `NamingException` 失败并回落到普通 DNS 解析（主机名与字面 IP 照常可用，只是没有 SRV）。上游修法是延迟初始化 JNDI；参考实现见 `tools/m3-android/host/src/main/java`。
 - Android 打包必须把 jar 的根资源与 `META-INF/services` 一起放进 APK：`yggdrasil_session_pubkey.der`、`networkCodec.nbt`、`networkTags.nbt`，以及 cloudburst 的 `VectorProvider`、adventure 的序列化 Provider。只放 `classes.dex` 会在 `MinecraftProtocol` 初始化或 `Vectors` 的 `ServiceLoader` 上失败——桌面直接读 jar，所以这个差异只在打包宿主里暴露。
 - 上面两项（JNDI 占位、jar 资源与 `META-INF/services`）只属于 ART/APK 打包层，不是协议层需求：2026-11-15 在设备上用 Termux + OpenJDK 25.0.4 直接跑 `:app:installDist`，不补任何占位、不改打包，`status` 与离线登录都正常。排查 Android 问题时应先区分“ART 特有”与“协议/客户端共有”。
-- 有效 `minSdk` 是 34，不是 26：`adventure-api` 的 `TextColorImpl` 用静态字段持有 `java.util.HexFormat`，mcprotocollib 的 `UUIDUtils` 也直接调用它，而 `HexFormat` 需要 API 34。26 只是字节码与 `MethodHandle` 的下限；回到 26 需要替换这两处依赖或引入反糖方案（决策见 [M3](plans/m3-android-runtime.md)）。
+- 有效 `minSdk` 是 34，不是 26：`adventure-api` 的 `TextColorImpl` 用静态字段持有 `java.util.HexFormat`，mcprotocollib 的 `UUIDUtils` 也直接调用它，而 `HexFormat` 需要 API 34。26 只是字节码与 `MethodHandle` 的下限；回到 26 需要替换这两处依赖或引入反糖方案。
 - Android 打包必须 `exclude(group = "org.cloudburstmc.math", module = "api")`：该构件的 57 个类全部包含在 `:immutable` 中，同时打包会让 d8 直接报重复类，而桌面 JVM 会静默容忍。
 - 仍未验证：渲染路径（本仓库不含渲染代码）、在线认证（`HexFormat` 与账户流程，M5）、iOS（需 macOS/Xcode + RoboVM）。这些部分不能由本次 ART 结果推断。
 - libGDX 官方称 RoboVM 执行 Java 字节码、其他 JVM 语言“应该可用但未测试”。因此 iOS 不能由 Desktop 或 Android 的结果推断；若失败，先记录具体不兼容点，再评估平台适配或替代传输。

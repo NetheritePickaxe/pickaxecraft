@@ -21,8 +21,7 @@ package com.sun.jndi.dns;
  * <p>这不属于“为了让验证通过而改客户端”：客户端 API 一行没动，替换只发生在证据宿主的
  * dex 里。正确的上游修复是让 {@code NettyHelper} 延迟初始化 JNDI（或探测失败后跳过 SRV）；
  * 在那之前，任何 Android 宿主都必须自带同样的最小占位类，
- * 该约束记录在 {@code docs/architecture.md} 的 Android 约束与
- * {@code docs/plans/m3-android-runtime.md} 的结果里。
+ * 该约束记录在 {@code docs/architecture.md} 的 Android 约束章节。
  */
 public final class DnsContextFactory {
 

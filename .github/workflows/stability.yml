@@ -72,5 +72,5 @@ jobs:
       - name: Fail when any round failed
         if: steps.rounds.outputs.failures != '0'
         run: |
-          echo "::error::${{ steps.rounds.outputs.failures }} 轮失败；请把根因写入 docs/reviews 的稳定性记录，不要只写“偶发”。"
+          echo "::error::${{ steps.rounds.outputs.failures }} 轮失败；请把根因写入项目 issue，不要只写“偶发”。"
           exit 1

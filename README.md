@@ -29,7 +29,7 @@ Minestom 在本仓库只用于 `testing:minestom` 联调。最终客户端若需
 - [项目结构](docs/project-structure.md)
 - [实施路线](docs/roadmap.md)
 - [协议后端决策](docs/decisions/0001-protocol-backend.md)
-- [M0 实施计划](docs/plans/m0-implementation-plan.md)
+- [M0 实施计划](docs/decisions/0001-protocol-backend.md)
 
 ## 环境要求
 

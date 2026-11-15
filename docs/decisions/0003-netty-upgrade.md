@@ -3,7 +3,7 @@
 状态：已采纳
 日期：2026-11-13
 涉及：`gradle/libs.versions.toml`、`protocol-core/build.gradle.kts`、`buildSrc/src/main/kotlin/pickaxe/tasks/VerifyNettyVersion.kt`、`pickaxe.jvm.shared` / `pickaxe.jvm.library`
-关联审查：`docs/reviews/2026-11-12-orientation-and-deliverability-review.md`
+关联审查：`docs/architecture.md`（平台验证与 Netty 升级章节）
 历史记录：`docs/decisions/0002.md` 保留 2026-11-03 的评估，不在本次升级中改写。
 
 ## 1. 原因
